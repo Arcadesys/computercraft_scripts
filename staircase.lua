@@ -75,12 +75,21 @@ local function tryBack()
 end
 
 local function tryUp()
-  while not turtle.up() do
-    if turtle.detectUp then
-      if turtle.detectUp() then turtle.digUp() end
+    local attempts = 0
+    while not turtle.up() do
+        attempts = attempts + 1
+        -- If there's a block above, try to dig it. Otherwise try to attack mobs.
+        if turtle.detectUp and turtle.detectUp() then
+            turtle.digUp()
+        else
+            turtle.attackUp()
+        end
+        -- After a few attempts print a brief status so the user isn't left guessing
+        if attempts % 10 == 0 then
+            print(string.format("tryUp: still blocked after %d attempts; digging/attacking up and retrying...", attempts))
+        end
+        sleep(0.2)
     end
-    sleep(0.2)
-  end
 end
 
 local function tryDown()
@@ -350,11 +359,32 @@ local function moveUp()
     local attempts = 0
     while not turtle.up() do
         attempts = attempts + 1
-        if turtle.detectUp() then
+        if turtle.detectUp and turtle.detectUp() then
+            -- try to remove a blocking block above
             turtle.digUp()
         else
+            -- try to clear mobs
             turtle.attackUp()
         end
+
+        -- After several attempts, print a helpful diagnostic so you can see what's blocking
+        if attempts == 8 then
+            print(string.format("moveUp: still blocked after %d attempts; digging up and retrying...", attempts))
+        elseif attempts == 20 then
+            print("moveUp: too many attempts, showing inventory snapshot and pausing. Press Enter in the turtle to continue after resolving the blockage.")
+            for s = 1,16 do
+                local c = turtle.getItemCount(s)
+                local d = turtle.getItemDetail(s)
+                if c > 0 then
+                    print(string.format("%2d: count=%d name=%s", s, c, tostring(d and d.name)))
+                else
+                    print(string.format("%2d: empty", s))
+                end
+            end
+            print("Press Enter to continue (or Ctrl+T to stop)")
+            read()
+        end
+
         if attempts > 10 then
             sleep(0.3)
         end
@@ -387,10 +417,25 @@ local function layStepRow(stepWidth)
 end
 
 local function advanceToNextStep()
+    -- Clear forward then move into the next column for the next step
     turtle.dig()
     moveForward()
+
+    -- Try to ensure the space above is clear before and after placing the support block.
+    -- Some servers/mods may have placement latency; dig any above-blocks first so moveUp
+    -- isn't silently blocked by a misplaced block.
+    if turtle.detectUp and turtle.detectUp() then
+        turtle.digUp()
+    end
+
     placeSupportBlock()
-    turtle.digUp()
+
+    -- Defensive second attempt to clear above (in case placement accidentally left a block)
+    if turtle.detectUp and turtle.detectUp() then
+        turtle.digUp()
+        sleep(0.05)
+    end
+
     moveUp()
 end
 
