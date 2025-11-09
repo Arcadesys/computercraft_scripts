@@ -16,6 +16,7 @@ local config = {
     --   'wall'    = aesthetic-first: try wall torches using torchWallMode; will not fall back to floor.
     --   'auto'    = best-effort: try wall, then behind, then floor-down, then step-back.
     torchPlacementMode = "wall",
+    retreatElevate = true, -- when true, turtle attempts to move up one block before retreating a branch to avoid mining floor torches
     refuelThreshold = 100, -- minimum fuel level the turtle should maintain
     replaceBlocks = true,  -- when false, do not place replacement blocks after digging
     replaceWithSlot = nil, -- set programmatically to slot with cobble
@@ -24,6 +25,7 @@ local config = {
     trashSlot = nil,       -- slot containing wall patch blocks
     trashKeywords = { "trash", "cobble", "deepslate", "tuff", "basalt" },
     sealOpenEnds = true,  -- when true, seal open-air cavities discovered in branches (can block hallways)
+    dumpRetreatMax = 128,  -- maximum blocks to retreat searching for an existing chest when inventory is full
 }
 
 local state = {
@@ -393,6 +395,122 @@ end
 -- untouched. Returns true when the floor is in the desired state.
 local digIfBlock -- forward declaration for block removal helper
 
+-- Inventory helpers ---------------------------------------------------------
+
+local function countEmptySlots()
+    local empty = 0
+    for i = 1, 16 do
+        if turtle.getItemCount(i) == 0 then empty = empty + 1 end
+    end
+    return empty
+end
+
+local function isInventoryFull()
+    return countEmptySlots() == 0
+end
+
+local function isTorchDetail(detail)
+    local nm = detail and detail.name or ""
+    return nm:lower():find("torch", 1, true) ~= nil
+end
+
+-- Place (or reuse) a chest behind and dump items, keeping one stack of trash
+-- and avoiding dropping the chest itself, the replacement block slot, and current selection.
+local function performDumpingState()
+    logBranch("Inventory full with valuable ahead: entering dumping state")
+
+    -- Helper to identify a storage block
+    local function isChestLike(detail)
+        if not detail or not detail.name then return false end
+        local n = detail.name:lower()
+        return n:find("chest",1,true) or n:find("barrel",1,true)
+    end
+
+    -- First try to place a new chest behind (fast path)
+    local placedChest = placeChestBehind()
+    if placedChest then
+        local ok, reason = depositToChest()
+        if not ok then
+            logBranch("Dumping failed after placing chest: %s", tostring(reason))
+            return false, reason
+        end
+        logBranch("Dumping complete (new chest placed); resuming mining")
+        return true
+    end
+
+    -- Fallback: search for existing chest by retreating backward up to dumpRetreatMax blocks
+    logBranch("Chest placement failed; attempting retreat up to %d blocks to locate existing chest", config.dumpRetreatMax or 64)
+    local stepsRetreated = 0
+    turnAround() -- face backward direction
+    local foundChest = false
+    while stepsRetreated < (config.dumpRetreatMax or 64) do
+        -- Inspect front for chest
+        if turtle.inspect then
+            local ok, detail = turtle.inspect()
+            if ok and isChestLike(detail) then
+                foundChest = true
+                break
+            end
+        end
+        if not moveForwardSafe() then
+            logBranch("Retreat blocked at %d steps while searching for chest", stepsRetreated)
+            break
+        end
+        stepsRetreated = stepsRetreated + 1
+    end
+
+    if not foundChest then
+        -- turn back to original orientation
+        turnAround()
+        logBranch("No existing chest found within retreat limit; dumping aborted")
+        return false, "no-existing-chest"
+    end
+
+    -- We are facing the chest. Perform deposit without placing another chest.
+    local originalSelected = turtle.getSelectedSlot()
+    local keptTrashSlot = nil
+    if config.replaceWithSlot and turtle.getItemCount(config.replaceWithSlot) > 0 then
+        local d = turtle.getItemDetail(config.replaceWithSlot)
+        if isTrashDetail(d) then keptTrashSlot = config.replaceWithSlot end
+    end
+    if not keptTrashSlot then
+        for i = 1,16 do
+            local c = turtle.getItemCount(i)
+            if c > 0 then
+                local d = turtle.getItemDetail(i)
+                if isTrashDetail(d) then keptTrashSlot = i break end
+            end
+        end
+    end
+    for i = 1,16 do
+        local c = turtle.getItemCount(i)
+        if c > 0 and i ~= keptTrashSlot and i ~= originalSelected and i ~= config.chestSlot then
+            local detail = turtle.getItemDetail(i)
+            if not isTorchDetail(detail) then
+                turtle.select(i)
+                turtle.drop() -- drop into chest in front
+            end
+        end
+    end
+    turtle.select(originalSelected)
+
+    -- Return to original mining position
+    -- Turn back to original heading (currently facing chest, which was backward direction)
+    turnAround()
+    while stepsRetreated > 0 do
+        if not moveForwardSafe() then
+            logBranch("Warning: could not advance forward to return after dumping (remaining=%d)", stepsRetreated)
+            break
+        end
+        stepsRetreated = stepsRetreated - 1
+    end
+    logBranch("Dumping complete (existing chest); resuming mining")
+    return true
+end
+
+-- Forward declare to allow referencing before definition
+local depositToChest
+
 local function ensureFloorReplaced()
     local nameBelow = getBlockBelowName()
     if nameBelow then
@@ -463,6 +581,23 @@ digIfBlock = function(direction)
     local removed = false
     local attempts = 0
     while detectFunc() do
+        -- If we're about to dig forward and inventory is full while a valuable
+        -- block is ahead, perform a dumping cycle first to avoid losing drops.
+        if direction == "forward" and isInventoryFull then
+            -- guard in case called outside CC where helpers may be nil
+            if type(isInventoryFull) == "function" and isInventoryFull() then
+                local nameAhead = select(1, getBlockForwardDetail())
+                if nameAhead and nameAhead ~= "" and isLikelyValuable(nameAhead) then
+                    -- Try elevated dumping so we don't disturb floor torches
+                    local elevated = false
+                    if config.retreatElevate and moveUpSafe then
+                        elevated = moveUpSafe()
+                    end
+                    if performDumpingState then performDumpingState() end
+                    if elevated and moveDownSafe then moveDownSafe() end
+                end
+            end
+        end
         if digFunc() then
             removed = true
         else
@@ -1013,7 +1148,9 @@ end
 --   - the chest slot itself
 --   - the currently selected slot (to avoid surprising the caller)
 local function depositToChest()
-    -- attempt to place a chest behind
+    -- Assumes there is or will be a chest behind via placeChestBehind().
+    -- Here we only perform the deposit, keeping exactly one stack of trash.
+    -- attempt to place a chest behind if not already present
     if not placeChestBehind() then
         return false, "no chest available to place"
     end
@@ -1023,15 +1160,38 @@ local function depositToChest()
     turnRightSafe()
 
     local originalSelected = turtle.getSelectedSlot()
+    local keptTrashSlot = nil
+
+    -- First pass: decide which trash stack to keep (prefer current replaceWithSlot; else first trash stack found)
+    if config.replaceWithSlot and turtle.getItemCount(config.replaceWithSlot) > 0 then
+        local d = turtle.getItemDetail(config.replaceWithSlot)
+        if isTrashDetail(d) then keptTrashSlot = config.replaceWithSlot end
+    end
+    if not keptTrashSlot then
+        for i = 1, 16 do
+            local c = turtle.getItemCount(i)
+            if c > 0 then
+                local d = turtle.getItemDetail(i)
+                if isTrashDetail(d) then
+                    keptTrashSlot = i
+                    break
+                end
+            end
+        end
+    end
+
+    -- Second pass: drop everything we can except chest item, kept trash stack, torches, and current selection.
     for i = 1, 16 do
-        -- skip chest slot so we don't accidentally drop the chest item into itself
-        if i ~= config.chestSlot and i ~= config.replaceWithSlot and i ~= originalSelected then
-            local count = turtle.getItemCount(i)
-            if count > 0 then
-                turtle.select(i)
-                -- drop everything in this slot into the chest in front
-                -- if drop fails, continue to next slot
-                turtle.drop()
+        local count = turtle.getItemCount(i)
+        if count > 0 then
+            if i ~= config.chestSlot and i ~= originalSelected and i ~= keptTrashSlot then
+                local detail = turtle.getItemDetail(i)
+                local name = detail and detail.name or ""
+                -- Skip torches so lighting supply remains
+                if not isTorchDetail(detail) then
+                    turtle.select(i)
+                    turtle.drop()
+                end
             end
         end
     end
@@ -1279,6 +1439,14 @@ local function mainTunnel(width, height)
                 if traversed <= 0 then
                     logBranch("%s branch retreat skipped (no forward progress)", side)
                 else
+                    -- Elevate retreat one block to avoid destroying any floor torches.
+                    local elevated = false
+                    -- Only attempt elevation if there might be headroom; if blocked, we just retreat at floor level.
+                    if config.retreatElevate and moveUpSafe() then
+                        elevated = true
+                        vprint("%s branch: elevated retreat engaged (1 block up)", side)
+                    end
+
                     local retreated = 0
                     for offset = 1, traversed do
                         local movedBack = moveBackSafe()
@@ -1288,6 +1456,14 @@ local function mainTunnel(width, height)
                         end
                         retreated = offset
                     end
+
+                    -- Return to floor level after elevated retreat
+                    if elevated then
+                        if not moveDownSafe() then
+                            logBranch("%s branch: warning - could not descend after elevated retreat", side)
+                        end
+                    end
+
                     if retreated > 0 then
                         logBranch("%s branch retreated %d step(s)", side, retreated)
                     end
