@@ -26,6 +26,9 @@ local config = {
     trashKeywords = { "trash", "cobble", "deepslate", "tuff", "basalt" },
     sealOpenEnds = true,  -- when true, seal open-air cavities discovered in branches (can block hallways)
     dumpRetreatMax = 128,  -- maximum blocks to retreat searching for an existing chest when inventory is full
+    proactiveDump = true,  -- when true perform periodic proactive dumps to origin chest to free inventory
+    proactiveDumpMode = "after-branch-pair", -- strategy: after-branch-pair | every-n-steps (center tunnel steps)
+    proactiveDumpEvery = 0, -- used when proactiveDumpMode == 'every-n-steps'; 0 disables
 }
 
 local state = {
@@ -664,6 +667,109 @@ local function moveBackSafe()
     local moved, reason = moveForwardSafe()
     turnAround()
     return moved, reason
+end
+
+-- Non-destructive movement helpers (avoid digging blocks which could be torches).
+-- These attempt to move only if the space is clear; if blocked, they abort rather than dig.
+local function moveForwardNoDig()
+    ensureFuel(1)
+    if turtle.detect and turtle.detect() then
+        return false, "blocked"
+    end
+    if turtle.forward() then return true end
+    return false, "entity-blocked"
+end
+
+local function moveBackNoDig()
+    ensureFuel(1)
+    if turtle.back() then return true end
+    -- fallback: turn around and attempt forward without digging
+    turnAround()
+    local ok, reason = moveForwardNoDig()
+    turnAround()
+    return ok, reason
+end
+
+local function walkForwardNoDig(steps)
+    for i=1,(steps or 0) do
+        local ok = moveForwardNoDig()
+        if not ok then return false, i-1 end
+    end
+    return true, steps
+end
+
+local function walkBackNoDig(steps)
+    for i=1,(steps or 0) do
+        local ok = moveBackNoDig()
+        if not ok then return false, i-1 end
+    end
+    return true, steps
+end
+
+-- Proactive dump routine: walk back to origin chest and deposit, then return.
+-- Assumes origin chest is directly back along the main tunnel path and no blocks were left in the path.
+local function proactiveDumpToOrigin(traversedSteps)
+    traversedSteps = traversedSteps or 0
+    if traversedSteps <= 0 then return false, "no distance recorded" end
+    logBranch("Proactive dump: returning %d steps to origin chest", traversedSteps)
+    turnAround()
+    local ok, done = walkForwardNoDig(traversedSteps)
+    if not ok then
+        logBranch("Proactive dump aborted: blocked after %d/%d steps", done, traversedSteps)
+        turnAround()
+        return false, "blocked"
+    end
+    -- At origin: deposit to starter chest if it's directly in front.
+    local depOK = false
+    if turtle.inspect then
+        local okInsp, detail = turtle.inspect()
+        if okInsp and detail and detail.name then
+            local nm = detail.name:lower()
+            if nm:find("chest",1,true) or nm:find("barrel",1,true) then
+                -- Perform direct deposit into chest ahead (keep one trash stack + torches)
+                local originalSelected = turtle.getSelectedSlot()
+                local keptTrashSlot = nil
+                if config.replaceWithSlot and turtle.getItemCount(config.replaceWithSlot) > 0 then
+                    local d = turtle.getItemDetail(config.replaceWithSlot)
+                    if isTrashDetail(d) then keptTrashSlot = config.replaceWithSlot end
+                end
+                if not keptTrashSlot then
+                    for i = 1,16 do
+                        local c = turtle.getItemCount(i)
+                        if c > 0 then
+                            local d = turtle.getItemDetail(i)
+                            if isTrashDetail(d) then keptTrashSlot = i break end
+                        end
+                    end
+                end
+                for i = 1,16 do
+                    local c = turtle.getItemCount(i)
+                    if c > 0 and i ~= keptTrashSlot and i ~= originalSelected and i ~= config.chestSlot then
+                        local d = turtle.getItemDetail(i)
+                        if not isTorchDetail(d) then
+                            turtle.select(i)
+                            turtle.drop()
+                        end
+                    end
+                end
+                turtle.select(originalSelected)
+                depOK = true
+                logBranch("Proactive dump deposit complete (origin chest)")
+            end
+        end
+    end
+    if not depOK then
+        logBranch("Proactive dump: no chest ahead at origin; skipping deposit")
+    end
+    -- Walk back to mining front
+    local retOK, retDone = walkBackNoDig(traversedSteps)
+    if not retOK then
+        logBranch("Proactive dump return path blocked after %d/%d steps", retDone, traversedSteps)
+        -- attempt best-effort recovery (stop in place)
+        return false, "return-blocked"
+    end
+    logBranch("Proactive dump cycle completed")
+    return depOK
 end
 
 local function moveUpSafe()
@@ -1475,6 +1581,20 @@ local function mainTunnel(width, height)
 
             runBranch("left")
             runBranch("right")
+
+            -- After completing both branches, optionally perform proactive dump.
+            if config.proactiveDump and (config.proactiveDumpMode == "after-branch-pair") then
+                -- Distance to origin is current main tunnel step count.
+                proactiveDumpToOrigin(step)
+            end
+        end
+
+        -- Alternate proactive dump mode: every-n-steps along main tunnel regardless of branching.
+        if config.proactiveDump and config.proactiveDumpMode == "every-n-steps" then
+            local n = config.proactiveDumpEvery or 0
+            if n > 0 and (step % n) == 0 then
+                proactiveDumpToOrigin(step)
+            end
         end
     end
 
