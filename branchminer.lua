@@ -2,12 +2,16 @@
 local config = {
     branchLength = 20,
     branchSpacing = 3,
+    branchWidth = 3,
     branchHeight = 3,
     torchInterval = 8,
     refuelThreshold = 100,
+    replaceBlocks = true,  -- when false, do not place replacement blocks after digging
     replaceWithSlot = nil, -- set programmatically to slot with cobble
     chestSlot = nil,       -- slot containing chest for placeChest()
     verbose = false,       -- when true, print extra debug information
+    trashSlot = nil,       -- slot containing wall patch blocks
+    trashKeywords = { "trash", "cobble", "deepslate", "tuff", "basalt" },
 }
 
 local state = {
@@ -24,6 +28,26 @@ local function vprint(fmt, ...)
         print(string.format(fmt, ...))
     else
         print(tostring(fmt))
+    end
+end
+
+-- Portable short delay helper (ComputerCraft exposes either sleep or os.sleep).
+local function delay(seconds)
+    if os and os.sleep then
+        os.sleep(seconds)
+    elseif _G.sleep then
+        _G.sleep(seconds)
+    end
+end
+
+-- Simple logging helper so branch behaviour is visible even when verbose mode
+-- is disabled. Prefix messages so they are easy to spot in the turtle terminal.
+local function logBranch(message, ...)
+    local prefix = "[BranchMiner] "
+    if select('#', ...) > 0 then
+        print(prefix .. string.format(message, ...))
+    else
+        print(prefix .. tostring(message))
     end
 end
 
@@ -44,221 +68,425 @@ local function selectSlotWithItems(predicate)
     return nil
 end
 
-local function ensureFuel()
-    -- Ensure we have at least config.refuelThreshold fuel or attempt to refuel.
+local waitForReplacement -- forward declaration so helpers can refer to it
+
+local function getFuelLevelValue()
     local level = turtle.getFuelLevel()
-    vprint("ensureFuel: current fuel level = %s", tostring(level))
-    if level == "unlimited" then return true end
-    if type(level) == "number" and level >= (config.refuelThreshold or 0) then return true end
-
-    local before = turtle.getFuelLevel()
-    for i = 1, 16 do
-        if turtle.getItemCount(i) > 0 then
-            turtle.select(i)
-            -- try to consume one item as fuel; refuel returns true if successful
-            vprint("ensureFuel: trying slot %d (count=%d)", i, turtle.getItemCount(i))
-            if turtle.refuel(1) then
-                vprint("ensureFuel: refuel succeeded using slot %d", i)
-                return true
-            end
-        end
+    if level == "unlimited" then
+        return math.huge
     end
+    return tonumber(level) or 0
+end
 
-    if type(before) == "number" and turtle.getFuelLevel() > before then
-        vprint("ensureFuel: fuel increased after attempts")
+local function ensureFuel(requiredMoves)
+    requiredMoves = requiredMoves or 1
+    local desiredLevel = math.max(requiredMoves, config.refuelThreshold or requiredMoves)
+
+    if getFuelLevelValue() >= desiredLevel then
         return true
     end
 
-    error("ensureFuel: unable to refuel (set config.refuelThreshold or add fuel to inventory)")
-end
-
-local function moveForwardSafe(retries)
-    -- Moves forward, digging/attacking obstructions. Returns true on success, false otherwise.
-    retries = retries or 12
-    for i = 1, retries do
-        if not turtle.detect() then
-            if turtle.forward() then return true end
-        else
-            turtle.dig()
-        end
-        -- try to clear mobs that may block movement
-        turtle.attack()
-        os.sleep(0.08)
-    end
-    return false
-end
-
-local function moveUpSafe(retries)
-    retries = retries or 8
-    for i = 1, retries do
-        if not turtle.detectUp() then
-            if turtle.up() then return true end
-        else
-            turtle.digUp()
-        end
-        turtle.attackUp()
-        os.sleep(0.06)
-    end
-    return false
-end
-
-local function moveDownSafe(retries)
-    retries = retries or 8
-    for i = 1, retries do
-        if not turtle.detectDown() then
-            if turtle.down() then return true end
-        else
-            turtle.digDown()
-        end
-        os.sleep(0.06)
-    end
-    return false
-end
-
-local function turnLeftSafe()
-    turtle.turnLeft()
-    state.heading = (state.heading + 3) % 4
-end
-
-local function turnRightSafe()
-    turtle.turnRight()
-    state.heading = (state.heading + 1) % 4
-end
-
--- Block helpers
-
--- Attempts to dig in the given direction ("forward", "up", "down").
--- Returns true if a block was removed (or an action was taken), false otherwise.
-local function digIfBlock(direction)
-    if direction == "forward" then
-        if turtle.detect() then
-            -- try to remove block; try multiple times to handle protected/laggy servers
-            if turtle.dig() then return true end
-            -- fight mobs if they block the dig
-            turtle.attack()
-            os.sleep(0.05)
-            return turtle.dig()
-        end
-        return false
-    elseif direction == "up" then
-        if turtle.detectUp() then
-            if turtle.digUp() then return true end
-            turtle.attackUp()
-            os.sleep(0.05)
-            return turtle.digUp()
-        end
-        return false
-    elseif direction == "down" then
-        if turtle.detectDown() then
-            if turtle.digDown() then return true end
-            os.sleep(0.05)
-            return turtle.digDown()
-        end
-        return false
-    else
-        error("digIfBlock: unknown direction '" .. tostring(direction) .. "'")
-    end
-end
-
--- Place a replacement block under the turtle using config.replaceWithSlot (auto-discover if nil).
--- Returns true if placement succeeded.
-local function placeReplacementDown()
-    -- ensure we have a slot reserved for replacement blocks
-    if config.replaceWithSlot and turtle.getItemCount(config.replaceWithSlot) > 0 then
-        turtle.select(config.replaceWithSlot)
-        vprint("placeReplacementDown: placing from configured slot %d", config.replaceWithSlot)
-        return turtle.placeDown()
-    end
-
-    local slot = findCobbleSlot()
-    if not slot then
-        vprint("placeReplacementDown: no replacement slot available")
-        return false
-    end
-    config.replaceWithSlot = slot
-    turtle.select(slot)
-    vprint("placeReplacementDown: placing from discovered slot %d", slot)
-    return turtle.placeDown()
-end
-
--- Place a replacement block above the turtle
-local function placeReplacementUp()
-    if config.replaceWithSlot and turtle.getItemCount(config.replaceWithSlot) > 0 then
-        turtle.select(config.replaceWithSlot)
-        vprint("placeReplacementUp: placing from configured slot %d", config.replaceWithSlot)
-        return turtle.placeUp()
-    end
-
-    local slot = findCobbleSlot()
-    if not slot then
-        vprint("placeReplacementUp: no replacement slot available")
-        return false
-    end
-    config.replaceWithSlot = slot
-    turtle.select(slot)
-    vprint("placeReplacementUp: placing from discovered slot %d", slot)
-    return turtle.placeUp()
-end
-
--- Place a replacement block in front of the turtle
-local function placeReplacementForward()
-    if config.replaceWithSlot and turtle.getItemCount(config.replaceWithSlot) > 0 then
-        turtle.select(config.replaceWithSlot)
-        vprint("placeReplacementForward: placing from configured slot %d", config.replaceWithSlot)
-        return turtle.place()
-    end
-
-    local slot = findCobbleSlot()
-    if not slot then
-        vprint("placeReplacementForward: no replacement slot available")
-        return false
-    end
-    config.replaceWithSlot = slot
-    turtle.select(slot)
-    vprint("placeReplacementForward: placing from discovered slot %d", slot)
-    return turtle.place()
-end
-
--- Inventory / chest helpers
-
--- Find a slot containing cobblestone (or similar replacement block).
--- Preference: use config.replaceWithSlot if valid.
-local function findCobbleSlot()
-    -- respect an already-configured slot if it still contains items
-    if config.replaceWithSlot and turtle.getItemCount(config.replaceWithSlot) > 0 then
-        return config.replaceWithSlot
-    end
-
-    for i = 1, 16 do
-        local count = turtle.getItemCount(i)
-        if count > 0 then
-            local detail = turtle.getItemDetail(i) or {}
-            local name = (detail.name or ""):lower()
-            -- match common cobble-like names; adjust if your modpack uses different ids
-            -- include 'cobb' to catch 'cobbled_deepslate' and similar ids
-            if name:find("cobb") or name:find("cobblestone") or name:find("cobble") or (name:find("stone") and name:find("polished") == nil) then
-                vprint("findCobbleSlot: found candidate slot %d -> %s (count=%d)", i, tostring(detail.name), count)
-                return i
+    local originalSlot = turtle.getSelectedSlot()
+    for slot = 1, 16 do
+        if turtle.getItemCount(slot) > 0 then
+            turtle.select(slot)
+            if turtle.refuel and turtle.refuel(0) then
+                turtle.refuel()
+                if getFuelLevelValue() >= desiredLevel then
+                    turtle.select(originalSlot)
+                    return true
+                end
             end
         end
     end
-    vprint("findCobbleSlot: no cobble-like slot found — falling back to first non-empty slot")
-    -- fallback: return first non-empty slot to allow placement of any block
-    for i = 1, 16 do
-        if turtle.getItemCount(i) > 0 then
-            vprint("findCobbleSlot: fallback using slot %d", i)
-            return i
+
+    turtle.select(originalSlot)
+
+    if getFuelLevelValue() >= requiredMoves then
+        return true
+    end
+
+    print("Out of fuel. Add fuel to the turtle and press Enter to continue.")
+    read()
+    return ensureFuel(requiredMoves)
+end
+
+local function findCobbleSlot()
+    local fallbackSlot = nil
+    for slot = 1, 16 do
+        if turtle.getItemCount(slot) > 0 then
+            local detail = turtle.getItemDetail(slot)
+            local name = detail and detail.name or ""
+            local lowerName = name:lower()
+            if lowerName:find("cobble", 1, true) then
+                return slot, detail
+            end
+            if not fallbackSlot then
+                fallbackSlot = slot
+            end
         end
+    end
+    return fallbackSlot
+end
+
+local function checkCobbleSlot()
+    if not config.replaceBlocks then
+        return false
+    end
+
+    if config.replaceWithSlot and turtle.getItemCount(config.replaceWithSlot) > 0 then
+        return true
+    end
+
+    local slot = findCobbleSlot()
+    if not slot then
+        if waitForReplacement then
+            slot = waitForReplacement()
+        else
+            return false
+        end
+    end
+
+    if slot then
+        config.replaceWithSlot = slot
+        return true
+    end
+
+    return false
+end
+
+local function placeReplacementGeneric(placeFunc, digDirection)
+    if not config.replaceBlocks then
+        return true
+    end
+
+    if not checkCobbleSlot() then
+        return false
+    end
+
+    local originalSlot = turtle.getSelectedSlot()
+    turtle.select(config.replaceWithSlot)
+
+    local function attempt()
+        return placeFunc()
+    end
+
+    local placed = attempt()
+    if not placed and digDirection then
+        if digDirection == "down" then
+            turtle.digDown()
+        elseif digDirection == "up" then
+            turtle.digUp()
+        elseif digDirection == "forward" then
+            turtle.dig()
+        end
+        placed = attempt()
+    end
+
+    turtle.select(originalSlot)
+    return placed
+end
+
+local function placeReplacementDown()
+    return placeReplacementGeneric(turtle.placeDown, "down")
+end
+
+local function placeReplacementUp()
+    return placeReplacementGeneric(turtle.placeUp, "up")
+end
+
+local function placeReplacementForward()
+    return placeReplacementGeneric(turtle.place, "forward")
+end
+
+local function ensureTrashSlot()
+    if config.trashSlot and turtle.getItemCount(config.trashSlot) > 0 then
+        return true
+    end
+
+    if config.replaceWithSlot and turtle.getItemCount(config.replaceWithSlot) > 0 then
+        config.trashSlot = config.replaceWithSlot
+        return true
+    end
+
+    local keywords = config.trashKeywords or {}
+    for slot = 1, 16 do
+        if turtle.getItemCount(slot) > 0 then
+            local detail = turtle.getItemDetail(slot)
+            local name = (detail and detail.name or ""):lower()
+            for _, keyword in ipairs(keywords) do
+                if keyword ~= "" and name:find(keyword, 1, true) then
+                    config.trashSlot = slot
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+local function placeTrashForward()
+    if not ensureTrashSlot() then
+        return false
+    end
+
+    local originalSlot = turtle.getSelectedSlot()
+    turtle.select(config.trashSlot)
+
+    local placed = turtle.place()
+    if not placed and turtle.detect() then
+        turtle.dig()
+        placed = turtle.place()
+    end
+
+    turtle.select(originalSlot)
+    return placed
+end
+
+local function isTrashBlock(name)
+    name = (name or ""):lower()
+    if name == "" then
+        return false
+    end
+
+    for _, keyword in ipairs(config.trashKeywords or {}) do
+        if keyword ~= "" and name:find(keyword, 1, true) then
+            return true
+        end
+    end
+
+    return false
+end
+
+-- Utility: returns the lowercase name of the block beneath the turtle or nil if
+-- no block is present or the inspect call is unavailable.
+local function getBlockBelowName()
+    if not turtle.inspectDown then
+        return nil
+    end
+
+    local ok, detail = turtle.inspectDown()
+    if ok and detail then
+        return (detail.name or ""):lower(), detail
     end
     return nil
 end
 
--- Backwards-compatible wrapper (some older code/messages reference checkCobbleSlot)
-local function checkCobbleSlot()
-    return findCobbleSlot()
+-- Ensures the block below the turtle is replaced with the configured
+-- replacement material when possible. Leaves bedrock or already-placed cobble
+-- untouched. Returns true when the floor is in the desired state.
+local digIfBlock -- forward declaration for block removal helper
+
+local function ensureFloorReplaced()
+    local nameBelow = getBlockBelowName()
+    if nameBelow then
+        if nameBelow:find("bedrock", 1, true) then
+            return true
+        end
+        if isTrashBlock(nameBelow) then
+            return true
+        end
+    end
+
+    digIfBlock("down")
+
+    if not config.replaceBlocks then
+        return true
+    end
+
+    if not placeReplacementDown() then
+        logBranch("Floor replacement skipped - supply more cobble")
+        return false
+    end
+
+    return true
 end
 
--- Expose helpers as globals for compatibility with older pastebin versions
+digIfBlock = function(direction)
+    local detectFunc, digFunc, attackFunc
+    if direction == "forward" then
+        detectFunc = turtle.detect
+        digFunc = turtle.dig
+        attackFunc = turtle.attack
+    elseif direction == "up" then
+        detectFunc = turtle.detectUp
+        digFunc = turtle.digUp
+        attackFunc = turtle.attackUp
+    elseif direction == "down" then
+        detectFunc = turtle.detectDown
+        digFunc = turtle.digDown
+        attackFunc = turtle.attackDown
+    else
+        error("digIfBlock: invalid direction '" .. tostring(direction) .. "'")
+    end
+
+    if not detectFunc then
+        return false
+    end
+
+    local removed = false
+    local attempts = 0
+    while detectFunc() do
+        if digFunc() then
+            removed = true
+        else
+            if attackFunc then attackFunc() end
+            delay(0.1)
+        end
+        attempts = attempts + 1
+        if attempts > 10 then
+            break
+        end
+    end
+    return removed
+end
+
+local function turnLeftSafe()
+    turtle.turnLeft()
+end
+
+local function turnRightSafe()
+    turtle.turnRight()
+end
+
+local function turnAround()
+    turtle.turnLeft()
+    turtle.turnLeft()
+end
+
+local function moveForwardSafe()
+    ensureFuel(1)
+    digIfBlock("forward")
+    local attempts = 0
+    while not turtle.forward() do
+        attempts = attempts + 1
+        if digIfBlock("forward") then
+            -- keep trying after clearing
+        else
+            turtle.attack()
+            delay(0.1)
+        end
+        if attempts > 20 then
+            return false
+        end
+    end
+    return true
+end
+
+local function moveBackSafe()
+    ensureFuel(1)
+    if turtle.back() then
+        return true
+    end
+    turnAround()
+    local moved = moveForwardSafe()
+    turnAround()
+    return moved
+end
+
+local function moveUpSafe()
+    ensureFuel(1)
+    local attempts = 0
+    while not turtle.up() do
+        attempts = attempts + 1
+        if digIfBlock("up") then
+            -- cleared obstacle above
+        else
+            turtle.attackUp()
+            delay(0.1)
+        end
+        if attempts > 20 then
+            return false
+        end
+    end
+    return true
+end
+
+local function moveDownSafe()
+    ensureFuel(1)
+    local attempts = 0
+    while not turtle.down() do
+        attempts = attempts + 1
+        if digIfBlock("down") then
+            -- cleared obstacle below
+        else
+            turtle.attackDown()
+            delay(0.1)
+        end
+        if attempts > 20 then
+            return false
+        end
+    end
+    return true
+end
+
+local function patchSideWall(direction, height)
+    height = math.max(1, height or 1)
+
+    local turn = direction == "right" and turnRightSafe or turnLeftSafe
+    local undo = direction == "right" and turnLeftSafe or turnRightSafe
+
+    local climbed = 0
+
+    local function digForwardForPatch()
+        if not turtle.detect then
+            return false
+        end
+
+        local removed = false
+        local attempts = 0
+        while turtle.detect() do
+            if turtle.dig() then
+                removed = true
+            else
+                turtle.attack()
+                delay(0.1)
+            end
+            attempts = attempts + 1
+            if attempts > 10 then
+                break
+            end
+        end
+        return removed
+    end
+
+    local function processLevel(level)
+        local hasBlock, detail = turtle.inspect()
+        local name = detail and detail.name or ""
+
+        if hasBlock and isTrashBlock(name) then
+            return
+        end
+
+        local dug = digForwardForPatch()
+        if dug or not hasBlock then
+            if not placeTrashForward() then
+                logBranch("Wall patch missing blocks on %s side (level %d)", direction, level)
+            end
+        end
+    end
+
+    turn()
+    processLevel(0)
+
+    for level = 1, height - 1 do
+        if not moveUpSafe() then
+            logBranch("Wall patch blocked at level %d on %s side", level, direction)
+            break
+        end
+        climbed = climbed + 1
+        processLevel(level)
+    end
+
+    while climbed > 0 do
+        moveDownSafe()
+        climbed = climbed - 1
+    end
+
+    undo()
+end
+
 if _ENV then
     _ENV.findCobbleSlot = findCobbleSlot
     _ENV.checkCobbleSlot = checkCobbleSlot
@@ -297,7 +525,7 @@ local function waitForReplacement()
 
         -- nothing yet; wait and poll again
         print("Waiting for replacement blocks... (place items into the turtle)")
-        sleep(3)
+        delay(3)
     end
 end
 
@@ -350,7 +578,7 @@ local function placeChestBehind()
     if not turtle.place() then
         if turtle.detect() then
             turtle.dig()
-            os.sleep(0.05)
+            delay(0.05)
             turtle.place()
         end
     end
@@ -403,6 +631,9 @@ local function depositToChest()
 end
 
 -- Core behaviours
+-- forward-declare branchTunnel so mainTunnel can call it (it's defined later)
+local branchTunnel
+
 local function mainTunnel(width, height)
     -- Create a straight main tunnel by repeatedly clearing a cross-section
     -- in front of the turtle and advancing. Default is a 3x3 tunnel (width=3,height=3).
@@ -423,13 +654,13 @@ local function mainTunnel(width, height)
     end
 
     -- How many forward steps to take for the main tunnel
-    local tunnelLength = config.branchLength or 20
+    local tunnelLength = config.branchLength or 16
 
     -- Small local safety helpers that attempt to dig/attack until movement succeeds.
     local function ensureClearForward()
         while turtle.detect() do
             turtle.dig()
-            os.sleep(0.05)
+            delay(0.05)
         end
     end
 
@@ -438,30 +669,79 @@ local function mainTunnel(width, height)
         while not turtle.forward() do
             -- try to clear any mob blocking the way
             turtle.attack()
-            os.sleep(0.1)
+            delay(0.1)
         end
     end
 
     local function safeBack()
         while not turtle.back() do
             turtle.attack()
-            os.sleep(0.1)
+            delay(0.1)
         end
     end
 
     -- Dig repeated blocks above current position to reach the requested height
-    local function clearCeiling()
-        for i = 1, math.max(0, height - 1) do
-            -- use robust dig helper and place replacement on the ceiling
+    -- Clear ceiling up to the requested height. This function now uses an
+    -- internal counter to decide when to only dig and climb (intermediate
+    -- layers) and when to dig and place a replacement block (topmost layer).
+    -- It will return the turtle to its original vertical level before
+    -- returning so callers don't need to manage vertical position.
+    local function clearCeiling(stepState)
+        stepState = stepState or { placedUp = false }
+        local movedUp = 0
+        local heightToClear = math.max(0, height - 1)
+
+        for i = 1, heightToClear do
+            -- If there's a block above, remove it. Use the loop index 'i' to
+            -- decide whether this is an intermediate layer (we should dig and
+            -- move up without placing) or the final/top layer (dig and place
+            -- the replacement on the ceiling).
             if digIfBlock("up") then
-                placeReplacementUp()
-                vprint("mainTunnel: placed replacement on ceiling at offset %d", i)
+                if i < heightToClear then
+                    -- intermediate layer: dig and climb up to continue clearing
+                    vprint("mainTunnel: ceiling offset %d/%d - digging and moving up (no place)", i, heightToClear)
+                    if moveUpSafe() then
+                        movedUp = movedUp + 1
+                    else
+                        -- failed to move up: try to restore ceiling if we haven't
+                        -- placed it yet for this step to avoid leaving an open gap.
+                        vprint("mainTunnel: failed to move up at offset %d - attempting to restore ceiling", i)
+                        if not stepState.placedUp then
+                            placeReplacementUp()
+                            stepState.placedUp = true
+                        end
+                        break
+                    end
+                else
+                    -- topmost layer: place a replacement block on the ceiling
+                    if not stepState.placedUp then
+                        placeReplacementUp()
+                        stepState.placedUp = true
+                        vprint("mainTunnel: placed replacement on ceiling at offset %d", i)
+                    else
+                        vprint("mainTunnel: skipped duplicate ceiling placement at offset %d", i)
+                    end
+                end
             else
                 vprint("mainTunnel: nothing to dig on ceiling at offset %d", i)
             end
-            -- small pause to let server update
-            os.sleep(0.02)
+            delay(0.02)
         end
+
+        -- If we climbed up during clearing, return back down to the original
+        -- level so callers don't need to manage vertical position.
+        if movedUp > 0 then
+            vprint("mainTunnel: returning down %d levels after ceiling clear", movedUp)
+            for j = 1, movedUp do
+                if not moveDownSafe() then
+                    vprint("mainTunnel: failed to move down after ceiling clearing (iteration=%d)", j)
+                    break
+                end
+            end
+        end
+
+        -- expose movedUp count for callers/debugging if they inspect stepState
+        stepState.movedUp = movedUp
     end
 
     -- Basic fuel check (works whether fuel is numeric or "unlimited")
@@ -526,153 +806,258 @@ local function mainTunnel(width, height)
         end
 
         vprint("mainTunnel: advanced to step %d", step)
-    end
 
-    -- finished main tunnel
-end
+        -- Launch perpendicular branches every `config.branchSpacing` steps.
+        if config.branchSpacing and config.branchSpacing > 0 and (step % config.branchSpacing) == 0 then
+            local branchLength = config.branchLength or 8
+            local branchWidth = config.branchWidth or 1
+            local branchHeight = config.branchHeight or 2
 
-local function branchTunnel(length, width)
-    -- Default values if not specified
-    length = length or config.branchLength
-    width = width or 3
+            vprint(
+                "mainTunnel: launching branches at step %d (length=%d width=%d height=%d)",
+                step,
+                branchLength,
+                branchWidth,
+                branchHeight
+            )
 
-    -- Check for valid width (must be odd for centered tunnel)
-    if (width % 2) ~= 1 then
-        error("branchTunnel: width must be an odd number (centered tunnel).")
-    end
+            local function runBranch(side)
+                local turnToBranch = side == "left" and turnLeftSafe or turnRightSafe
+                local turnReturn = side == "left" and turnRightSafe or turnLeftSafe
+                local realign = side == "left" and turnLeftSafe or turnRightSafe
 
-    -- Helper function to dig and replace a block
-    local function digAndReplace(digFunc, placeFunc)
-        -- Prefer using the robust digIfBlock helper for the three primary dig
-        -- directions so we get retries, attacks, and consistent behavior.
-        local ok = false
+                logBranch("Launching %s branch at main step %d (length=%d width=%d height=%d)",
+                    side, step, branchLength, branchWidth, branchHeight)
 
-        if digFunc == turtle.dig then
-            ok = digIfBlock("forward")
-        elseif digFunc == turtle.digUp then
-            ok = digIfBlock("up")
-        elseif digFunc == turtle.digDown then
-            ok = digIfBlock("down")
-        elseif type(digFunc) == "function" then
-            local success, res = pcall(digFunc)
-            if not success then
-                vprint("digAndReplace: digFunc raised error: %s", tostring(res))
-                ok = false
-            else
-                ok = res
-            end
-        else
-            vprint("digAndReplace: no dig function provided")
-        end
+                turnToBranch()
 
-        if ok then
-            vprint("digAndReplace: removed block")
-            if type(placeFunc) == "function" then
-                local psuccess, pres = pcall(placeFunc)
-                if not psuccess then
-                    vprint("digAndReplace: placeFunc raised error: %s", tostring(pres))
+                local success, status, detail, extra = pcall(branchTunnel, branchLength, branchWidth, branchHeight, side)
+                local traversed = 0
+
+                if not success then
+                    vprint("mainTunnel: %s branch raised an error at step %d: %s", side, step, tostring(status))
+                    logBranch("%s branch error: %s", side, tostring(status))
+                    traversed = 0
+                elseif status ~= true then
+                    vprint("mainTunnel: %s branch aborted at step %d (%s)", side, step, tostring(detail))
+                    logBranch("%s branch aborted early (%s)", side, tostring(detail))
+                    traversed = tonumber(extra) or 0
                 else
-                    vprint("digAndReplace: placement result = %s", tostring(pres))
+                    traversed = tonumber(detail) or branchLength
+                    logBranch("%s branch completed (%d blocks mined)", side, traversed)
                 end
-            end
-        else
-            vprint("digAndReplace: nothing to remove or dig failed")
-        end
-    end
 
-    -- Main branch tunnel loop
-    for step = 1, length do
-        -- Check fuel level
-        vprint("branchTunnel: starting step %d/%d", step, length)
-        ensureFuel()
+                traversed = math.max(0, math.min(traversed or 0, branchLength))
 
-        -- Clear and replace the floor
-        digAndReplace(turtle.digDown, placeReplacementDown)
-
-        -- Clear and replace the ceiling
-        digAndReplace(turtle.digUp, placeReplacementUp)
-
-        -- Clear forward space
-        digAndReplace(turtle.dig, nil)  -- Don't replace forward blocks
-
-        -- Place torch if needed
-        if step % config.torchInterval == 0 then
-            local torchSlot = findTorchSlot()
-            if torchSlot then
-                vprint("branchTunnel: placing torch from slot %d", torchSlot)
-                turtle.select(torchSlot)
-                turtle.placeDown()
-            else
-                vprint("branchTunnel: no torch found for placement at step %d", step)
-            end
-        end
-
-        -- Move forward safely
-        vprint("branchTunnel: moving forward from step %d", step)
-        if not moveForwardSafe() then
-            vprint("branchTunnel: moveForwardSafe failed at step %d", step)
-            return false
-        end
-
-        -- Handle side blocks for wider tunnels
-        if width > 1 then
-            local half = (width - 1) / 2
-
-            -- helper to move back safely (turn around, forward, turn back)
-            local function moveBackSafe()
-                turnRightSafe(); turnRightSafe()
-                local ok = moveForwardSafe()
-                turnRightSafe(); turnRightSafe()
-                return ok
+                turnReturn(); turnReturn()
+                if traversed <= 0 then
+                    logBranch("%s branch return skipped (no forward progress)", side)
+                end
+                for offset = 1, traversed do
+                    if not moveForwardSafe() then
+                        vprint("mainTunnel: %s branch return path blocked at offset %d", side, offset)
+                        logBranch("%s branch return blocked at offset %d", side, offset)
+                        break
+                    end
+                end
+                realign()
+                logBranch("Realigned after %s branch", side)
             end
 
-            -- Clear left side columns by stepping into each side column, clearing
-            -- the column (floor/ceiling) and the wall block that faces the main tunnel.
-            turtle.turnLeft()
-            for i = 1, half do
-                -- step into side column
-                if not moveForwardSafe() then return false end
-
-                -- face original forward to clear the wall at this lateral offset
-                turnRightSafe()
-                digAndReplace(turtle.dig, placeReplacementForward)
-                digAndReplace(turtle.digUp, placeReplacementUp)
-                digAndReplace(turtle.digDown, placeReplacementDown)
-                -- face lateral direction again to continue stepping outwards
-                turnLeftSafe()
-            end
-
-            -- return to center column
-            for i = 1, half do
-                if not moveBackSafe() then return false end
-            end
-            -- now face original forward orientation
-            turnRightSafe()
-
-            -- Clear right side columns (mirror of left)
-            turtle.turnRight()
-            for i = 1, half do
-                if not moveForwardSafe() then return false end
-
-                -- face original forward to clear the wall at this lateral offset
-                turnLeftSafe()
-                digAndReplace(turtle.dig, placeReplacementForward)
-                digAndReplace(turtle.digUp, placeReplacementUp)
-                digAndReplace(turtle.digDown, placeReplacementDown)
-                -- face lateral direction again
-                turnRightSafe()
-            end
-
-            -- return to center for right side
-            for i = 1, half do
-                if not moveBackSafe() then return false end
-            end
-            -- restore original forward orientation
-            turnLeftSafe()
+            runBranch("left")
+            runBranch("right")
         end
     end
 
     return true
+end
+
+-- Branch helpers -----------------------------------------------------------
+
+-- Clears the vertical column at the turtle's current position, replacing the
+-- floor with cobble and opening the ceiling up to the requested height. When a
+-- climb is required to reach higher blocks, the turtle returns to the original
+-- level before exiting.
+local function clearColumn(height, options)
+    height = math.max(1, height or 1)
+    options = options or {}
+    local skipCeiling = options.skipCeiling
+
+    ensureFloorReplaced()
+
+    if height <= 1 then
+        return false
+    end
+
+    local climbed = 0
+    local topCleared = false
+
+    for level = 1, height - 1 do
+        local isTop = (level == height - 1)
+        local removed = digIfBlock("up")
+
+        if not isTop then
+            if moveUpSafe() then
+                climbed = climbed + 1
+            else
+                break
+            end
+        else
+            if removed then
+                topCleared = true
+                if not skipCeiling then
+                    placeReplacementUp()
+                end
+            end
+        end
+    end
+
+    while climbed > 0 do
+        if not moveDownSafe() then
+            break
+        end
+        climbed = climbed - 1
+    end
+
+    return topCleared
+end
+
+local function replaceColumnCeiling(height)
+    height = math.max(1, height or 1)
+
+    if height < 2 or not config.replaceBlocks then
+        return true
+    end
+
+    local climbLevels = math.max(0, height - 2)
+    local climbed = 0
+
+    for _ = 1, climbLevels do
+        if not moveUpSafe() then
+            while climbed > 0 do
+                moveDownSafe()
+                climbed = climbed - 1
+            end
+            return false, "blocked while climbing to ceiling"
+        end
+        climbed = climbed + 1
+    end
+
+    local placed = placeReplacementUp()
+
+    while climbed > 0 do
+        moveDownSafe()
+        climbed = climbed - 1
+    end
+
+    if not placed then
+        return false, "no replacement blocks available"
+    end
+
+    return true
+end
+
+-- Digs forward into the next branch cell, replaces the floor, and clears the
+-- vertical space up to the requested height. Returns false if movement is
+-- blocked so the caller can abort early.
+local function advanceBranchStep(height)
+    digIfBlock("forward")
+    if not moveForwardSafe() then
+        return false, "blocked moving forward"
+    end
+
+    local topCleared = clearColumn(height, { skipCeiling = true })
+    return true, topCleared
+end
+
+-- Attempts to drop a torch at the configured interval so finished branches
+-- stay lit for future visits. Torches are placed on the floor under the turtle
+-- after the slice has been cleared.
+local function placeBranchTorch(step, branchSide)
+    if not config.torchInterval or config.torchInterval <= 0 then
+        return
+    end
+    if step % config.torchInterval ~= 0 then
+        return
+    end
+
+    local torchSlot = findTorchSlot()
+    if not torchSlot then
+        vprint("branchTunnel: torch requested at step %d but none available", step)
+        logBranch("No torch available for step %d", step)
+        return
+    end
+
+    local previous = turtle.getSelectedSlot()
+    turtle.select(torchSlot)
+    if turtle.placeDown() then
+        logBranch("Placed torch at step %d (%s branch)", step, branchSide or "unknown")
+    else
+        vprint("branchTunnel: failed to place torch at step %d", step)
+        logBranch("Torch placement failed at step %d (%s branch)", step, branchSide or "unknown")
+    end
+    turtle.select(previous)
+end
+
+-- branchTunnel creates a perpendicular mining branch. Each step clears the
+-- block ahead, replaces the floor and ceiling, patches the exposed side walls
+-- with trash blocks, and optionally drops a torch for lighting.
+function branchTunnel(length, width, height, branchSide)
+    length = length or config.branchLength or 8
+    width = width or config.branchWidth or 1
+    height = height or config.branchHeight or 2
+    branchSide = branchSide or "left"
+
+    if length <= 0 then
+        return true, 0
+    end
+    if height < 1 then
+        height = 1
+    end
+    local stepsCompleted = 0
+
+    logBranch("branchTunnel start: side=%s length=%d width=%d height=%d", branchSide, length, width, height)
+
+    for step = 1, length do
+        vprint("branchTunnel: step %d/%d", step, length)
+        logBranch("branch %s: step %d/%d", branchSide, step, length)
+        ensureFuel(1 + height)
+
+        local advanced, advanceDetail = advanceBranchStep(height)
+        if not advanced then
+            local reason = string.format("%s at step %d", advanceDetail or "advance failure", step)
+            logBranch("branchTunnel aborted (%s, steps=%d)", reason, stepsCompleted)
+            return false, reason, stepsCompleted
+        end
+
+        local ceilingCleared = advanceDetail and true or false
+
+        -- Avoid patching the open hallway entrance on the first step so the
+        -- turtle does not seal the main tunnel. The wall adjacent to the
+        -- main tunnel depends on which side the branch exits from.
+        local skipLeftPatch = (step == 1 and branchSide == "right")
+        local skipRightPatch = (step == 1 and branchSide == "left")
+
+        if not skipLeftPatch then
+            patchSideWall("left", height)
+        end
+        if not skipRightPatch then
+            patchSideWall("right", height)
+        end
+
+        if ceilingCleared and config.replaceBlocks then
+            local replaced, reason = replaceColumnCeiling(height)
+            if not replaced then
+                logBranch("Ceiling replacement skipped (%s)", reason or "unknown reason")
+            end
+        end
+
+        placeBranchTorch(step, branchSide)
+        stepsCompleted = step
+    end
+
+    logBranch("branchTunnel complete: side=%s steps=%d", branchSide, stepsCompleted)
+    return true, stepsCompleted
 end
 
 -- High level flow
@@ -718,14 +1103,17 @@ local function run(...)
 
     -- run main tunnel (short 3-wide, height from config)
     print("Digging main tunnel...")
-    mainTunnel(3, config.branchHeight)
-
-    -- run a single branch run for now (you can extend to do multiple branches later)
-    print("Digging branch tunnel...")
-    local ok = branchTunnel(config.branchLength, 3)
-    if not ok then
-        error("branchTunnel failed or was interrupted")
+    local mt_ok, mt_err_or_res = pcall(mainTunnel, 3, config.branchHeight)
+    if not mt_ok then
+        -- mainTunnel threw an error; report and stop before running branches
+        error("mainTunnel failed: " .. tostring(mt_err_or_res))
     end
+    if mt_err_or_res ~= true then
+        -- mainTunnel returned false or unexpected value; do not proceed
+        error("mainTunnel did not complete successfully; aborting branch mining")
+    end
+
+    -- Branches are launched from mainTunnel at configured spacing.
 
     print("Branch mining complete.")
 end
@@ -738,4 +1126,12 @@ local function main(...)
     end
 end
 
-main(...)
+-- Entry point: avoid using '...' at top-level (some loaders — e.g. pastebin.run —
+-- execute the chunk without varargs). Prefer the global `arg` table if
+-- available; otherwise call `main()` with no arguments.
+local entry_args = {}
+if type(arg) == "table" then
+    for i = 1, #arg do entry_args[i] = arg[i] end
+end
+
+main(table.unpack(entry_args))
