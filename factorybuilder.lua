@@ -97,6 +97,8 @@ local FUEL_RESTOCK_MAX_PULLS = 16 -- max suck attempts per container while seeki
 local AUTO_MODE   = true         -- set-and-forget: never prompt; auto-wait and retry
 local RESTOCK_RETRY_SECONDS = 5  -- wait time between material restock retries in AUTO_MODE
 local ERROR_RETRY_SECONDS   = 5  -- wait time before auto-resume from ERROR in AUTO_MODE
+local RESTOCK_MAX_BASELINE_PASSES = 3 -- number of attempts to acquire baseline stacks this restock cycle
+local RESTOCK_PRIORITY_EXTRA_STACKS = 4 -- attempt up to this many additional stacks of priority item beyond baseline
 
 -- Identify the legend entry that represents empty space so we can ignore it.
 local AIR_BLOCK   = manifest.legend["."] or "minecraft:air"
@@ -724,6 +726,124 @@ local function tryDownNoDig()
   return ok
 end
 
+-- SERVICE STORAGE LOCATION LOGIC -----------------------------------------
+-- Instead of replaying full serpentine movement history (which drags us over
+-- every placed block), service routines (REFUEL / RESTOCK) should:
+-- 1. Ascend one block to the "service lane" (already handled before calls).
+-- 2. Probe for storage adjacent without moving horizontally.
+-- 3. If not found, step outward in a short search pattern just outside the build
+--    footprint, minimizing traversal. We record each horizontal step so we can
+--    reverse it later and return above our original build coordinate.
+-- 4. We DO NOT dig while searching (non-destructive); if blocked we skip that direction.
+-- Pattern chosen: F, B, R, L, F,F (extend outward), then stop.
+-- Assumption: at least one chest/barrel etc. is placed somewhere adjacent or
+-- just one block outside the starting origin perimeter.
+local function findServiceStorageNonSerpentine(ctx)
+  local serviceMoves = {}
+
+  local function record(moveCode)
+    serviceMoves[#serviceMoves+1] = moveCode
+  end
+
+  local function tryStep(stepFn, code)
+    local fuelBefore = turtle.getFuelLevel()
+    if (not isFuelUnlimited()) and fuelBefore <= 0 then return false end
+    local ok = stepFn()
+    if ok then record(code) end
+    return ok
+  end
+
+  local probes = {
+    {label="in place", prep=function() end, cleanup=function() end, inspect=turtle.inspect},
+    {label="right", prep=turtle.turnRight, cleanup=turtle.turnLeft, inspect=turtle.inspect},
+    {label="behind", prep=function() turtle.turnRight(); turtle.turnRight(); end, cleanup=function() turtle.turnRight(); turtle.turnRight(); end, inspect=turtle.inspect},
+    {label="left", prep=turtle.turnLeft, cleanup=turtle.turnRight, inspect=turtle.inspect},
+    {label="up", prep=function() end, cleanup=function() end, inspect=turtle.inspectUp},
+    {label="down", prep=function() end, cleanup=function() end, inspect=turtle.inspectDown},
+  }
+
+  local function scanAdjacency()
+    for _,p in ipairs(probes) do
+      p.prep()
+      local ok,data = p.inspect()
+      p.cleanup()
+      if ok and data and isInventoryBlock(data.name) then
+        if VERBOSE then log("Service storage found "..p.label.." -> "..data.name) end
+        return true
+      end
+    end
+    return false
+  end
+
+  if scanAdjacency() then
+    return serviceMoves -- no horizontal movement needed
+  end
+
+  -- Horizontal outward search pattern (non-digging). We use raw turtle movement
+  -- and always restore orientation after lateral steps. Every successful step is recorded.
+  local function stepForward()
+    local ok = turtle.forward()
+    if ok then record('F') end
+    return ok
+  end
+  local function stepBack()
+    local ok = turtle.back()
+    if ok then record('B') end
+    return ok
+  end
+  local function stepRight()
+    turtle.turnRight()
+    local ok = turtle.forward()
+    if ok then record('R') end
+    turtle.turnLeft()
+    return ok
+  end
+  local function stepLeft()
+    turtle.turnLeft()
+    local ok = turtle.forward()
+    if ok then record('L') end
+    turtle.turnRight()
+    return ok
+  end
+
+  -- Sequence of candidate displacements with storage scan after each.
+  local searchPlan = {
+    {fn=stepForward},
+    {fn=stepBack},
+    {fn=stepRight},
+    {fn=stepLeft},
+    {fn=stepForward},
+    {fn=stepForward},
+  }
+
+  for _,step in ipairs(searchPlan) do
+    step.fn()
+    if scanAdjacency() then return serviceMoves end
+  end
+
+  return serviceMoves -- may be empty or partial path; caller will attempt restock/refuel anyway
+end
+
+local function reverseServiceMoves(serviceMoves)
+  -- Undo horizontal offsets exactly; codes:
+  -- F: forward  -> reverse with back
+  -- B: back     -> reverse with forward
+  -- R: strafe right (turnRight, forward, turnLeft) -> reverse with strafe left
+  -- L: strafe left  (turnLeft, forward, turnRight) -> reverse with strafe right
+  for i = #serviceMoves, 1, -1 do
+    local code = serviceMoves[i]
+    if code == 'F' then
+      turtle.back()
+    elseif code == 'B' then
+      turtle.forward()
+    elseif code == 'R' then
+      turtle.turnLeft(); turtle.forward(); turtle.turnRight()
+    elseif code == 'L' then
+      turtle.turnRight(); turtle.forward(); turtle.turnLeft()
+    end
+  end
+end
+
 local function placeBlock(blockName)
   -- Places the specified block below the turtle, but first checks if the
   -- existing block already matches the desired target. If so, we skip digging
@@ -1178,17 +1298,85 @@ states[STATE_RESTOCK] = function(ctx)
   -- NEW: Step up into known-safe air lane before moving horizontally, to avoid damaging the current layer.
   local steppedUpFromWork = tryUpNoDig()
 
-  -- Return to origin to access storage reliably (we're likely at y+1 now; path replay will occur at this elevation).
-  local outboundPath = goToOriginByHistory()
-  if VERBOSE then log("Returned to origin via "..#outboundPath.." steps for restock (elevated="..tostring(steppedUpFromWork)..")") end
+  -- Non-serpentine service storage seek: ascend then minimal outward search.
+  local serviceMoves = findServiceStorageNonSerpentine(ctx)
+  local droppedToChestHeight = false -- reserved if future logic wants vertical adjustment
+  -- Bulk restock strategy: acquire baseline stacks of ALL needed items, then prioritize the most requested one.
+  local function restockBaselineAndPriority(targetBlock)
+    local function countFreeSlots()
+      local free = 0
+      for slot=1,15 do if turtle.getItemCount(slot) == 0 then free = free + 1 end end
+      return free
+    end
+    local function inventoryTotals() return tallyInventory() end
 
-  -- If we stepped up at the work site, try to drop to chest height at origin for better access.
-  local droppedToChestHeight = false
-  if steppedUpFromWork then
-    droppedToChestHeight = tryDownNoDig()
+    local inv = inventoryTotals()
+    -- Build table of baseline deficits (up to one stack per item)
+    local baselineMissing = {}
+    for item, remain in pairs(ctx.remainingMaterials) do
+      if remain and remain > 0 then
+        local have = countFamilyInInventory(inv, item)
+        if have < math.min(64, remain) then
+          local want = math.min(64 - have, remain)
+          if want > 0 then baselineMissing[item] = want end
+        end
+      end
+    end
+
+    -- Perform limited passes attempting to pull baseline stacks.
+    local pass = 1
+    while pass <= RESTOCK_MAX_BASELINE_PASSES and next(baselineMissing) ~= nil do
+      attemptChestRestock(baselineMissing, ctx.remainingMaterials)
+      inv = inventoryTotals()
+      -- Recompute remaining baseline deficits
+      local stillMissing = {}
+      for item, _ in pairs(baselineMissing) do
+        local remain = ctx.remainingMaterials[item]
+        if remain and remain > 0 then
+          local have = countFamilyInInventory(inv, item)
+            if have < math.min(64, remain) then
+              local want = math.min(64 - have, remain)
+              if want > 0 then stillMissing[item] = want end
+            end
+        end
+      end
+      baselineMissing = stillMissing
+      pass = pass + 1
+    end
+
+    -- Determine priority item (largest remaining requirement)
+    local priorityItem, maxRemain = nil, -1
+    for item, remain in pairs(ctx.remainingMaterials) do
+      if remain and remain > maxRemain and remain > 0 then
+        priorityItem, maxRemain = item, remain
+      end
+    end
+    if priorityItem then
+      local have = countFamilyInInventory(inv, priorityItem)
+      local freeSlots = countFreeSlots()
+      -- If we already have at least one stack, try to pull extra stacks (up to configured limit & remaining requirement)
+      local remainingNeeded = math.max(ctx.remainingMaterials[priorityItem] - have, 0)
+      if remainingNeeded > 0 and freeSlots > 0 then
+        -- Request up to EXTRA_STACKS full stacks (each 64) or remaining requirement or slot capacity.
+        local maxExtra = RESTOCK_PRIORITY_EXTRA_STACKS * 64
+        local capacity = freeSlots * 64
+        local want = math.min(remainingNeeded, maxExtra, capacity)
+        if want > 0 then
+          local priorityMissing = {[priorityItem] = want}
+          attemptChestRestock(priorityMissing, ctx.remainingMaterials)
+        end
+      end
+    end
+    -- Success criteria: we obtained at least one of the targetBlock family.
+    local haveTarget = targetBlock and countFamilyInInventory(inventoryTotals(), targetBlock) or 0
+    return (haveTarget or 0) > 0
   end
 
-  local ok = ensureMaterialsAvailable(ctx.remainingMaterials, ctx.missingBlockName, true) -- blocking
+  local ok = restockBaselineAndPriority(ctx.missingBlockName)
+  -- Fallback: if target block still missing, enter blocking single-item acquisition loop.
+  if not ok then
+    ok = ensureMaterialsAvailable(ctx.remainingMaterials, ctx.missingBlockName, true)
+  end
   if ok then
     -- Double-check we actually have at least one of the requested family now;
     -- this guards against any false positives from requirement tables.
@@ -1199,11 +1387,8 @@ states[STATE_RESTOCK] = function(ctx)
       ctx.missingBlockName = nil
       -- Before returning, if we descended at origin for chest access, step back up to the safe lane.
       if droppedToChestHeight then tryUpNoDig() end
-      -- Replay path to return to work position (still at elevated lane if we stepped up originally)
-      if #outboundPath > 0 then
-        if VERBOSE then log("Returning to build position ("..#outboundPath.." forward steps)") end
-        returnAlongPath(outboundPath)
-      end
+      -- Reverse outward service moves (horizontal) instead of serpentine history replay.
+      reverseServiceMoves(serviceMoves)
       -- Finally, if we stepped up at the start, return to the work layer without digging.
       if steppedUpFromWork then tryDownNoDig() end
       currentState = ctx.previousState or STATE_BUILD
@@ -1221,10 +1406,13 @@ end
 
 states[STATE_REFUEL] = function(ctx)
   print("Refueling attempt...")
-  -- Step up into known-safe air lane before attempting refuel to avoid accidental digs on the build layer.
+  -- Step up into known-safe air lane.
   local steppedUp = tryUpNoDig()
+  -- Seek storage outward minimally (non-serpentine) then refuel.
+  local serviceMoves = findServiceStorageNonSerpentine(ctx)
   refuel()
-  -- Drop back to the work layer when done, if we had stepped up.
+  -- Reverse horizontal service travel.
+  reverseServiceMoves(serviceMoves)
   if steppedUp then tryDownNoDig() end
   if isFuelUnlimited() or turtle.getFuelLevel() > RESTOCK_AT then
     print("Refuel complete. Fuel level: "..tostring(turtle.getFuelLevel()))
