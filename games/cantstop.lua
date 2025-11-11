@@ -20,11 +20,15 @@
 -- Configuration and constants
 -- ==========================
 
+-- Arcade wrapper note: we require the wrapper for consistency with other games,
+-- but Can't Stop currently uses its own bespoke UI/event loop.
+local _arcade_ok, _arcade = pcall(require, "games.arcade")
+
 ---@diagnostic disable: undefined-global, undefined-field
 -- Above directive silences static analysis complaints about ComputerCraft globals
 -- like `term`, `colors`, `paintutils`, `fs`, `textutils`, `peripheral`, `os`, etc.
 
-local SAVE_FILE = "cantstop.save"
+local SAVE_FILE = "cantstop.save" -- (Arcade wrapper note: this game predates arcade.lua and runs standalone.)
 
 -- Board heights for columns 2..12 per classic rules
 local BOARD_HEIGHTS = {
@@ -751,6 +755,9 @@ end
 -- ==========================
 
 local function main()
+	-- Arcade integration placeholder:
+	-- You can later wrap this logic inside arcade.start({...}) if desired.
+	-- For now we keep Can't Stop independent due to its bespoke UI.
 	seedRandom()
 	initMonitor()
 	computeLayout()
