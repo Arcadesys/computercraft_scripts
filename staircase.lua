@@ -1,467 +1,318 @@
 -- staircase.lua
 -- Usage: staircase.lua <width> <length>
 --
--- Builds an ascending staircase in front of the turtle. The turtle should
+-- Builds an ascending OR descending staircase in front of the turtle. The turtle should
 -- start at the bottom-left corner of the desired staircase, facing the
 -- forward direction of the staircase (the direction you want the stairs to go).
 --
--- Arguments:
+-- Arguments (if no args, prompt user):
 --   width  - number of blocks across for each step (columns)
 --   length - number of steps (height)
+--   distance - how long to build the staircase (steps)
 --
 -- Behavior summary:
 --   For each step from 1..length:
 --     - Place 'width' blocks along the forward direction (building the step surface)
 --     - Move back to the left side, move forward one block (to shift), and move up one
 --   This creates a staircase where each higher step is shifted forward by 1.
---
--- Requirements & assumptions:
---   - The turtle needs placeable blocks in its inventory. The script will use
---     the first non-empty slot it can place from; if a placement fails it scans
---     other slots.
 --   - The turtle must have enough fuel for movement (or be in creative / have no fuel limits).
 --   - The turtle will attempt to dig obstructing blocks in the way while moving.
 --
--- Quick Lua / ComputerCraft tips (short):
---   - Arguments are available as `...` (varargs). Convert with `tonumber`.
---   - Use `turtle.select(n)` to change inventory slot, `turtle.placeDown()` to place below.
---   - Movement helpers below retry and dig obstructions automatically.
+-- IMPLEMENTATION NOTES
+-- - We interpret "width" as the number of blocks across each tread (perpendicular to the
+--   forward direction), and "steps" as how many treads to build.
+-- - The turtle must start at the bottom-left corner of the staircase, facing forward.
+-- - Direction can be "up" (default) or "down". For "down", the turtle moves forward and down
+--   each step while placing treads at the lower levels.
+-- - The script is interactive if arguments are omitted and will attempt to refuel and prompt
+--   for more blocks as needed.
 
-local args = {...}
+-- Tip: Lua basics used here
+-- - Tables are 1-indexed. We loop from 1..n.
+-- - Local variables are preferred (use 'local') to avoid polluting the global environment.
+-- - Functions are first-class; we define helpers for movement, placement, and refueling.
+
+-- ============================================================
+-- Argument parsing and user prompts
+-- ============================================================
+
+local args = { ... }
+
+-- Compatibility shim: When linting outside of ComputerCraft, the global 'turtle',
+-- 'sleep', and 'read' may not exist. We provide harmless fallbacks so static
+-- analysis doesn't fail. Inside ComputerCraft these are supplied by the runtime.
+if not turtle then
+	turtle = {
+		forward = function() return true end,
+		inspect = function() return false, {} end,
+		dig = function() end,
+		attack = function() end,
+		up = function() return true end,
+		inspectUp = function() return false, {} end,
+		digUp = function() end,
+		attackUp = function() end,
+		down = function() return true end,
+		inspectDown = function() return false, {} end,
+		digDown = function() end,
+		attackDown = function() end,
+		getFuelLevel = function() return 100000 end,
+		select = function(_) end,
+		refuel = function(_) return false end,
+		getItemCount = function(_) return 0 end,
+		placeDown = function() return true end,
+		detectDown = function() return true end,
+		turnRight = function() end,
+	}
+end
+if not sleep then sleep = function(_) end end
+if not read then read = function() return io.read() end end
+
+local function to_number_or_nil(s)
+	local n = tonumber(s)
+	if n == nil then return nil end
+	if n < 1 then return nil end
+	return math.floor(n)
+end
+
+local function parse_direction(token)
+	if token == nil then return "up" end
+	token = string.lower(tostring(token))
+	if token == "up" or token == "u" or token == "ascend" or token == "a" then return "up" end
+	if token == "down" or token == "d" or token == "descend" then return "down" end
+	print("Unrecognized direction '" .. token .. "', defaulting to 'up'.")
+	return "up"
+end
+
+local function prompt_number(prompt)
+	while true do
+		io.write(prompt)
+		local s = read()
+		local n = tonumber(s)
+		if n and n >= 1 then return math.floor(n) end
+		print("Please enter a positive integer.")
+	end
+end
+
+local function prompt_direction()
+	while true do
+		io.write("Direction [up/down] (default up): ")
+		local s = read()
+		if s == nil or s == "" then return "up" end
+		local d = parse_direction(s)
+		if d == "up" or d == "down" then return d end
+	end
+end
 
 local function usage()
-  print("Usage: staircase.lua <width> <length>")
-  print("Example: staircase.lua 3 10  -- build 10-step staircase, 3 blocks wide")
+	print("Usage: staircase <width> <steps> [up|down]")
+	print("- width: number of blocks across each tread (columns)")
+	print("- steps: number of treads to build (height)")
+	print("- direction: 'up' to ascend (default) or 'down' to descend")
 end
 
-if #args < 2 then
-  usage()
-  return
+local width
+local steps
+local direction
+
+if #args >= 2 then
+	width = to_number_or_nil(args[1])
+	steps = to_number_or_nil(args[2])
+	if not width or not steps then
+		usage()
+		error("Invalid numeric arguments.")
+	end
+	direction = parse_direction(args[3])
+else
+	usage()
+	width = prompt_number("Width (columns across each step): ")
+	steps = prompt_number("Steps (number of treads): ")
+	direction = prompt_direction()
 end
 
-local width = tonumber(args[1])
-local length = tonumber(args[2])
+-- ============================================================
+-- Safety checks
+-- ============================================================
 
-if not width or not length or width < 1 or length < 1 then
-  print("Invalid numeric arguments.")
-  usage()
-  return
+if not turtle then
+	error("This program must run on a Turtle (turtle API not found).")
 end
 
--- Movement helpers: try to move, but dig obstructing blocks and retry.
-local function tryForward()
-  while not turtle.forward() do
-    if turtle.detect() then
-      -- try to dig blocking block and retry
-      turtle.dig()
-    else
-      -- unknown reason, give a short pause then retry
-      sleep(0.2)
-    end
-  end
+-- ============================================================
+-- Fuel management
+-- ============================================================
+
+local function ensure_fuel(target)
+	-- Returns true if current fuel is unlimited or >= target
+	local level = turtle.getFuelLevel()
+	if level == "unlimited" then return true end
+	if level >= target then return true end
+
+	-- Try to refuel from inventory
+	for slot = 1, 16 do
+		if turtle.getItemCount(slot) > 0 then
+			turtle.select(slot)
+			if turtle.refuel(0) then
+				while turtle.getFuelLevel() < target and turtle.getItemCount(slot) > 0 do
+					turtle.refuel(1)
+				end
+				if turtle.getFuelLevel() >= target then return true end
+			end
+		end
+	end
+	return turtle.getFuelLevel() >= target
 end
 
-local function tryBack()
-  -- Use turtle.back() directly; if it fails try to clear the way by
-  -- turning around, digging forward, and turning back.
-  while not turtle.back() do
-    turtle.turnLeft(); turtle.turnLeft()
-    if turtle.detect() then
-      turtle.dig()
-    end
-    turtle.turnLeft(); turtle.turnLeft()
-    sleep(0.2)
-  end
+local function ensure_fuel_interactive(target)
+	while true do
+		if ensure_fuel(target) then return true end
+		print("Not enough fuel. Add fuel items to inventory and press Enter to retry...")
+		read()
+	end
 end
 
-local function tryUp()
-    local attempts = 0
-    while not turtle.up() do
-        attempts = attempts + 1
-        -- If there's a block above, try to dig it. Otherwise try to attack mobs.
-        if turtle.detectUp and turtle.detectUp() then
-            turtle.digUp()
-        else
-            turtle.attackUp()
-        end
-        -- After a few attempts print a brief status so the user isn't left guessing
-        if attempts % 10 == 0 then
-            print(string.format("tryUp: still blocked after %d attempts; digging/attacking up and retrying...", attempts))
-        end
-        sleep(0.2)
-    end
+local function estimate_required_fuel(w, s)
+	-- Heuristic: per step, we traverse across (w-1), back (w-1), then forward (1) and up/down (1)
+	-- Turns are free. Add a small buffer per step.
+	local per_step_moves = 2 * (math.max(0, w - 1)) + 2
+	return s * per_step_moves + 4
 end
 
-local function tryDown()
-  while not turtle.down() do
-    if turtle.detectDown then
-      if turtle.detectDown() then turtle.digDown() end
-    end
-    sleep(0.2)
-  end
+-- ============================================================
+-- Movement/placement helpers (robust digging/attacking)
+-- ============================================================
+
+local function try_forward()
+	local attempts = 0
+	while true do
+		if turtle.forward() then return true end
+		local ok, data = turtle.inspect()
+		if ok then
+			turtle.dig()
+		else
+			turtle.attack()
+		end
+		attempts = attempts + 1
+		if attempts > 100 then return false end
+		sleep(0.2)
+	end
 end
 
--- Select any non-empty slot. Returns true when a slot is selected.
-local function selectAnySlot()
-  for i = 1,16 do
-    if turtle.getItemCount(i) > 0 then
-      turtle.select(i)
-      return true
-    end
-  end
-  return false
+local function try_up()
+	local attempts = 0
+	while true do
+		if turtle.up() then return true end
+		local ok, data = turtle.inspectUp()
+		if ok then
+			turtle.digUp()
+		else
+			turtle.attackUp()
+		end
+		attempts = attempts + 1
+		if attempts > 100 then return false end
+		sleep(0.2)
+	end
 end
 
--- Try to place a block down from the current selected slot. If placement fails,
--- try other slots that contain items until one succeeds.
-local function placeDownTrySlots()
-  -- First quick attempt with current selection
-  local ok, reason = turtle.placeDown()
-  if ok then return true end
-
-  -- Try other slots
-  local current = turtle.getSelectedSlot()
-  for i = 1,16 do
-    if i ~= current and turtle.getItemCount(i) > 0 then
-      turtle.select(i)
-      ok, reason = turtle.placeDown()
-      if ok then return true end
-    end
-  end
-
-  -- Still failed
-  print("Failed to place block down: " .. tostring(reason))
-  return false
+local function try_down()
+	local attempts = 0
+	while true do
+		if turtle.down() then return true end
+		local ok, data = turtle.inspectDown()
+		if ok then
+			turtle.digDown()
+		else
+			turtle.attackDown()
+		end
+		attempts = attempts + 1
+		if attempts > 100 then return false end
+		sleep(0.2)
+	end
 end
 
--- Start: ensure we have at least one slot with items
-if not selectAnySlot() then
-  print("No blocks found in inventory. Please fill the turtle with placeable blocks.")
-  return
+local function ensure_block_below()
+	-- Place a block below the turtle if missing. Returns true when a block is present (placed or already existed).
+	if turtle.detectDown() then return true end
+	for slot = 1, 16 do
+		if turtle.getItemCount(slot) > 0 then
+			turtle.select(slot)
+			if turtle.placeDown() then return true end
+			-- If cannot place due to entity/gravity, try to clear and retry
+			if not turtle.detectDown() then
+				turtle.digDown()
+				if turtle.placeDown() then return true end
+			end
+		end
+	end
+	return turtle.detectDown()
 end
 
-print(string.format("Building staircase: width=%d length=%d", width, length))
+local function ensure_block_below_interactive()
+	while true do
+		if ensure_block_below() then return true end
+		print("Out of placeable blocks. Add blocks to inventory and press Enter to continue...")
+		read()
+	end
+end
 
--- Build loop
-for step = 1, length do
-  -- Build one row of 'width' blocks. We place below our feet as we go.
-  for col = 1, width do
-    -- Place block under us
-    if not placeDownTrySlots() then
-      print(string.format("Stopping: out of placeable blocks at step %d col %d", step, col))
-      return
-    end
+-- ============================================================
+-- Core building logic
+-- ============================================================
 
-    -- Move forward unless this is the last column of the row
-    if col < width then
-      tryForward()
-    end
-  end
+local function build_row_across_width(w)
+	-- At call: facing FORWARD. We'll turn right to traverse across the width.
+	turtle.turnRight()
 
-  -- If this was the last step, we're done.
-  if step >= length then
-    break
-  end
+	for col = 1, w do
+		ensure_block_below_interactive()
+		if col < w then
+			if not try_forward() then error("Failed to move across the row.") end
+		end
+	end
 
-  -- Move back to the leftmost block of the current row
-  for i = 1, (width - 1) do
-    tryBack()
-  end
+	-- We're at the far right, facing across the width. Return to the left side.
+	turtle.turnRight()   -- turn around
+	turtle.turnRight()
+	for _ = 1, math.max(0, w - 1) do
+		if not try_forward() then error("Failed to return to left side.") end
+	end
+	turtle.turnRight()   -- face forward again
+end
 
-  -- Move forward once to shift start by one for the next step
-  tryForward()
+local function shift_and_rise(dir)
+	-- Move forward one, then up or down one based on dir
+	if not try_forward() then error("Failed to move forward to next step.") end
+	if dir == "up" then
+		if not try_up() then error("Failed to move up for next step.") end
+	else
+		if not try_down() then error("Failed to move down for next step.") end
+	end
+end
 
-  -- Move up one to place the next step higher
-  tryUp()
+-- ============================================================
+-- Run
+-- ============================================================
+
+local required_fuel = estimate_required_fuel(width, steps)
+ensure_fuel_interactive(required_fuel)
+
+print(("Building staircase: width=%d, steps=%d, direction=%s"):format(width, steps, direction))
+sleep(0.2)
+
+for step_index = 1, steps do
+	print(("Step %d/%d: laying tread"):format(step_index, steps))
+	build_row_across_width(width)
+	if step_index < steps then
+		shift_and_rise(direction)
+	end
 end
 
 print("Staircase complete.")
 
--- End of script
--- Staircase builder for ComputerCraft turtles.
--- Usage: staircase <width> <length>
--- Width is how many blocks wide each step should be (perpendicular to your forward direction).
--- Length is how many steps to build upward.
--- Place the turtle at the bottom-left corner of where you want the stairs to start, facing up the staircase.
-
-local args = {...}
-
-local function promptForNumber(promptText, defaultValue)
-    write(string.format("%s [%d]: ", promptText, defaultValue))
-    local response = read()
-    local numeric = tonumber(response)
-    if numeric and numeric > 0 then
-        return math.floor(numeric)
-    end
-    return defaultValue
-end
-
-local function printStatus(message)
-    print(string.format("[Staircase] %s", message))
-end
-
-local function parseDimension(argValue, promptText, defaultValue)
-    if argValue then
-        local numeric = tonumber(argValue)
-        if numeric and numeric > 0 then
-            return math.floor(numeric)
-        end
-        printStatus(string.format("Invalid value '%s'.", tostring(argValue)))
-    end
-    return promptForNumber(promptText, defaultValue)
-end
-
-local function isUnlimitedFuel()
-    local level = turtle.getFuelLevel()
-    return level == "unlimited" or level == math.huge
-end
-
-local fuelKeywords = {
-    "coal",
-    "charcoal",
-    "lava_bucket",
-    "blaze_rod",
-    "coke",
-    "coal_block",
-}
-
-local function selectSlotMatching(predicate)
-    local initialSlot = turtle.getSelectedSlot()
-    for slot = 1, 16 do
-        local detail = turtle.getItemDetail(slot)
-        if predicate(detail) then
-            turtle.select(slot)
-            return initialSlot, slot
-        end
-    end
-    return nil, nil
-end
-
-local function isFuelItem(itemDetail)
-    if not itemDetail or not itemDetail.name then
-        return false
-    end
-    local lower = string.lower(itemDetail.name)
-    for _, keyword in ipairs(fuelKeywords) do
-        if string.find(lower, keyword, 1, true) then
-            return true
-        end
-    end
-    return false
-end
-
-local function refuelFromInventory()
-    local previousSlot, fuelSlot = selectSlotMatching(isFuelItem)
-    if not fuelSlot then
-        return false
-    end
-    if turtle.refuel() then
-        if previousSlot then
-            turtle.select(previousSlot)
-        end
-        return true
-    end
-    if previousSlot then
-        turtle.select(previousSlot)
-    end
-    return false
-end
-
-local function ensureFuel(requiredMoves)
-    if isUnlimitedFuel() then
-        return true
-    end
-    while turtle.getFuelLevel() < requiredMoves do
-        if not refuelFromInventory() then
-            printStatus("Add fuel and press Enter to continue.")
-            read()
-        end
-    end
-    return true
-end
-
-local buildKeywords = {
-    "stone",
-    "cobblestone",
-    "plank",
-    "brick",
-    "deep_slate",
-    "concrete",
-}
-
-local function selectBuildingBlock()
-    local function matchesPreferred(detail)
-        if not detail or not detail.name then
-            return false
-        end
-        local lower = string.lower(detail.name)
-        for _, keyword in ipairs(buildKeywords) do
-            if string.find(lower, keyword, 1, true) then
-                return true
-            end
-        end
-        return false
-    end
-
-    local previousSlot, blockSlot = selectSlotMatching(matchesPreferred)
-    if blockSlot then
-        return previousSlot, blockSlot
-    end
-
-    local function anyItem(detail)
-        return detail ~= nil
-    end
-    return selectSlotMatching(anyItem)
-end
-
-local function placeSupportBlock()
-    if turtle.detectDown() then
-        return true
-    end
-    while true do
-        local previousSlot, blockSlot = selectBuildingBlock()
-        if not blockSlot then
-            printStatus("Out of building blocks. Load more and press Enter.")
-            read()
-        else
-            if turtle.placeDown() then
-                if previousSlot then
-                    turtle.select(previousSlot)
-                end
-                return true
-            else
-                turtle.digDown()
-                sleep(0.1)
-            end
-        end
-    end
-end
-
-local function moveForward()
-    ensureFuel(1)
-    local attempts = 0
-    while not turtle.forward() do
-        attempts = attempts + 1
-        if turtle.detect() then
-            turtle.dig()
-        else
-            turtle.attack()
-        end
-        if attempts > 10 then
-            sleep(0.3)
-        end
-    end
-    return true
-end
-
-local function moveUp()
-    ensureFuel(1)
-    local attempts = 0
-    while not turtle.up() do
-        attempts = attempts + 1
-        if turtle.detectUp and turtle.detectUp() then
-            -- try to remove a blocking block above
-            turtle.digUp()
-        else
-            -- try to clear mobs
-            turtle.attackUp()
-        end
-
-        -- After several attempts, print a helpful diagnostic so you can see what's blocking
-        if attempts == 8 then
-            print(string.format("moveUp: still blocked after %d attempts; digging up and retrying...", attempts))
-        elseif attempts == 20 then
-            print("moveUp: too many attempts, showing inventory snapshot and pausing. Press Enter in the turtle to continue after resolving the blockage.")
-            for s = 1,16 do
-                local c = turtle.getItemCount(s)
-                local d = turtle.getItemDetail(s)
-                if c > 0 then
-                    print(string.format("%2d: count=%d name=%s", s, c, tostring(d and d.name)))
-                else
-                    print(string.format("%2d: empty", s))
-                end
-            end
-            print("Press Enter to continue (or Ctrl+T to stop)")
-            read()
-        end
-
-        if attempts > 10 then
-            sleep(0.3)
-        end
-    end
-    return true
-end
-
-local function moveRight()
-    turtle.turnRight()
-    moveForward()
-    turtle.turnLeft()
-end
-
-local function moveLeft()
-    turtle.turnLeft()
-    moveForward()
-    turtle.turnRight()
-end
-
-local function layStepRow(stepWidth)
-    for column = 1, stepWidth do
-        placeSupportBlock()
-        if column < stepWidth then
-            moveRight()
-        end
-    end
-    for _ = 1, stepWidth - 1 do
-        moveLeft()
-    end
-end
-
-local function advanceToNextStep()
-    -- Clear forward then move into the next column for the next step
-    turtle.dig()
-    moveForward()
-
-    -- Try to ensure the space above is clear before and after placing the support block.
-    -- Some servers/mods may have placement latency; dig any above-blocks first so moveUp
-    -- isn't silently blocked by a misplaced block.
-    if turtle.detectUp and turtle.detectUp() then
-        turtle.digUp()
-    end
-
-    placeSupportBlock()
-
-    -- Defensive second attempt to clear above (in case placement accidentally left a block)
-    if turtle.detectUp and turtle.detectUp() then
-        turtle.digUp()
-        sleep(0.05)
-    end
-
-    moveUp()
-end
-
-local function buildStaircase(stepWidth, stepCount)
-    printStatus(string.format("Building staircase width %d, length %d", stepWidth, stepCount))
-    placeSupportBlock()
-    for stepIndex = 1, stepCount do
-        layStepRow(stepWidth)
-        if stepIndex < stepCount then
-            advanceToNextStep()
-        end
-    end
-    printStatus("Staircase complete. Turtle is at the top step.")
-end
-
-local function estimateFuel(width, length)
-    local movesPerStep = width * 2 + 3
-    return movesPerStep * length + 8
-end
-
-local function main()
-    local width = parseDimension(args[1], "Stair width", 2)
-    local length = parseDimension(args[2], "Number of steps", 10)
-
-    ensureFuel(estimateFuel(width, length))
-    buildStaircase(width, length)
-end
-
-main()
+-- ============================================================
+-- Extra tips for Lua and turtles (quick reference)
+-- ============================================================
+-- - Turning doesn't consume fuel; moving does. Keep some buffer fuel.
+-- - turtle.inspect() returns (success, data). Use detect()/inspect() to check blocks.
+-- - Prefer small helper functions and local variables; it makes code easier to read.
+-- - When in doubt, add prints to trace progress. You can remove them when you're confident.
+-- - This script prompts if it runs out of fuel or building blocks so you can top up and continue.
