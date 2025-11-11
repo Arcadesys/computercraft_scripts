@@ -8,7 +8,7 @@
 --   - doorways north/south (2x3)
 --   - placeholder space for future data jack
 
-manifest = {
+local manifest = {
   meta = {
     name = "modular_cell",
     size = {x=16, y=9, z=16},
@@ -68,7 +68,7 @@ manifest = {
       "W..............W",
       "W..............W",
       "W..............W",
-      "W..............W",
+      "WFFFFFFFFFFFFFFW",
       "WWWWWWWWWWWWWWWW",
     },
     [3] = "SAME_AS[2]",

@@ -705,6 +705,25 @@ local function refuel()
   end
 end
 
+-- Service-travel helpers: attempt to step up/down ONCE without digging.
+-- We avoid our up()/down() wrappers here to guarantee no block destruction on service entry/exit.
+local function tryUpNoDig()
+  -- If fuel is exhausted or headspace blocked, we simply don't ascend.
+  local before = turtle.getFuelLevel()
+  local ok = turtle.up()
+  if ok then return true end
+  -- If not unlimited fuel and we failed due to 0 fuel, report once.
+  if (not isFuelUnlimited()) and before == 0 then
+    log("Skipped safe-ascend: no fuel to go up")
+  end
+  return false
+end
+
+local function tryDownNoDig()
+  local ok = turtle.down()
+  return ok
+end
+
 local function placeBlock(blockName)
   -- Places the specified block below the turtle, but first checks if the
   -- existing block already matches the desired target. If so, we skip digging
@@ -760,29 +779,8 @@ end
 -- MOVEMENT ---------------------------------------------------------------
 local function recordMove(op)
   -- Access global 'context' defined later; guard until initialized
-  if context then
-    -- push to movement history
-    if context.movementHistory then
-      table.insert(context.movementHistory, op)
-    end
-    -- update pose tracking (relative to origin)
-    -- Facing encoding: 0=+X, 1=+Z, 2=-X, 3=-Z (turnRight = +1 mod 4)
-    context.pos = context.pos or {x=0,y=0,z=0}
-    if op == 'F' then
-      local f = context.facing or 0
-      if f == 0 then context.pos.x = context.pos.x + 1
-      elseif f == 1 then context.pos.z = context.pos.z + 1
-      elseif f == 2 then context.pos.x = context.pos.x - 1
-      else               context.pos.z = context.pos.z - 1 end
-    elseif op == 'U' then
-      context.pos.y = (context.pos.y or 0) + 1
-    elseif op == 'D' then
-      context.pos.y = (context.pos.y or 0) - 1
-    elseif op == 'R' then
-      context.facing = ((context.facing or 0) + 1) % 4
-    elseif op == 'L' then
-      context.facing = ((context.facing or 0) + 3) % 4
-    end
+  if context and context.movementHistory then
+    table.insert(context.movementHistory, op)
   end
 end
 
@@ -794,13 +792,6 @@ local function forward(maxRetries, record)
     refuel()
     if turtle.forward() then
       if record then recordMove('F') end
-      if context then
-        -- Mark visited destination cell for optimized pathing
-        local p = context.pos or {x=0,y=0,z=0}
-        local k = table.concat({p.x,p.y,p.z}, ',')
-        context.visited = context.visited or {}
-        context.visited[k] = true
-      end
       return true
     end
     turtle.attack()
@@ -824,12 +815,6 @@ local function up(maxRetries, record)
     refuel()
     if turtle.up() then
       if record then recordMove('U') end
-      if context then
-        local p = context.pos or {x=0,y=0,z=0}
-        local k = table.concat({p.x,p.y,p.z}, ',')
-        context.visited = context.visited or {}
-        context.visited[k] = true
-      end
       return true
     end
     turtle.attackUp()
@@ -853,12 +838,6 @@ local function down(maxRetries, record)
     refuel()
     if turtle.down() then
       if record then recordMove('D') end
-      if context then
-        local p = context.pos or {x=0,y=0,z=0}
-        local k = table.concat({p.x,p.y,p.z}, ',')
-        context.visited = context.visited or {}
-        context.visited[k] = true
-      end
       return true
     end
     turtle.attackDown()
@@ -883,78 +862,6 @@ local function turnLeft(record)
   if record == nil then record = true end
   turtle.turnLeft()
   if record then recordMove('L') end
-end
-
--- Rotate to an absolute facing (0=+X,1=+Z,2=-X,3=-Z)
-local function faceTo(dir)
-  dir = dir % 4
-  local cur = context and (context.facing or 0) or 0
-  local diff = (dir - cur) % 4
-  if diff == 1 then turnRight()
-  elseif diff == 2 then turnRight(); turnRight()
-  elseif diff == 3 then turnLeft() end
-end
-
--- Greedy Manhattan navigator to absolute coordinate.
-local function gotoCoord(tx, ty, tz)
-  if not context then return false end
-  local p = context.pos or {x=0,y=0,z=0}
-  -- Vertical first
-  while p.y < ty do if not up() then return false end; p = context.pos end
-  while p.y > ty do if not down() then return false end; p = context.pos end
-  -- X then Z
-  while p.x < tx do faceTo(0); if not forward() then return false end; p = context.pos end
-  while p.x > tx do faceTo(2); if not forward() then return false end; p = context.pos end
-  while p.z < tz do faceTo(1); if not forward() then return false end; p = context.pos end
-  while p.z > tz do faceTo(3); if not forward() then return false end; p = context.pos end
-  return true
-end
-
--- Detect adjacent storage, remember its absolute block coordinate and a convenient
--- access position (the turtle's current position), so we can return later.
-local function rememberSupplyChestNearby()
-  if not context then return false end
-  local p = context.pos or {x=0,y=0,z=0}
-  local f = context.facing or 0
-
-  local function vecFor(side)
-    -- side: 'front','right','back','left','up','down'
-    if side == 'up' then return 0,1,0
-    elseif side == 'down' then return 0,-1,0
-    else
-      local df = f
-      if side == 'right' then df = (f + 1) % 4
-      elseif side == 'back' then df = (f + 2) % 4
-      elseif side == 'left' then df = (f + 3) % 4 end
-      if df == 0 then return 1,0,0
-      elseif df == 1 then return 0,0,1
-      elseif df == 2 then return -1,0,0
-      else return 0,0,-1 end
-    end
-  end
-
-  local directions = {
-    {side='front', inspect=turtle.inspect, prepare=function() end, cleanup=function() end},
-    {side='right', inspect=turtle.inspect, prepare=turtle.turnRight, cleanup=turtle.turnLeft},
-    {side='back',  inspect=turtle.inspect, prepare=function() turtle.turnRight(); turtle.turnRight() end, cleanup=function() turtle.turnRight(); turtle.turnRight() end},
-    {side='left',  inspect=turtle.inspect, prepare=turtle.turnLeft, cleanup=turtle.turnRight},
-    {side='up',    inspect=turtle.inspectUp, prepare=function() end, cleanup=function() end},
-    {side='down',  inspect=turtle.inspectDown, prepare=function() end, cleanup=function() end},
-  }
-
-  for _,d in ipairs(directions) do
-    d.prepare()
-    local ok, data = d.inspect()
-    d.cleanup()
-    if ok and data and isInventoryBlock(data.name) then
-      local dx,dy,dz = vecFor(d.side)
-      context.supplyChest = {x = p.x + dx, y = p.y + dy, z = p.z + dz}
-      context.supplyAccess = {x = p.x, y = p.y, z = p.z}
-      if VERBOSE then log("Remembered supply chest at ("..context.supplyChest.x..","..context.supplyChest.y..","..context.supplyChest.z..")") end
-      return true
-    end
-  end
-  return false
 end
 
 local function resetRow(zLen)
@@ -1003,79 +910,6 @@ local function performForward(op)
   return false
 end
 
--- Optimized return-to-origin using visited grid -------------------------
--- Build an adjacency map from the recorded movement history, then find a
--- shortest path within already-visited cells from origin (0,0,0) to the
--- current position. We generate the corresponding forward op sequence
--- (from origin to current), then execute its inverse to travel to origin.
--- Returns the forward op list for use with returnAlongPath() to go back.
-local function goToOriginOptimized()
-  if not context then return nil end
-  local function key(x,y,z) return table.concat({x,y,z}, ',') end
-  local visited = context.visited or {}
-  local originK = key(0,0,0)
-  local cur = context.pos or {x=0,y=0,z=0}
-  local curK = key(cur.x, cur.y, cur.z)
-  if curK == originK then return {} end
-
-  -- BFS over visited grid using 6-neighborhood
-  local function neighbors(k)
-    local x,y,z = k:match("([^,]+),([^,]+),([^,]+)")
-    x,y,z = tonumber(x), tonumber(y), tonumber(z)
-    local res = {}
-    local cand = {
-      key(x+1,y,z), key(x-1,y,z), key(x,y,z+1), key(x,y,z-1), key(x,y+1,z), key(x,y-1,z)
-    }
-    for _, nk in ipairs(cand) do if visited[nk] then table.insert(res, nk) end end
-    return res
-  end
-
-  local q, qi, qe = {originK}, 1, 1
-  local prev = {[originK] = false}
-  while qi <= qe do
-    local u = q[qi]; qi = qi + 1
-    if u == curK then break end
-    for _,v in ipairs(neighbors(u)) do
-      if prev[v] == nil then prev[v] = u; qe = qe + 1; q[qe] = v end
-    end
-  end
-  if prev[curK] == nil then return nil end
-  local nodes = {}
-  local x = curK
-  while x do table.insert(nodes, 1, x); x = prev[x] end
-  if #nodes < 2 then return nil end
-
-  -- Convert node path to forward ops (origin -> current)
-  local ops = {}
-  local simFacing = 0
-  local function faceTo(dir)
-    local diff = (dir - simFacing) % 4
-    if diff == 1 then table.insert(ops,'R'); simFacing=(simFacing+1)%4
-    elseif diff == 2 then table.insert(ops,'R'); table.insert(ops,'R'); simFacing=(simFacing+2)%4
-    elseif diff == 3 then table.insert(ops,'L'); simFacing=(simFacing+3)%4 end
-  end
-  for i=1,#nodes-1 do
-    local a = nodes[i]; local b = nodes[i+1]
-    local ax,ay,az = a:match("([^,]+),([^,]+),([^,]+)"); ax,ay,az=tonumber(ax),tonumber(ay),tonumber(az)
-    local bx,by,bz = b:match("([^,]+),([^,]+),([^,]+)"); bx,by,bz=tonumber(bx),tonumber(by),tonumber(bz)
-    if by-ay == 1 then table.insert(ops,'U')
-    elseif by-ay == -1 then table.insert(ops,'D')
-    else
-      local dir
-      if bx-ax == 1 then dir=0 elseif bx-ax == -1 then dir=2 elseif bz-az == 1 then dir=1 else dir=3 end
-      faceTo(dir); table.insert(ops,'F')
-    end
-  end
-  -- Align facing with actual current facing to make inverse valid from here
-  local want = context.facing or 0
-  local diff = (want - simFacing) % 4
-  if diff == 1 then table.insert(ops,'R') elseif diff==2 then table.insert(ops,'R'); table.insert(ops,'R') elseif diff==3 then table.insert(ops,'L') end
-
-  -- Execute inverse ops to travel to origin
-  for i=1,#ops do if not performInverse(ops[i]) then return nil end end
-  return ops
-end
-
 local function goToOriginByHistory()
   if not context or not context.movementHistory then return {} end
   local path = {}
@@ -1118,8 +952,6 @@ context = {
   missingBlockName = nil,
   inventorySummary = {},
   origin = {x = 0, y = 0, z = 0, facing = 0}, -- placeholder; movement system could update this
-  pos = {x = 0, y = 0, z = 0}, -- live pose tracking relative to origin
-  facing = 0,                  -- 0=+X,1=+Z,2=-X,3=-Z
   layerCache = {}, -- cache of resolved layers
   movementHistory = {}, -- sequence of moves from origin (for return-to-origin)
 }
@@ -1280,9 +1112,6 @@ states[STATE_INITIALIZE] = function(ctx)
     end
   end
   currentState = STATE_BUILD
-  -- Attempt to detect and remember a nearby chest at start so later restock
-  -- can travel there even after moving far away.
-  rememberSupplyChestNearby()
 end
 
 states[STATE_BUILD] = function(ctx)
@@ -1346,31 +1175,17 @@ states[STATE_RESTOCK] = function(ctx)
   end
   print("Restocking missing item: "..ctx.missingBlockName)
 
-  -- If we have a remembered chest elsewhere, path directly there; else default origin return.
-  local outboundPath
-  if context.supplyChest then
-    if VERBOSE then log("Navigating directly to remembered chest") end
-    local ok = gotoCoord(context.supplyAccess.x, context.supplyAccess.y, context.supplyAccess.z)
-    if not ok then
-      log("Direct chest navigation failed; falling back to optimized origin return")
-    else
-      -- Align to chest for interaction (face towards it)
-      local p = context.pos or {x=0,y=0,z=0}
-      local c = context.supplyChest
-      local dx,dz = c.x - p.x, c.z - p.z
-      local dir
-      if dx == 1 and dz == 0 then dir = 0
-      elseif dx == -1 and dz == 0 then dir = 2
-      elseif dz == 1 and dx == 0 then dir = 1
-      elseif dz == -1 and dx == 0 then dir = 3 end
-      if dir then faceTo(dir) end
-      outboundPath = { } -- direct path; we reconstruct return using movementHistory diff
-    end
-  end
-  if not outboundPath then
-    outboundPath = goToOriginOptimized()
-    if not outboundPath then outboundPath = goToOriginByHistory() end
-    if VERBOSE then log("Returned to origin via "..#outboundPath.." steps for restock") end
+  -- NEW: Step up into known-safe air lane before moving horizontally, to avoid damaging the current layer.
+  local steppedUpFromWork = tryUpNoDig()
+
+  -- Return to origin to access storage reliably (we're likely at y+1 now; path replay will occur at this elevation).
+  local outboundPath = goToOriginByHistory()
+  if VERBOSE then log("Returned to origin via "..#outboundPath.." steps for restock (elevated="..tostring(steppedUpFromWork)..")") end
+
+  -- If we stepped up at the work site, try to drop to chest height at origin for better access.
+  local droppedToChestHeight = false
+  if steppedUpFromWork then
+    droppedToChestHeight = tryDownNoDig()
   end
 
   local ok = ensureMaterialsAvailable(ctx.remainingMaterials, ctx.missingBlockName, true) -- blocking
@@ -1382,14 +1197,15 @@ states[STATE_RESTOCK] = function(ctx)
       print("Restock successful for "..ctx.missingBlockName)
       ctx.inventorySummary = tallyInventory()
       ctx.missingBlockName = nil
-      -- Replay path to return to work position
-      if outboundPath and #outboundPath > 0 then
+      -- Before returning, if we descended at origin for chest access, step back up to the safe lane.
+      if droppedToChestHeight then tryUpNoDig() end
+      -- Replay path to return to work position (still at elevated lane if we stepped up originally)
+      if #outboundPath > 0 then
         if VERBOSE then log("Returning to build position ("..#outboundPath.." forward steps)") end
         returnAlongPath(outboundPath)
-      else
-        -- If we did a direct chest nav, reconstruct reverse using movementHistory snapshot.
-        -- Fallback: leave at chest if reconstruction not trivial.
       end
+      -- Finally, if we stepped up at the start, return to the work layer without digging.
+      if steppedUpFromWork then tryDownNoDig() end
       currentState = ctx.previousState or STATE_BUILD
     else
       print("Restock reported success, but item still missing. Load materials and press Enter to retry.")
@@ -1405,7 +1221,11 @@ end
 
 states[STATE_REFUEL] = function(ctx)
   print("Refueling attempt...")
+  -- Step up into known-safe air lane before attempting refuel to avoid accidental digs on the build layer.
+  local steppedUp = tryUpNoDig()
   refuel()
+  -- Drop back to the work layer when done, if we had stepped up.
+  if steppedUp then tryDownNoDig() end
   if isFuelUnlimited() or turtle.getFuelLevel() > RESTOCK_AT then
     print("Refuel complete. Fuel level: "..tostring(turtle.getFuelLevel()))
     ctx.inventorySummary = tallyInventory()

@@ -1,4 +1,4 @@
--- foreman.lua
+-- Flat require: run this script from the same directory as the manifest
 local manifest = require("modular_cell_manifest")
 
 local CELL_SIZE = 16
