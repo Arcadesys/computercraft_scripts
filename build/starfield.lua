@@ -1,0 +1,5 @@
+--generates an artifical starfield of given density in the sky (at least 15-60 blocks above ground)
+-- starfield can be made of shroomlights, glass, glowstone, or any other block
+-- does not destroy blocks it encounters
+-- will always try to place stars at least two blocks away from obstacles
+-- the resulting starfield should resemble an artifical night sky
