@@ -10,6 +10,8 @@ local realTurtle = assert(rawget(_G, "turtle"), "turtle API unavailable")
 local textutils = rawget(_G, "textutils")
 local term = rawget(_G, "term")
 
+local TurtleControl = require("lib.turtle")
+
 local turtle = realTurtle
 
 -------------------------------------------------------------------------------
@@ -1284,208 +1286,70 @@ local function applyPoseTurn(direction)
 	end
 end
 
-local moveConfig = {
-	forward = {
-		move = turtle.forward,
-		attack = turtle.attack,
-		dig = turtle.dig,
-		symbol = "F",
-	},
-	back = {
-		move = turtle.back,
-		attack = turtle.attack,
-		dig = turtle.dig,
-		symbol = "B",
-	},
-	up = {
-		move = turtle.up,
-		attack = turtle.attackUp,
-		dig = turtle.digUp,
-		symbol = "U",
-	},
-	down = {
-		move = turtle.down,
-		attack = turtle.attackDown,
-		dig = turtle.digDown,
-		symbol = "D",
-	},
-}
+local turtleController = TurtleControl.new({
+        turtle = turtle,
+        refuel = refuel,
+        maxRetries = SAFETY_MAX_MOVE_RETRIES,
+        retryDelay = 0.2,
+        autoWait = function()
+                return CONFIG.autoMode
+        end,
+        waitSeconds = function()
+                return SAFE_WAIT_SECONDS
+        end,
+        log = log,
+        recordMove = recordMove,
+        applyPoseMove = applyPoseMove,
+        applyPoseTurn = applyPoseTurn,
+        isFuelUnlimited = isFuelUnlimited,
+})
 
 local function move(direction, maxRetries, recordHistory)
-	local config = moveConfig[direction]
-	if not config then
-		error("Unknown move direction: " .. tostring(direction))
-	end
-	local tries = 0
-	while tries < maxRetries do
-		refuel()
-		if config.move() then
-			applyPoseMove(direction)
-			if recordHistory then
-				recordMove(config.symbol)
-			end
-			return true
-		end
-		config.attack()
-		config.dig()
-		sleep(0.2)
-		tries = tries + 1
-		if turtle.getFuelLevel and turtle.getFuelLevel() == 0 and not isFuelUnlimited() then
-			log("Move failed: out of fuel")
-			return false
-		end
-	end
-	log("Move blocked after " .. tries .. " attempts")
-	return false
+        local ok = turtleController:move(direction, {
+                maxRetries = maxRetries,
+                recordHistory = recordHistory,
+        })
+        return ok
 end
 
 function turn(direction, recordHistory)
-	if direction == "right" then
-		turtle.turnRight()
-		applyPoseTurn(direction)
-		if recordHistory then
-			recordMove("R")
-		end
-		return true
-	elseif direction == "left" then
-		turtle.turnLeft()
-		applyPoseTurn(direction)
-		if recordHistory then
-			recordMove("L")
-		end
-		return true
-	elseif direction == "around" then
-		turtle.turnLeft()
-		turtle.turnLeft()
-		applyPoseTurn(direction)
-		if recordHistory then
-			recordMove("L")
-			recordMove("L")
-		end
-		return true
-	end
-	error("Unknown turn direction: " .. tostring(direction))
+        return turtleController:turn(direction, {
+                recordHistory = recordHistory,
+        })
 end
 
 local function turnRightNoHistory()
-	return turn("right", false)
+        return turtleController:turn("right", { recordHistory = false })
 end
 
 local function turnLeftNoHistory()
-	return turn("left", false)
+        return turtleController:turn("left", { recordHistory = false })
 end
 
 local function turnAroundLeft()
-	turn("left", false)
-	return turn("left", false)
+        turtleController:turn("left", { recordHistory = false })
+        return turtleController:turn("left", { recordHistory = false })
 end
 
 local function turnAroundRight()
-	turn("right", false)
-	return turn("right", false)
+        turtleController:turn("right", { recordHistory = false })
+        return turtleController:turn("right", { recordHistory = false })
 end
 
 local function trySafeMove(direction)
-	if direction == "forward" then
-		if turtle.forward() then
-			applyPoseMove("forward")
-			return true
-		end
-		return false
-	elseif direction == "back" then
-		if turtle.back() then
-			applyPoseMove("back")
-			return true
-		end
-		return false
-	elseif direction == "up" then
-		if turtle.up() then
-			applyPoseMove("up")
-			return true
-		end
-		return false
-	elseif direction == "down" then
-		if turtle.down() then
-			applyPoseMove("down")
-			return true
-		end
-		return false
-	end
-	error("Unknown safe move direction: " .. tostring(direction))
+        return turtleController:try(direction)
 end
 
 local function safeWaitMove(movementFunction, label, maxAttempts)
-	local attempts = 0
-	while true do
-		if movementFunction() then
-			return true
-		end
-		attempts = attempts + 1
-		if maxAttempts and attempts >= maxAttempts then
-			return false
-		end
-		if CONFIG.autoMode then
-			print(label .. " ...")
-			sleep(SAFE_WAIT_SECONDS)
-		else
-			print(label .. " (press Enter once clear)")
-			read()
-		end
-	end
+        return turtleController:waitFor(movementFunction, label, maxAttempts)
 end
 
 local function safePerformInverse(operation)
-	if operation == "F" then
-		return safeWaitMove(function()
-			return trySafeMove("back")
-		end, "Moving back")
-	elseif operation == "B" then
-		return safeWaitMove(function()
-			return trySafeMove("forward")
-		end, "Moving forward")
-	elseif operation == "U" then
-		return safeWaitMove(function()
-			return trySafeMove("down")
-		end, "Moving down")
-	elseif operation == "D" then
-		return safeWaitMove(function()
-			return trySafeMove("up")
-		end, "Moving up")
-	elseif operation == "R" then
-		turn("left", false)
-		return true
-	elseif operation == "L" then
-		turn("right", false)
-		return true
-	end
-	return false
+        return turtleController:performInverse(operation)
 end
 
 local function safePerformForward(operation)
-	if operation == "F" then
-		return safeWaitMove(function()
-			return trySafeMove("forward")
-		end, "Moving forward")
-	elseif operation == "B" then
-		return safeWaitMove(function()
-			return trySafeMove("back")
-		end, "Moving back")
-	elseif operation == "U" then
-		return safeWaitMove(function()
-			return trySafeMove("up")
-		end, "Moving up")
-	elseif operation == "D" then
-		return safeWaitMove(function()
-			return trySafeMove("down")
-		end, "Moving down")
-	elseif operation == "R" then
-		turn("right", false)
-		return true
-	elseif operation == "L" then
-		turn("left", false)
-		return true
-	end
-	return false
+        return turtleController:performForward(operation)
 end
 
 -------------------------------------------------------------------------------
