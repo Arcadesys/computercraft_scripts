@@ -1,11 +1,11 @@
--- arcade.lua
+-- lib/arcade.lua
 -- Shared wrapper library for three-button arcade games in this folder.
 -- Provides: monitor setup, 3-button UI bar, credit persistence via disk drive,
 -- event loop abstraction, and helper APIs so each game only implements its
 -- own state & drawing logic.
 --
 -- HOW TO USE (minimal):
--- local arcade = require("arcade")
+-- local arcade = require("lib.arcade")
 -- local game = {
 --   name = "Demo",
 --   init = function(a) a:setButtons({"Play","Add","Quit"}) end,
