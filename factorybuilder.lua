@@ -29,6 +29,8 @@
 --   previousState       : last non-error state
 --   missingBlockName    : name of block we failed to place triggering RESTOCK
 --   manifestOK          : whether validation passed
+--   chestDirection      : direction to chest from origin ('front','right','behind','left','up','down')
+--   movementHistory     : sequence of moves from origin (for return-to-origin)
 --
 -- IMPLEMENTED STATES
 --   INITIALIZE : validate manifest; prepare counters & materials; -> BUILD or ERROR
@@ -39,9 +41,11 @@
 --   DONE       : terminal state (break loop)
 --
 -- NOTE ON RETURN-TO-ORIGIN (RESTOCK / REFUEL)
--- For simplicity this version does NOT physically path back to origin mid-layer.
--- Chest/fuel access is assumed adjacent to current position. A future enhancement
--- can push movement history and compute reverse paths to the origin before restocking.
+-- RESTOCK and REFUEL states now properly return to origin:
+-- 1. Ascend to safe height above the build (non-destructive)
+-- 2. Reverse movementHistory to return to origin
+-- 3. Access chest/fuel storage at origin (remembered position from INITIALIZE)
+-- 4. Return along the saved path to resume building
 --
 -- ORIGINAL FEATURES PRESERVED
 -- - Auto fuel search & consumption
@@ -59,16 +63,15 @@
 -- - Auto-fuel searching & refuel threshold logic
 -- - Family equivalence for tiered Mekanism components
 
--- Use fully-qualified module path so we can run from anywhere
--- Require setup for flat file structure ---------------------------------
--- CC:Tweaked's require searches ROM module paths by default. We extend
--- package.path so that `require("modular_cell_manifest")` works when the
--- file sits next to this script (flat layout) or at the root.
--- Simple flat require: assume script executed from the directory containing
--- modular_cell_manifest.lua (turtle's working directory). If you need to run
--- from elsewhere, `shell.run("cd factory")` first or copy the manifest file.
-local manifest = require("modular_cell_manifest")
-local manifest = require("factory.modular_cell_manifest")
+-- MANIFEST LOADING ------------------------------------------------------
+-- Try loading from factory subdirectory first, then fall back to current directory.
+local manifest
+local ok, result = pcall(require, "factory.modular_cell_manifest")
+if ok then
+  manifest = result
+else
+  manifest = require("modular_cell_manifest")
+end
 
 -- STATE NAME CONSTANTS --------------------------------------------------
 local STATE_INITIALIZE = "INITIALIZE"
@@ -107,6 +110,7 @@ local REQUIRE_TREASURE_SPECIFIC = true
 local TREASURE_CHEST_MATCHERS = {
   "supplementaries:treasure_chest",
   "treasure2:chest",
+  "minecraft:chest",
 }
 
 -- Identify the legend entry that represents empty space so we can ignore it.
@@ -213,8 +217,6 @@ local MATERIAL_REQUIREMENTS = collectRequiredMaterials()
 local function validateManifest()
   local ok = true
   local size = manifest.meta.size
-  local seen = {}
-  for k in pairs(manifest.legend) do seen[k] = true end
 
   for y = 1, size.y do
     local layer = fetchLayer(y)
@@ -239,33 +241,6 @@ local function validateManifest()
     end
   end
   return ok
-end
-
-local function selectSlotForItem(itemName)
-  -- Prefer merging with an existing stack before occupying an empty slot.
-  -- 1) Try same exact ID with space to merge
-  for slot = 1, 15 do
-    local detail = turtle.getItemDetail(slot)
-    if detail and detail.name == itemName and detail.count < 64 then
-      turtle.select(slot)
-      return slot
-    end
-  end
-  -- 2) Try same family (tiered variants) with space to merge
-  for slot = 1, 15 do
-    local detail = turtle.getItemDetail(slot)
-    if detail and isSameFamily(itemName, detail.name) and detail.count < 64 then
-      turtle.select(slot)
-      return slot
-    end
-  end
-  for slot = 1, 15 do
-    if turtle.getItemCount(slot) == 0 then
-      turtle.select(slot)
-      return slot
-    end
-  end
-  return nil
 end
 
 local function isInventoryBlock(name)
@@ -307,7 +282,34 @@ local function checkTreasureChestBehind()
   local ok, data = turtle.inspect()
   turnAround()
   local name = (ok and data and data.name) or nil
-  return isTreasureChestId(name), name
+  return isTreasureChestId(name), name, data
+end
+
+-- Scan all adjacent blocks and find storage (chest/barrel/etc.).
+-- Returns: direction string ('front','right','behind','left','up','down') or nil if not found.
+local function findAdjacentStorageDirection()
+  local function noop() end
+  local function turnAround() turtle.turnRight(); turtle.turnRight() end
+  
+  local directions = {
+    {label = "front",  prepare = noop,             cleanup = noop,             inspect = turtle.inspect},
+    {label = "right",  prepare = turtle.turnRight, cleanup = turtle.turnLeft,  inspect = turtle.inspect},
+    {label = "behind", prepare = turnAround,       cleanup = turnAround,       inspect = turtle.inspect},
+    {label = "left",   prepare = turtle.turnLeft,  cleanup = turtle.turnRight, inspect = turtle.inspect},
+    {label = "up",     prepare = noop,             cleanup = noop,             inspect = turtle.inspectUp},
+    {label = "down",   prepare = noop,             cleanup = noop,             inspect = turtle.inspectDown},
+  }
+  
+  for _, spec in ipairs(directions) do
+    spec.prepare()
+    local ok, data = spec.inspect()
+    spec.cleanup()
+    if ok and data and isInventoryBlock(data.name) then
+      if VERBOSE then log("Found storage at origin: "..spec.label.." ("..data.name..")") end
+      return spec.label
+    end
+  end
+  return nil
 end
 
 local function snapshotInventory()
@@ -323,14 +325,7 @@ local function diffGains(before, after)
   return gains
 end
 
-local function dropUnexpectedGains(gains, allowedName, dropFn)
-  -- (Legacy single-allowed version retained for fuel logic.)
-  local allowedSet = {[allowedName] = true}
-  local multi = false
-  return dropUnexpectedGainsMulti(gains, allowedSet, dropFn, multi)
-end
-
--- New multi-allowed variant: do NOT drop items if they are also missing.
+-- Multi-allowed variant: do NOT drop items if they are also missing.
 -- gains: table name->delta picked up this burst
 -- allowedSet: table of itemName -> true for all items still missing (deficit > 0)
 -- dropFn: function to drop items back in the direction we sucked from
@@ -789,57 +784,22 @@ local function safeWaitMove(stepFn, label)
   end
 end
 
-local function updatePoseForOp(op, inverse)
-  -- Optional positional bookkeeping if present in this variant
-  if not context then return end
-  local p = context.pos
-  if not p then return end
-  context.facing = context.facing or 0
-  local f = context.facing
-  local function stepForward()
-    if f == 0 then p.x = (p.x or 0) + 1
-    elseif f == 1 then p.z = (p.z or 0) + 1
-    elseif f == 2 then p.x = (p.x or 0) - 1
-    else p.z = (p.z or 0) - 1 end
-  end
-  local function stepBack()
-    if f == 0 then p.x = (p.x or 0) - 1
-    elseif f == 1 then p.z = (p.z or 0) - 1
-    elseif f == 2 then p.x = (p.x or 0) + 1
-    else p.z = (p.z or 0) + 1 end
-  end
-  if not inverse then
-    if op == 'F' then stepForward()
-    elseif op == 'U' then p.y = (p.y or 0) + 1
-    elseif op == 'D' then p.y = (p.y or 0) - 1
-    elseif op == 'R' then context.facing = (f + 1) % 4
-    elseif op == 'L' then context.facing = (f + 3) % 4 end
-  else
-    if op == 'F' then stepBack()
-    elseif op == 'U' then p.y = (p.y or 0) - 1
-    elseif op == 'D' then p.y = (p.y or 0) + 1
-    elseif op == 'R' then context.facing = (f + 3) % 4
-    elseif op == 'L' then context.facing = (f + 1) % 4 end
-  end
-end
-
 local function safePerformInverse(op)
   if op == 'F' then
     safeWaitMove(turtle.back, 'back')
-    updatePoseForOp('F', true)
     return true
   elseif op == 'U' then
     safeWaitMove(turtle.down, 'down')
-    updatePoseForOp('U', true)
     return true
   elseif op == 'D' then
     safeWaitMove(turtle.up, 'up')
-    updatePoseForOp('D', true)
     return true
   elseif op == 'R' then
-    turtle.turnLeft(); updatePoseForOp('R', true); return true
+    turtle.turnLeft()
+    return true
   elseif op == 'L' then
-    turtle.turnRight(); updatePoseForOp('L', true); return true
+    turtle.turnRight()
+    return true
   end
   return false
 end
@@ -847,20 +807,19 @@ end
 local function safePerformForward(op)
   if op == 'F' then
     safeWaitMove(turtle.forward, 'forward')
-    updatePoseForOp('F', false)
     return true
   elseif op == 'U' then
     safeWaitMove(turtle.up, 'up')
-    updatePoseForOp('U', false)
     return true
   elseif op == 'D' then
     safeWaitMove(turtle.down, 'down')
-    updatePoseForOp('D', false)
     return true
   elseif op == 'R' then
-    turtle.turnRight(); updatePoseForOp('R', false); return true
+    turtle.turnRight()
+    return true
   elseif op == 'L' then
-    turtle.turnLeft(); updatePoseForOp('L', false); return true
+    turtle.turnLeft()
+    return true
   end
   return false
 end
@@ -885,6 +844,238 @@ local function returnAlongPathSafely(path)
   context.movementHistory = {}
   for i = 1, #path do context.movementHistory[i] = path[i] end
   return true
+end
+
+-- CHEST ACCESS AT ORIGIN HELPERS ----------------------------------------
+-- These functions orient the turtle to access the chest at origin based on
+-- the remembered direction from INITIALIZE.
+local function orientToChest()
+  if not context.chestDirection then return false end
+  local dir = context.chestDirection
+  if dir == "front" then
+    -- already facing chest
+    return true
+  elseif dir == "right" then
+    turtle.turnRight()
+    return true
+  elseif dir == "behind" then
+    turtle.turnRight()
+    turtle.turnRight()
+    return true
+  elseif dir == "left" then
+    turtle.turnLeft()
+    return true
+  elseif dir == "up" or dir == "down" then
+    -- vertical chest; no rotation needed
+    return true
+  end
+  return false
+end
+
+local function getChestAccessFunctions()
+  -- Returns table with inspect, suck, and drop functions for the chest direction.
+  if not context.chestDirection then return nil end
+  local dir = context.chestDirection
+  
+  if dir == "up" then
+    return {
+      inspect = turtle.inspectUp,
+      suck = turtle.suckUp,
+      drop = turtle.dropUp,
+      label = "above"
+    }
+  elseif dir == "down" then
+    return {
+      inspect = turtle.inspectDown,
+      suck = turtle.suckDown,
+      drop = turtle.dropDown,
+      label = "below"
+    }
+  else
+    -- horizontal direction: orient first, then use forward functions
+    orientToChest()
+    return {
+      inspect = turtle.inspect,
+      suck = turtle.suck,
+      drop = turtle.drop,
+      label = context.chestDirection or "front"
+    }
+  end
+end
+
+-- Restock from the chest at origin (using remembered chest direction).
+-- missing: table of deficits for items to pull
+-- allowedUniverse: table of all remaining requirements (to keep extra items that are still needed)
+-- Returns: (pulledSomething, foundContainer)
+local function restockFromOriginChest(missing, allowedUniverse)
+  if not context.chestDirection then
+    log("Cannot restock: chest direction not known")
+    return false, false
+  end
+  
+  local chestFns = getChestAccessFunctions()
+  if not chestFns then
+    log("Cannot restock: failed to get chest access functions")
+    return false, false
+  end
+  
+  local ok, data = chestFns.inspect()
+  if not ok or not data or not isInventoryBlock(data.name) then
+    log("Cannot restock: no storage block found at "..chestFns.label)
+    return false, false
+  end
+  
+  if VERBOSE then log("Restocking from origin chest: "..data.name.." ("..chestFns.label..")") end
+  
+  local pulledSomething = false
+  for itemName, deficit in pairs(missing) do
+    if deficit <= 0 then goto continue end
+    
+    local remaining = deficit
+    local beforeAll = snapshotInventory()
+    local tries = 0
+    local MAX_BURST = 16
+    
+    while remaining > 0 and tries < MAX_BURST do
+      if not chestFns.suck(64) then break end
+      tries = tries + 1
+      
+      local afterNow = snapshotInventory()
+      local gainsNow = diffGains(beforeAll, afterNow)
+      local gainedRequested = 0
+      for gname, gcount in pairs(gainsNow) do
+        if isSameFamily(itemName, gname) then
+          gainedRequested = gainedRequested + gcount
+        end
+      end
+      
+      debug(string.format("Origin restock burst %s: needed %d, gained %d (tries %d)", itemName, remaining, gainedRequested, tries))
+      if gainedRequested >= remaining then break end
+    end
+    
+    local afterAll = snapshotInventory()
+    local gainsTotal = diffGains(beforeAll, afterAll)
+    local gainedRequestedTotal = 0
+    for gname, gcount in pairs(gainsTotal) do
+      if isSameFamily(itemName, gname) then
+        gainedRequestedTotal = gainedRequestedTotal + gcount
+      end
+    end
+    
+    remaining = math.max(remaining - gainedRequestedTotal, 0)
+    if gainedRequestedTotal > 0 then pulledSomething = true end
+    
+    -- Drop unexpected items (keep only items still needed elsewhere)
+    local allowedSet = {}
+    local source = allowedUniverse or missing
+    for n, deficitVal in pairs(source) do
+      if deficitVal and deficitVal > 0 then allowedSet[n] = true end
+    end
+    dropUnexpectedGainsMulti(gainsTotal, allowedSet, chestFns.drop, true)
+    
+    missing[itemName] = remaining
+    ::continue::
+  end
+  
+  turtle.select(1)
+  return pulledSomething, true
+end
+
+-- Refuel from the chest at origin (using remembered chest direction).
+-- targetLevel: desired fuel level to reach
+-- Returns: (refueled:bool, foundContainer:bool)
+local function refuelFromOriginChest(targetLevel)
+  if not context.chestDirection then
+    log("Cannot refuel: chest direction not known")
+    return false, false
+  end
+  
+  local chestFns = getChestAccessFunctions()
+  if not chestFns then
+    log("Cannot refuel: failed to get chest access functions")
+    return false, false
+  end
+  
+  local ok, data = chestFns.inspect()
+  if not ok or not data or not isInventoryBlock(data.name) then
+    log("Cannot refuel: no storage block found at "..chestFns.label)
+    return false, false
+  end
+  
+  if DEBUG_FUEL then log("Refueling from origin chest: "..data.name.." ("..chestFns.label..")") end
+  
+  local function isNameFuel(name)
+    if not name then return false end
+    for slot = 1, 16 do
+      local detail = turtle.getItemDetail(slot)
+      if detail and detail.name == name then
+        local sel = turtle.getSelectedSlot()
+        turtle.select(slot)
+        local isFuel = turtle.refuel and turtle.refuel(0)
+        turtle.select(sel)
+        if isFuel then return true end
+      end
+    end
+    return false
+  end
+  
+  local function tryConsumeFuelToTarget(level)
+    local started = turtle.getFuelLevel()
+    for slot = 1, 16 do
+      local detail = turtle.getItemDetail(slot)
+      if detail then
+        local sel = turtle.getSelectedSlot()
+        turtle.select(slot)
+        if turtle.refuel and turtle.refuel(0) then
+          if DEBUG_FUEL then print(string.format("[DEBUG] Fuel: consuming %s x%d", detail.name, detail.count)) end
+          while turtle.getFuelLevel() <= level and turtle.refuel(1) do end
+        end
+        turtle.select(sel)
+        if turtle.getFuelLevel() > level then break end
+      end
+    end
+    return turtle.getFuelLevel() > started
+  end
+  
+  local refueled = false
+  local beforeAll = snapshotInventory()
+  local pulls = 0
+  
+  while turtle.getFuelLevel() <= targetLevel and pulls < FUEL_RESTOCK_MAX_PULLS do
+    if not chestFns.suck(64) then break end
+    pulls = pulls + 1
+    tryConsumeFuelToTarget(targetLevel)
+  end
+  
+  refueled = turtle.getFuelLevel() > targetLevel
+  
+  -- Return all non-fuel items
+  local afterAll = snapshotInventory()
+  local gains = diffGains(beforeAll, afterAll)
+  local toDrop = {}
+  for name, count in pairs(gains) do
+    if count > 0 and not isNameFuel(name) then
+      toDrop[name] = count
+    end
+  end
+  
+  if next(toDrop) ~= nil then
+    for slot = 1, 16 do
+      local detail = turtle.getItemDetail(slot)
+      if detail and toDrop[detail.name] and toDrop[detail.name] > 0 then
+        turtle.select(slot)
+        local need = toDrop[detail.name]
+        local give = math.min(need, detail.count)
+        if give > 0 then
+          chestFns.drop(give)
+          toDrop[detail.name] = need - give
+        end
+      end
+    end
+  end
+  
+  turtle.select(1)
+  return refueled, true
 end
 
 -- SERVICE STORAGE LOCATION LOGIC -----------------------------------------
@@ -1033,27 +1224,6 @@ local function placeBlock(blockName)
   return false
 end
 
-local function placeBlockWithRestock(blockName, pendingRequirements)
-  -- Always block if we cannot place: missing materials must halt progress.
-  if not blockName or blockName == AIR_BLOCK then return true end
-
-  if not placeBlock(blockName) then
-    -- Immediately transition to RESTOCK to fetch required materials; do not continue.
-    log("⚠ Missing "..blockName.."; entering RESTOCK to fetch materials")
-    if context then
-      context.missingBlockName = blockName
-      context.previousState = currentState
-      currentState = STATE_RESTOCK
-    end
-    return false
-  end
-
-  if pendingRequirements then
-    pendingRequirements[blockName] = math.max((pendingRequirements[blockName] or 1) - 1, 0)
-  end
-  return true
-end
-
 -- MOVEMENT ---------------------------------------------------------------
 local function recordMove(op)
   -- Access global 'context' defined later; guard until initialized
@@ -1142,77 +1312,7 @@ local function turnLeft(record)
   if record then recordMove('L') end
 end
 
-local function resetRow(zLen)
-  turnLeft(); turnLeft()
-  for i=1,zLen-1 do forward() end
-  turnLeft(); forward(); turnLeft()
-end
-
 -- Return-to-origin helpers using movement history -----------------------
-local function performInverse(op)
-  if op == 'F' then
-    -- Prefer a simple back-step to avoid extra spinning on restock return.
-    -- If back() is blocked (we can't dig behind), fall back to turn-around + forward.
-    if turtle.back() then
-      return true
-    end
-    -- Fallback: 180 + forward + 180 (maintains heading but looks like a spin).
-    turnRight(false); turnRight(false)
-    if not forward(nil, false) then return false end
-    turnRight(false); turnRight(false)
-    return true
-  elseif op == 'U' then
-    return down(nil, false)
-  elseif op == 'D' then
-    return up(nil, false)
-  elseif op == 'R' then
-    turnLeft(false); return true
-  elseif op == 'L' then
-    turnRight(false); return true
-  end
-  return false
-end
-
-local function performForward(op)
-  if op == 'F' then
-    return forward(nil, true)
-  elseif op == 'U' then
-    return up(nil, true)
-  elseif op == 'D' then
-    return down(nil, true)
-  elseif op == 'R' then
-    turnRight(true); return true
-  elseif op == 'L' then
-    turnLeft(true); return true
-  end
-  return false
-end
-
-local function goToOriginByHistory()
-  if not context or not context.movementHistory then return {} end
-  local path = {}
-  while #context.movementHistory > 0 do
-    local op = table.remove(context.movementHistory)
-    table.insert(path, op)
-    if not performInverse(op) then
-      log("Failed to backtrack op "..tostring(op))
-      break
-    end
-  end
-  return path
-end
-
-local function returnAlongPath(path)
-  for i = #path, 1, -1 do
-    local op = path[i]
-    if not performForward(op) then
-      log("Failed to reapply op "..tostring(op))
-      return false
-    end
-  end
-  return true
-end
-
 -- CORE BUILDER -----------------------------------------------------------
 -- STATE MACHINE CONTEXT -------------------------------------------------
 context = {
@@ -1223,15 +1323,15 @@ context = {
   currentX = 1,
   width  = manifest.meta.size.x,
   height = manifest.meta.size.y,
-  depth  = manifest.meta.size.z or manifest.meta.size.x, -- assuming square footprint if z missing
+  depth  = manifest.meta.size.z or manifest.meta.size.x,
   manifestOK = false,
   lastError = nil,
   previousState = nil,
   missingBlockName = nil,
   inventorySummary = {},
-  origin = {x = 0, y = 0, z = 0, facing = 0}, -- placeholder; movement system could update this
   layerCache = {}, -- cache of resolved layers
   movementHistory = {}, -- sequence of moves from origin (for return-to-origin)
+  chestDirection = nil, -- direction to chest from origin (detected in INITIALIZE)
 }
 
 -- Helper: fetch & cache layer for context (avoids repeat resolution)
@@ -1328,13 +1428,23 @@ end
 states[STATE_INITIALIZE] = function(ctx)
   -- Strict startup requirement: a treasure chest must be directly behind the turtle.
   do
-    local okChest, seenId = checkTreasureChestBehind()
+    local okChest, seenId, raw = checkTreasureChestBehind()
     if VERBOSE then
-      print(string.format("Startup: behind id=%s; treasureChest=%s", tostring(seenId or "none"), tostring(okChest)))
+      local meta = raw and raw.state or {}
+      -- Defensive: textutils may not be available if this runs outside CC:Tweaked environment.
+      local serialized
+      local tu = rawget(_G, 'textutils')
+      if type(tu) == 'table' and type(tu.serialize) == 'function' then
+        serialized = tu.serialize(meta)
+      else
+        serialized = '(textutils unavailable)'
+      end
+      print(string.format("Startup: behind id=%s; treasureChest=%s; state=%s", tostring(seenId or "none"), tostring(okChest), serialized))
     end
     if not okChest then
       print("Startup check failed: a treasure chest must be directly behind the turtle.")
-      print("Detected behind: "..tostring(seenId or "none"))
+      print("Detected behind block id: "..tostring(seenId or "none"))
+      print("If this is the correct treasure chest, add its id to TREASURE_CHEST_MATCHERS or set REQUIRE_TREASURE_SPECIFIC=false.")
       error("Treasure chest required behind. Halting.")
     end
   end
@@ -1344,25 +1454,20 @@ states[STATE_INITIALIZE] = function(ctx)
   if not ctx.manifestOK then
     log("Manifest issues detected; continuing but placement accuracy may suffer.")
   end
-  -- Detect at least one adjacent storage (chest/barrel/etc.) so RESTOCK/REFUEL can succeed.
-  local function detectAnyAdjacentStorage()
-    local function noop() end
-    local function turnAround() turtle.turnRight(); turtle.turnRight() end
-    local dirs = {
-      {prep=noop, clean=noop,       inspect=turtle.inspect},
-      {prep=turtle.turnRight, clean=turtle.turnLeft, inspect=turtle.inspect},
-      {prep=turnAround,      clean=turnAround,      inspect=turtle.inspect},
-      {prep=turtle.turnLeft,  clean=turtle.turnRight, inspect=turtle.inspect},
-      {prep=noop, clean=noop,       inspect=turtle.inspectUp},
-      {prep=noop, clean=noop,       inspect=turtle.inspectDown},
-    }
-    for _,d in ipairs(dirs) do
-      d.prep()
-      local ok, data = d.inspect()
-      d.clean()
-      if ok and data and isInventoryBlock(data.name) then return true end
+  
+  -- Find and remember the chest direction for later return-to-origin service calls
+  ctx.chestDirection = findAdjacentStorageDirection()
+  if not ctx.chestDirection then
+    if AUTO_MODE then
+      log("Warning: No adjacent storage detected; RESTOCK/REFUEL may be impossible. Proceeding in AUTO_MODE.")
+    else
+      ctx.lastError = "No adjacent storage detected; RESTOCK/REFUEL may be impossible"
+      ctx.previousState = STATE_INITIALIZE
+      currentState = STATE_ERROR
+      return
     end
-    return false
+  else
+    print("Storage direction saved: "..ctx.chestDirection)
   end
   if isFuelUnlimited() then
     print("Fuel: unlimited")
@@ -1372,17 +1477,6 @@ states[STATE_INITIALIZE] = function(ctx)
   end
   ctx.remainingMaterials = cloneTable(MATERIAL_REQUIREMENTS)
   ctx.inventorySummary = tallyInventory()
-  -- Optional up-front chest presence check per spec
-  if not detectAnyAdjacentStorage() and not PRELOAD_MATERIALS then
-    if AUTO_MODE then
-      log("Warning: No adjacent storage detected; RESTOCK/REFUEL may be impossible. Proceeding in AUTO_MODE.")
-    else
-      ctx.lastError = "No adjacent storage detected; RESTOCK/REFUEL may be impossible"
-      ctx.previousState = STATE_INITIALIZE
-      currentState = STATE_ERROR
-      return
-    end
-  end
   if PRELOAD_MATERIALS then
     promptForMaterials(ctx.remainingMaterials)
     for _, blockName in ipairs(sortedKeys(ctx.remainingMaterials)) do
@@ -1459,109 +1553,80 @@ states[STATE_RESTOCK] = function(ctx)
   end
   print("Restocking missing item: "..ctx.missingBlockName)
 
-  -- NEW: Step up into known-safe air lane before moving horizontally, to avoid damaging the current layer.
-  local steppedUpFromWork = tryUpNoDig()
-
-  -- Non-serpentine service storage seek: ascend then minimal outward search.
-  local serviceMoves = findServiceStorageNonSerpentine(ctx)
-  local droppedToChestHeight = false -- reserved if future logic wants vertical adjustment
-  -- Bulk restock strategy: acquire baseline stacks of ALL needed items, then prioritize the most requested one.
-  local function restockBaselineAndPriority(targetBlock)
-    local function countFreeSlots()
-      local free = 0
-      for slot=1,15 do if turtle.getItemCount(slot) == 0 then free = free + 1 end end
-      return free
-    end
-    local function inventoryTotals() return tallyInventory() end
-
-    local inv = inventoryTotals()
-    -- Build table of baseline deficits (up to one stack per item)
-    local baselineMissing = {}
-    for item, remain in pairs(ctx.remainingMaterials) do
-      if remain and remain > 0 then
-        local have = countFamilyInInventory(inv, item)
-        if have < math.min(64, remain) then
-          local want = math.min(64 - have, remain)
-          if want > 0 then baselineMissing[item] = want end
-        end
+  -- RETURN-TO-ORIGIN RESTOCK STRATEGY:
+  -- 1. Ascend above the build height to travel safely
+  -- 2. Reverse movementHistory to return to origin
+  -- 3. Access the chest at origin
+  -- 4. Return along the saved path to resume building
+  
+  -- Step 1: Ascend above the build to safe travel height
+  local safeHeight = ctx.height + 2  -- go 2 blocks above max build height
+  local ascendSteps = safeHeight - ctx.currentY
+  if ascendSteps > 0 then
+    print("Ascending "..ascendSteps.." blocks to safe travel height...")
+    for i = 1, ascendSteps do
+      if not tryUpNoDig() then
+        ctx.lastError = "Failed to ascend to safe height for return-to-origin"
+        ctx.previousState = STATE_BUILD
+        currentState = STATE_ERROR
+        return
       end
     end
-
-    -- Perform limited passes attempting to pull baseline stacks.
-    local pass = 1
-    while pass <= RESTOCK_MAX_BASELINE_PASSES and next(baselineMissing) ~= nil do
-      attemptChestRestock(baselineMissing, ctx.remainingMaterials)
-      inv = inventoryTotals()
-      -- Recompute remaining baseline deficits
-      local stillMissing = {}
-      for item, _ in pairs(baselineMissing) do
-        local remain = ctx.remainingMaterials[item]
-        if remain and remain > 0 then
-          local have = countFamilyInInventory(inv, item)
-            if have < math.min(64, remain) then
-              local want = math.min(64 - have, remain)
-              if want > 0 then stillMissing[item] = want end
-            end
-        end
-      end
-      baselineMissing = stillMissing
-      pass = pass + 1
-    end
-
-    -- Determine priority item (largest remaining requirement)
-    local priorityItem, maxRemain = nil, -1
-    for item, remain in pairs(ctx.remainingMaterials) do
-      if remain and remain > maxRemain and remain > 0 then
-        priorityItem, maxRemain = item, remain
-      end
-    end
-    if priorityItem then
-      local have = countFamilyInInventory(inv, priorityItem)
-      local freeSlots = countFreeSlots()
-      -- If we already have at least one stack, try to pull extra stacks (up to configured limit & remaining requirement)
-      local remainingNeeded = math.max(ctx.remainingMaterials[priorityItem] - have, 0)
-      if remainingNeeded > 0 and freeSlots > 0 then
-        -- Request up to EXTRA_STACKS full stacks (each 64) or remaining requirement or slot capacity.
-        local maxExtra = RESTOCK_PRIORITY_EXTRA_STACKS * 64
-        local capacity = freeSlots * 64
-        local want = math.min(remainingNeeded, maxExtra, capacity)
-        if want > 0 then
-          local priorityMissing = {[priorityItem] = want}
-          attemptChestRestock(priorityMissing, ctx.remainingMaterials)
-        end
-      end
-    end
-    -- Success criteria: we obtained at least one of the targetBlock family.
-    local haveTarget = targetBlock and countFamilyInInventory(inventoryTotals(), targetBlock) or 0
-    return (haveTarget or 0) > 0
   end
-
-  local ok = restockBaselineAndPriority(ctx.missingBlockName)
-  -- Fallback: if target block still missing, enter blocking single-item acquisition loop.
-  if not ok then
-    ok = ensureMaterialsAvailable(ctx.remainingMaterials, ctx.missingBlockName, true)
-  end
-  if ok then
-    -- Double-check we actually have at least one of the requested family now;
-    -- this guards against any false positives from requirement tables.
-    local haveNow = countFamilyInInventory(tallyInventory(), ctx.missingBlockName)
-    if haveNow > 0 then
-      print("Restock successful for "..ctx.missingBlockName)
-      ctx.inventorySummary = tallyInventory()
-      ctx.missingBlockName = nil
-      -- Before returning, if we descended at origin for chest access, step back up to the safe lane.
-      if droppedToChestHeight then tryUpNoDig() end
-      -- Reverse outward service moves (horizontal) instead of serpentine history replay.
-      reverseServiceMoves(serviceMoves)
-      -- Finally, if we stepped up at the start, return to the work layer without digging.
-      if steppedUpFromWork then tryDownNoDig() end
-      currentState = ctx.previousState or STATE_BUILD
+  
+  -- Step 2: Return to origin safely (non-destructive)
+  print("Returning to origin for restock...")
+  local returnPath = goToOriginSafely()
+  
+  -- Step 3: Attempt to pull required materials from origin chest
+  local missing = {[ctx.missingBlockName] = 1}  -- need at least 1 of the missing item
+  local pulled, foundChest = restockFromOriginChest(missing, ctx.remainingMaterials)
+  
+  -- If still missing after first attempt, wait/retry
+  if missing[ctx.missingBlockName] and missing[ctx.missingBlockName] > 0 then
+    if AUTO_MODE then
+      print("Material not available at origin. Waiting "..RESTOCK_RETRY_SECONDS.."s...")
+      sleep(RESTOCK_RETRY_SECONDS)
+      -- Retry pull
+      missing = {[ctx.missingBlockName] = 1}
+      pulled, foundChest = restockFromOriginChest(missing, ctx.remainingMaterials)
     else
-      print("Restock reported success, but item still missing. Load materials and press Enter to retry.")
+      print("Load "..ctx.missingBlockName.." into origin chest, then press Enter.")
       read()
-      -- Stay in RESTOCK; do not clear missingBlockName so we retry
-      return
+      missing = {[ctx.missingBlockName] = 1}
+      pulled, foundChest = restockFromOriginChest(missing, ctx.remainingMaterials)
     end
+  end
+  
+  -- Step 4: Return to work position
+  print("Returning to work position...")
+  local returnOk = returnAlongPathSafely(returnPath)
+  if not returnOk then
+    ctx.lastError = "Failed to return to work position after restock"
+    ctx.previousState = STATE_BUILD
+    currentState = STATE_ERROR
+    return
+  end
+  
+  -- Step 5: Descend back to work layer
+  if ascendSteps > 0 then
+    for i = 1, ascendSteps do
+      if not tryDownNoDig() then
+        ctx.lastError = "Failed to descend back to work layer after restock"
+        ctx.previousState = STATE_BUILD
+        currentState = STATE_ERROR
+        return
+      end
+    end
+  end
+  
+  -- Step 6: Verify we got the materials and resume
+  local haveNow = countFamilyInInventory(tallyInventory(), ctx.missingBlockName)
+  if haveNow > 0 then
+    print("Restock successful for "..ctx.missingBlockName.." ("..haveNow.." obtained)")
+    ctx.inventorySummary = tallyInventory()
+    ctx.missingBlockName = nil
+    currentState = ctx.previousState or STATE_BUILD
   else
     ctx.lastError = "Unable to restock material: "..ctx.missingBlockName
     currentState = STATE_ERROR
@@ -1570,20 +1635,78 @@ end
 
 states[STATE_REFUEL] = function(ctx)
   print("Refueling attempt...")
-  -- Step up into known-safe air lane.
-  local steppedUp = tryUpNoDig()
-  -- Seek storage outward minimally (non-serpentine) then refuel.
-  local serviceMoves = findServiceStorageNonSerpentine(ctx)
-  refuel()
-  -- Reverse horizontal service travel.
-  reverseServiceMoves(serviceMoves)
-  if steppedUp then tryDownNoDig() end
+  
+  -- RETURN-TO-ORIGIN REFUEL STRATEGY:
+  -- 1. Ascend above the build height to travel safely
+  -- 2. Reverse movementHistory to return to origin
+  -- 3. Access the chest at origin for fuel
+  -- 4. Return along the saved path to resume building
+  
+  -- Step 1: Ascend above the build to safe travel height
+  local safeHeight = ctx.height + 2
+  local ascendSteps = safeHeight - ctx.currentY
+  if ascendSteps > 0 then
+    print("Ascending "..ascendSteps.." blocks to safe travel height...")
+    for i = 1, ascendSteps do
+      if not tryUpNoDig() then
+        ctx.lastError = "Failed to ascend to safe height for refuel"
+        ctx.previousState = STATE_BUILD
+        currentState = STATE_ERROR
+        return
+      end
+    end
+  end
+  
+  -- Step 2: Return to origin safely
+  print("Returning to origin for refuel...")
+  local returnPath = goToOriginSafely()
+  
+  -- Step 3: Attempt to refuel from origin chest
+  local targetLevel = RESTOCK_AT * 2  -- refuel to double the threshold
+  local refueled, foundChest = refuelFromOriginChest(targetLevel)
+  
+  -- If still low on fuel, wait/retry
+  if turtle.getFuelLevel() <= RESTOCK_AT and not isFuelUnlimited() then
+    if AUTO_MODE then
+      print("Fuel not available at origin. Waiting "..RESTOCK_RETRY_SECONDS.."s...")
+      sleep(RESTOCK_RETRY_SECONDS)
+      refueled, foundChest = refuelFromOriginChest(targetLevel)
+    else
+      print("Load fuel into origin chest, then press Enter.")
+      read()
+      refueled, foundChest = refuelFromOriginChest(targetLevel)
+    end
+  end
+  
+  -- Step 4: Return to work position
+  print("Returning to work position...")
+  local returnOk = returnAlongPathSafely(returnPath)
+  if not returnOk then
+    ctx.lastError = "Failed to return to work position after refuel"
+    ctx.previousState = STATE_BUILD
+    currentState = STATE_ERROR
+    return
+  end
+  
+  -- Step 5: Descend back to work layer
+  if ascendSteps > 0 then
+    for i = 1, ascendSteps do
+      if not tryDownNoDig() then
+        ctx.lastError = "Failed to descend back to work layer after refuel"
+        ctx.previousState = STATE_BUILD
+        currentState = STATE_ERROR
+        return
+      end
+    end
+  end
+  
+  -- Step 6: Verify fuel level and resume
   if isFuelUnlimited() or turtle.getFuelLevel() > RESTOCK_AT then
     print("Refuel complete. Fuel level: "..tostring(turtle.getFuelLevel()))
     ctx.inventorySummary = tallyInventory()
     currentState = ctx.previousState or STATE_BUILD
   else
-    ctx.lastError = "Refuel failed; insufficient fuel sources"
+    ctx.lastError = "Refuel failed; insufficient fuel sources at origin"
     currentState = STATE_ERROR
   end
 end

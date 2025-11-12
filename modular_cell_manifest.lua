@@ -68,7 +68,7 @@ local manifest = {
       "W..............W",
       "W..............W",
       "W..............W",
-      "WFFFFFFFFFFFFFFW",
+      "W..............W",
       "WWWWWWWWWWWWWWWW",
     },
     [3] = "SAME_AS[2]",
@@ -108,7 +108,6 @@ local manifest = {
     ----------------------------------------------------------------------
     [9] = {
       "WWWWWWWWWWWWWWWW",
-      "WPEEEEEEEEEEEE PW",
       "WP.............PW",
       "WP.............PW",
       "WP.............PW",
@@ -121,7 +120,8 @@ local manifest = {
       "WP.............PW",
       "WP.............PW",
       "WP.............PW",
-      "WPEEEEEEEEEEEE PW",
+      "WP.............PW",
+      "WP.............PW",
       "WWWWWWWWWWWWWWWW",
     },
   },
