@@ -1,5 +1,5 @@
 -- Flat require: run this script from the same directory as the manifest
-local manifest = require("modular_cell_manifest")
+local manifest = require("modularfactorymanifest")
 
 local CELL_SIZE = 16
 local ENERGY_Y  = manifest.meta.buses.energy_height

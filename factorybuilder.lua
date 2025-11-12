@@ -70,7 +70,7 @@ local ok, result = pcall(require, "factory.modular_cell_manifest")
 if ok then
   manifest = result
 else
-  manifest = require("modular_cell_manifest")
+  manifest = require("modularfactorymanifest")
 end
 
 -- STATE NAME CONSTANTS --------------------------------------------------
