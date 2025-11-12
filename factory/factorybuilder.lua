@@ -77,6 +77,7 @@ local STATE_RESTOCK    = "RESTOCK"
 local STATE_REFUEL     = "REFUEL"
 local STATE_ERROR      = "ERROR"
 local STATE_DONE       = "DONE"
+local STATE_BLOCKED    = "BLOCKED" -- new: handle non-destructive go-home-and-return when blocked
 
 local currentState = STATE_INITIALIZE  -- global per spec
 local states = {}                      -- container for state functions
@@ -705,6 +706,107 @@ local function refuel()
   end
 end
 
+-- SAFE, NON-DESTRUCTIVE TRAVEL HELPERS ---------------------------------
+-- Only raw movements; if blocked we wait (AUTO_MODE) or prompt, never dig.
+local function safeWaitMove(stepFn, label)
+  label = label or "move"
+  while true do
+    if stepFn() then return true end
+    if AUTO_MODE then
+      log("Waiting for path to clear ("..label..")...")
+      sleep(1)
+    else
+      print("Path blocked during "..label..". Clear the way, then press Enter to retry.")
+      read()
+    end
+  end
+end
+
+local function updatePoseForOp(op, inverse)
+  if not context then return end
+  local p = context.pos
+  if not p then return end
+  context.facing = context.facing or 0
+  local f = context.facing
+  local function stepForward()
+    if f == 0 then p.x = (p.x or 0) + 1
+    elseif f == 1 then p.z = (p.z or 0) + 1
+    elseif f == 2 then p.x = (p.x or 0) - 1
+    else p.z = (p.z or 0) - 1 end
+  end
+  local function stepBack()
+    if f == 0 then p.x = (p.x or 0) - 1
+    elseif f == 1 then p.z = (p.z or 0) - 1
+    elseif f == 2 then p.x = (p.x or 0) + 1
+    else p.z = (p.z or 0) + 1 end
+  end
+  if not inverse then
+    if op == 'F' then stepForward()
+    elseif op == 'U' then p.y = (p.y or 0) + 1
+    elseif op == 'D' then p.y = (p.y or 0) - 1
+    elseif op == 'R' then context.facing = (f + 1) % 4
+    elseif op == 'L' then context.facing = (f + 3) % 4 end
+  else
+    if op == 'F' then stepBack()
+    elseif op == 'U' then p.y = (p.y or 0) - 1
+    elseif op == 'D' then p.y = (p.y or 0) + 1
+    elseif op == 'R' then context.facing = (f + 3) % 4
+    elseif op == 'L' then context.facing = (f + 1) % 4 end
+  end
+end
+
+local function safePerformInverse(op)
+  if op == 'F' then
+    safeWaitMove(turtle.back, 'back'); updatePoseForOp('F', true); return true
+  elseif op == 'U' then
+    safeWaitMove(turtle.down, 'down'); updatePoseForOp('U', true); return true
+  elseif op == 'D' then
+    safeWaitMove(turtle.up, 'up'); updatePoseForOp('D', true); return true
+  elseif op == 'R' then
+    turtle.turnLeft(); updatePoseForOp('R', true); return true
+  elseif op == 'L' then
+    turtle.turnRight(); updatePoseForOp('L', true); return true
+  end
+  return false
+end
+
+local function safePerformForward(op)
+  if op == 'F' then
+    safeWaitMove(turtle.forward, 'forward'); updatePoseForOp('F', false); return true
+  elseif op == 'U' then
+    safeWaitMove(turtle.up, 'up'); updatePoseForOp('U', false); return true
+  elseif op == 'D' then
+    safeWaitMove(turtle.down, 'down'); updatePoseForOp('D', false); return true
+  elseif op == 'R' then
+    turtle.turnRight(); updatePoseForOp('R', false); return true
+  elseif op == 'L' then
+    turtle.turnLeft(); updatePoseForOp('L', false); return true
+  end
+  return false
+end
+
+local function goToOriginSafely()
+  if not context or not context.movementHistory then return {} end
+  local path = {}
+  while #context.movementHistory > 0 do
+    local op = table.remove(context.movementHistory)
+    table.insert(path, op)
+    if not safePerformInverse(op) then break end
+  end
+  return path
+end
+
+local function returnAlongPathSafely(path)
+  for i = #path, 1, -1 do
+    local op = path[i]
+    if not safePerformForward(op) then return false end
+  end
+  -- Restore movement history to original
+  context.movementHistory = {}
+  for i = 1, #path do context.movementHistory[i] = path[i] end
+  return true
+end
+
 local function placeBlock(blockName)
   -- Places the specified block below the turtle, but first checks if the
   -- existing block already matches the desired target. If so, we skip digging
@@ -734,21 +836,18 @@ local function placeBlock(blockName)
 end
 
 local function placeBlockWithRestock(blockName, pendingRequirements)
+  -- Always block if we cannot place: missing materials must halt progress.
   if not blockName or blockName == AIR_BLOCK then return true end
 
   if not placeBlock(blockName) then
-    -- Attempt a quick, non-blocking restock from adjacent storage.
-    local ok = ensureMaterialsAvailable(pendingRequirements, blockName, false)
-    if ok then
-      if not placeBlock(blockName) then
-        log("⚠ Missing "..blockName)
-        return false
-      end
-    else
-      -- Still missing; skip this spot without stalling the whole build.
-      log("⚠ Skipping (missing) "..blockName)
-      return false
+    -- Immediately transition to RESTOCK to fetch required materials; do not continue.
+    log("⚠ Missing "..blockName.."; entering RESTOCK to fetch materials")
+    if context then
+      context.missingBlockName = blockName
+      context.previousState = currentState
+      currentState = STATE_RESTOCK
     end
+    return false
   end
 
   if pendingRequirements then
@@ -1163,7 +1262,7 @@ local function advanceCursorAfterPlacement()
     if not forward() then
       context.lastError = "Movement blocked while advancing along X"
       context.previousState = currentState
-      currentState = STATE_ERROR
+      currentState = STATE_BLOCKED
       return
     end
     context.currentX = context.currentX + 1
@@ -1173,9 +1272,9 @@ local function advanceCursorAfterPlacement()
   -- End of row: perform serpentine turn if more rows remain
   if context.currentZ < #layer then
     if context.currentZ % 2 == 1 then
-      turnRight(); if not forward() then context.lastError = "Blocked during serpentine (right)"; context.previousState = currentState; currentState = STATE_ERROR; return end; turnRight()
+      turnRight(); if not forward() then context.lastError = "Blocked during serpentine (right)"; context.previousState = currentState; currentState = STATE_BLOCKED; return end; turnRight()
     else
-      turnLeft();  if not forward() then context.lastError = "Blocked during serpentine (left)";  context.previousState = currentState; currentState = STATE_ERROR; return end; turnLeft()
+      turnLeft();  if not forward() then context.lastError = "Blocked during serpentine (left)";  context.previousState = currentState; currentState = STATE_BLOCKED; return end; turnLeft()
     end
     context.currentZ = context.currentZ + 1
     context.currentX = 1
@@ -1184,14 +1283,14 @@ local function advanceCursorAfterPlacement()
 
   -- End of layer: return to origin, ascend
   if (#layer % 2 == 0) then
-    turnRight(); for i=1,#layer-1 do if not forward() then context.lastError = "Return-to-origin failed (even rows)"; context.previousState = currentState; currentState = STATE_ERROR; return end end; turnRight()
+    turnRight(); for i=1,#layer-1 do if not forward() then context.lastError = "Return-to-origin failed (even rows)"; context.previousState = currentState; currentState = STATE_BLOCKED; return end end; turnRight()
   else
-    turnLeft();  for i=1,#layer-1 do if not forward() then context.lastError = "Return-to-origin failed (odd rows)"; context.previousState = currentState; currentState = STATE_ERROR; return end end; turnLeft()
+    turnLeft();  for i=1,#layer-1 do if not forward() then context.lastError = "Return-to-origin failed (odd rows)"; context.previousState = currentState; currentState = STATE_BLOCKED; return end end; turnLeft()
   end
   if not up() then
     context.lastError = "Unable to ascend to next layer"
     context.previousState = currentState
-    currentState = STATE_ERROR
+    currentState = STATE_BLOCKED
     return
   end
   context.currentY = context.currentY + 1
@@ -1205,13 +1304,6 @@ local function attemptPlaceCurrent(blockName)
     return true -- nothing to place
   end
   local placed = placeBlock(blockName)
-  if not placed then
-    -- quick opportunistic restock (non-blocking)
-    local ok = ensureMaterialsAvailable(context.remainingMaterials, blockName, false)
-    if ok then
-      placed = placeBlock(blockName)
-    end
-  end
   if placed then
     -- decrement remaining count
     if context.remainingMaterials[blockName] then
@@ -1430,6 +1522,26 @@ states[STATE_ERROR] = function(ctx)
   else
     currentState = STATE_INITIALIZE
   end
+  ctx.lastError = nil
+end
+
+-- NEW: BLOCKED STATE ----------------------------------------------------
+states[STATE_BLOCKED] = function(ctx)
+  print("Blocked: "..tostring(ctx.lastError or "movement obstruction"))
+  local path = goToOriginSafely()
+  if AUTO_MODE then
+    sleep(ERROR_RETRY_SECONDS)
+  else
+    print("At home. Clear the obstruction, then press Enter to resume.")
+    read()
+  end
+  local ok = returnAlongPathSafely(path)
+  if not ok then
+    ctx.lastError = "Failed to safely return to work position"
+    currentState = STATE_ERROR
+    return
+  end
+  currentState = ctx.previousState or STATE_BUILD
   ctx.lastError = nil
 end
 
