@@ -3,7 +3,7 @@
 -- This file currently uses the shared arcade wrapper and shows a coming-soon UI.
 -- Later, we'll implement full blackjack logic using the same three-button controls.
 
-local arcade = require("games.arcade")
+local arcade = require("lib.arcade")
 
 local game = {
 	name = "Blackjack",

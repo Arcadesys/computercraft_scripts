@@ -1,6 +1,6 @@
 ---@diagnostic disable: undefined-global, undefined-field
 -- IdleCraft (Arcade wrapper version)
--- Refactored to run inside the generic three‑button arcade framework in `games/arcade.lua`.
+-- Refactored to run inside the generic three‑button arcade framework in `lib/arcade.lua`.
 -- The original standalone event / layout system has been removed. All rendering now
 -- happens inside a single playfield using arcade's helper methods.
 --
@@ -14,7 +14,7 @@
 --
 -- Lua Tips (search 'Lua Tip:') are sprinkled in for learning.
 
-local arcade = require("games.arcade")
+local arcade = require("lib.arcade")
 
 -- ==========================
 -- Configuration

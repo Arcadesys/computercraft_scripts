@@ -6,14 +6,9 @@
 -------------------------------------------------------------------------------
 
 local fs = assert(rawget(_G, "fs"), "fs API unavailable")
-local realTurtle = rawget(_G, "turtle")
+local realTurtle = assert(rawget(_G, "turtle"), "turtle API unavailable")
 local textutils = rawget(_G, "textutils")
 local term = rawget(_G, "term")
-
--- Validate that we're running on a turtle
-if not realTurtle then
-	error("This program requires a turtle! In CraftOS-PC, use 'set computerType turtle' and restart.")
-end
 
 local turtle = realTurtle
 

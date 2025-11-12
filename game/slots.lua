@@ -2,7 +2,7 @@
 -- Slots (placeholder)
 -- Minimal demo using arcade wrapper: spin costs 1 credit, 5% chance triple payout.
 
-local arcade = require("games.arcade")
+local arcade = require("lib.arcade")
 local lastResult = "---"
 local message = "Spin to win!"
 

@@ -1,4 +1,4 @@
-# Arcade wrapper (games/arcade.lua)
+# Arcade wrapper (lib/arcade.lua)
 
 A tiny helper module to standardize three-button arcade machines on CC:Tweaked monitors.
 
@@ -12,7 +12,7 @@ What it gives you:
 Quick start:
 
 ```lua
-local arcade = require("games.arcade")
+local arcade = require("lib.arcade")
 
 local game = {
   name = "Demo",

@@ -1,4 +1,4 @@
--- util/turtlelib.lua
+-- lib/turtlelib.lua
 -- Reusable turtle helpers for movement, fuel, inventory, and placement.
 --
 -- Why this exists
@@ -8,7 +8,7 @@
 -- - Optional fuel restock from adjacent storage
 --
 -- How to use
---   local tlib = require("util.turtlelib")
+--   local tlib = require("lib.turtlelib")
 --   tlib.setConfig({ fuelThreshold = 80 })
 --   tlib.forward()           -- moves forward with safety (dig/attack)
 --   tlib.placeDown("minecraft:cobblestone")

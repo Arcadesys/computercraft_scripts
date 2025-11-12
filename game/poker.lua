@@ -5,7 +5,7 @@
 -- This is a minimal playable stub to validate the wrapper. Real hand evaluation
 -- and pay table will be added next.
 
-local arcade = require("games.arcade")
+local arcade = require("lib.arcade")
 
 local bet = 1
 local message = "Insert coin and play!"
