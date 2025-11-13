@@ -1,4 +1,4 @@
--- Auto-generated state manifest mapping state names to module files.
+-- Auto-generated state registry mapping state names to module files.
 -- Transitions use identity mapping so handlers can return the next state's name directly.
 local function identityTransitions(...)
   local map = {}

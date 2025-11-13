@@ -1,10 +1,10 @@
 -- kernel.lua
 -- Main driver that loads the modular state handlers for the factory builder.
-local manifest = require("states_manifest")
+local registry = require("state_registry")
 local shared = require("factoryrefactor")
 
 local ctx = shared.context
-local state = manifest.initial_state
+local state = registry.initial_state
 
 print("Factory Builder kernel - Starting")
 if ctx.manifestPath then
@@ -17,9 +17,9 @@ end
 while state do
   ctx.currentState = state
 
-  local moduleName = manifest.modules[state]
+  local moduleName = registry.modules[state]
   assert(moduleName, "No module registered for state " .. tostring(state))
-  local mod = require("states." .. moduleName)
+  local mod = require(moduleName)
 
   local result = mod.run(ctx) or state
 
@@ -27,7 +27,7 @@ while state do
     break
   end
 
-  local transitions = manifest.transitions[state]
+  local transitions = registry.transitions[state]
   assert(transitions, "No transitions defined for state " .. tostring(state))
 
   local nextState = transitions[result]
