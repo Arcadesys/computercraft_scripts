@@ -22,7 +22,7 @@
 
 -- Arcade wrapper note: we require the wrapper for consistency with other games,
 -- but Can't Stop currently uses its own bespoke UI/event loop.
-local _arcade_ok, _arcade = pcall(require, "games.arcade")
+local _arcade_ok, _arcade = pcall(require, "lib.arcade")
 
 ---@diagnostic disable: undefined-global, undefined-field
 -- Above directive silences static analysis complaints about ComputerCraft globals
