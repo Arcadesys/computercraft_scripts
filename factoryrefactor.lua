@@ -2520,24 +2520,35 @@ local function main()
     print("Factory Builder v2.0 - Starting")
     print("Manifest: " .. context.manifestPath)
     print(string.format("Build size: %dx%dx%d", context.width, context.height, context.depth))
-    
+
     while context.currentState ~= STATE_DONE do
         local handler = states[context.currentState]
         if not handler then
             error("No handler for state: " .. tostring(context.currentState))
         end
         handler(context)
-        
+
         -- Prevent infinite loops in error states
         if context.currentState == STATE_ERROR or context.currentState == STATE_BLOCKED then
             sleep(0.1)
         end
     end
-    
+
     print("Build complete! Returning to origin...")
     goToOriginDirectly()
     print("Factory build finished successfully.")
 end
 
--- Start the program
-main()
+return {
+    context = context,
+    states = states,
+    STATE_INITIALIZE = STATE_INITIALIZE,
+    STATE_BUILD = STATE_BUILD,
+    STATE_SERVICE = STATE_SERVICE,
+    STATE_ERROR = STATE_ERROR,
+    STATE_BLOCKED = STATE_BLOCKED,
+    STATE_DONE = STATE_DONE,
+    transitionToState = transitionToState,
+    runMainLoop = main,
+    goToOriginDirectly = goToOriginDirectly,
+}
