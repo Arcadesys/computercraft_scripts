@@ -1,11 +1,11 @@
 --[[
-  Factory Runtime Bootstrap
-  Extends package search paths and registers preload hooks so dotted
-  module names like "factory.lib.service" work without manual setup.
+    Factory Runtime Bootstrap
+    Extends package search paths so underscore-style module names like
+    "factory_lib_service" work without manual setup.
 
-  Usage:
-    dofile("/factory_lib_runtime.lua") -- once per shell/program
-    local Service = require("factory.lib.service")
+    Usage:
+        dofile("/factory_lib_runtime.lua") -- once per shell/program
+        local Service = require("factory_lib_service")
 ]]
 
 local Runtime = {}
@@ -61,6 +61,7 @@ end
 registerPreload("factory_lib_movement", "factory_lib_movement", "factory_lib_movement.lua")
 registerPreload("factory_lib_inventory", "factory_lib_inventory", "factory_lib_inventory.lua")
 registerPreload("factory_lib_service", "factory_lib_service", "factory_lib_service.lua")
+-- Compatibility aliases for older dotted namespaces.
 registerPreload("factory.lib.movement", "factory_lib_movement", "factory_lib_movement.lua")
 registerPreload("factory.lib.inventory", "factory_lib_inventory", "factory_lib_inventory.lua")
 registerPreload("factory.lib.service", "factory_lib_service", "factory_lib_service.lua")

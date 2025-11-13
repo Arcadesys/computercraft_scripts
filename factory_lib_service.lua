@@ -11,9 +11,25 @@
 ]]
 
 local function safeRequire(moduleName)
-    local ok, result = pcall(require, moduleName)
-    if ok then
-        return result
+    local attempts = {}
+
+    local candidates = {moduleName}
+    local underscored = moduleName:gsub("%.", "_")
+    if underscored ~= moduleName then
+        table.insert(candidates, underscored)
+    end
+
+    local lastError = nil
+    for _, candidate in ipairs(candidates) do
+        local ok, result = pcall(require, candidate)
+        if ok then
+            if candidate ~= moduleName and type(package) == "table" and type(package.loaded) == "table" then
+                package.loaded[moduleName] = result
+            end
+            return result
+        end
+        lastError = result
+        attempts[#attempts + 1] = string.format("require('%s') -> %s", candidate, tostring(result))
     end
 
     -- Fallback for ComputerCraft where package.path may not include the script directory.
@@ -29,10 +45,13 @@ local function safeRequire(moduleName)
     local shell = getEnvField("shell")
 
     if not fs or not shell or not shell.getRunningProgram then
-        error(string.format("Unable to require '%s': %s", moduleName, tostring(result)))
+        error(string.format(
+            "Unable to require '%s': %s",
+            moduleName,
+            tostring(lastError or "filesystem APIs unavailable")
+        ))
     end
 
-    local attempts = {}
     local searchRoots = {}
 
     local programPath = shell.getRunningProgram() or ""
@@ -60,31 +79,40 @@ local function safeRequire(moduleName)
     for _, root in ipairs(searchRoots) do
         if not seen[root] then
             seen[root] = true
-            local candidate = moduleName .. ".lua"
-            if root ~= "" then
-                candidate = fs.combine(root, candidate)
-            end
+            for _, candidateName in ipairs(candidates) do
+                local candidatePath = candidateName .. ".lua"
+                if root ~= "" then
+                    candidatePath = fs.combine(root, candidatePath)
+                end
 
-            if fs.exists(candidate) and not fs.isDir(candidate) then
-                local chunk, loadErr = loadfile(candidate)
-                if chunk then
-                    local okChunk, moduleValue = pcall(chunk, moduleName)
-                    if okChunk then
-                        package.loaded[moduleName] = moduleValue
-                        return moduleValue
+                if fs.exists(candidatePath) and not fs.isDir(candidatePath) then
+                    local chunk, loadErr = loadfile(candidatePath)
+                    if chunk then
+                        local okChunk, moduleValue = pcall(chunk, candidateName)
+                        if okChunk then
+                            if type(package) == "table" and type(package.loaded) == "table" then
+                                package.loaded[candidateName] = moduleValue
+                                package.loaded[moduleName] = moduleValue
+                            end
+                            return moduleValue
+                        else
+                            table.insert(attempts, string.format("%s (runtime failure: %s)", candidatePath, tostring(moduleValue)))
+                        end
                     else
-                        table.insert(attempts, string.format("%s (runtime failure: %s)", candidate, tostring(moduleValue)))
+                        table.insert(attempts, string.format("%s (load failure: %s)", candidatePath, tostring(loadErr)))
                     end
                 else
-                    table.insert(attempts, string.format("%s (load failure: %s)", candidate, tostring(loadErr)))
+                    table.insert(attempts, string.format("%s (not found)", candidatePath))
                 end
-            else
-                table.insert(attempts, string.format("%s (not found)", candidate))
             end
         end
     end
 
-    error(string.format("Unable to require '%s': %s | Attempts: %s", moduleName, tostring(result), table.concat(attempts, "; ")))
+    error(string.format(
+        "Unable to require '%s'. Attempts: %s",
+        moduleName,
+        table.concat(attempts, "; ")
+    ))
 end
 
 local Movement = safeRequire("factory_lib_movement")
