@@ -111,6 +111,26 @@ function Inventory.getEmptySlotCount()
     return free
 end
 
+-- Rotate twice so we can reuse forward-facing APIs for rear interactions.
+local function turnAround()
+    turtle.turnLeft()
+    turtle.turnLeft()
+end
+
+local function suckBehind(amount)
+    turnAround()
+    local result = { turtle.suck(amount) }
+    turnAround()
+    return table.unpack(result)
+end
+
+local function dropBehind(amount)
+    turnAround()
+    local result = { turtle.drop(amount) }
+    turnAround()
+    return table.unpack(result)
+end
+
 local directions = {
     front = {
         suck = turtle.suck,
@@ -126,8 +146,37 @@ local directions = {
         suck = turtle.suckDown,
         drop = turtle.dropDown,
         side = "bottom"
+    },
+    back = {
+        suck = suckBehind,
+        drop = dropBehind,
+        side = "back"
     }
 }
+
+local function inspectDirection(direction)
+    if direction == "front" then
+        if turtle.inspect then
+            return turtle.inspect()
+        end
+    elseif direction == "back" then
+        if turtle.inspect then
+            turnAround()
+            local ok, detail = turtle.inspect()
+            turnAround()
+            return ok, detail
+        end
+    elseif direction == "up" then
+        if turtle.inspectUp then
+            return turtle.inspectUp()
+        end
+    elseif direction == "down" then
+        if turtle.inspectDown then
+            return turtle.inspectDown()
+        end
+    end
+    return false, nil
+end
 
 -- Internal helper to access a chest peripheral when available.
 local function getChest(direction)
@@ -233,9 +282,49 @@ end
 
 --- Self-test routine that inspects inventory state and performs sample actions.
 function Inventory.runSelfTest()
-    print("[inventory] Starting self-test")
+    local transcript = {}
+
+    local function log(message, ...)
+        local text
+        if select('#', ...) > 0 then
+            text = string.format(message, ...)
+        else
+            text = tostring(message)
+        end
+        text = "[inventory] " .. text
+        print(text)
+        transcript[#transcript + 1] = text
+    end
+
+    log("Starting self-test")
     local emptySlots = Inventory.getEmptySlotCount()
-    print(string.format("[inventory] Empty slots: %d", emptySlots))
+    log("Empty slots: %d", emptySlots)
+
+    for _, direction in ipairs({"front", "back", "up", "down"}) do
+        local ok, detail = inspectDirection(direction)
+        if ok and detail and detail.name then
+            log("Block %s: %s", direction, detail.name)
+        else
+            log("Block %s: none detected", direction)
+        end
+
+        local chest, info = getChest(direction)
+        if chest then
+            local slotCount = 0
+            if type(chest.size) == "function" then
+                local okSize, value = pcall(chest.size, chest)
+                slotCount = okSize and tonumber(value) or 0
+            elseif type(chest.getInventorySize) == "function" then
+                local okSize, value = pcall(chest.getInventorySize, chest)
+                slotCount = okSize and tonumber(value) or 0
+            end
+            log("Chest peripheral detected on %s (%d slot(s))", direction, slotCount or 0)
+        elseif info then
+            log("No peripheral on %s; fallback will use turtle access (%s)", direction, info.side)
+        else
+            log("Direction %s not supported by chest helper", direction)
+        end
+    end
 
     local firstFilledSlot
     for slot = 1, 16 do
@@ -248,37 +337,39 @@ function Inventory.runSelfTest()
     if firstFilledSlot then
         turtle.select(firstFilledSlot)
         local detail = turtle.getItemDetail()
-        print(string.format("[inventory] Sample item: slot %d -> %s x%d", firstFilledSlot, detail.name, detail.count))
+        log("Sample item: slot %d -> %s x%d", firstFilledSlot, detail.name, detail.count)
 
         local located = Inventory.findItem(detail.name)
-        print(string.format("[inventory] findItem('%s') -> %s", detail.name, tostring(located)))
+        log("findItem('%s') -> %s", detail.name, tostring(located))
 
         local count = Inventory.countItem(detail.name)
-        print(string.format("[inventory] countItem('%s') -> %d", detail.name, count))
+        log("countItem('%s') -> %d", detail.name, count)
 
         local success, reason = Inventory.safePlace()
         if success then
-            print("[inventory] Placed block in front successfully")
+            log("Placed block in front successfully")
         else
-            print(string.format("[inventory] Placement blocked: %s", reason or "unknown"))
+            log("Placement blocked: %s", reason or "unknown")
         end
 
         local upSuccess, upReason = Inventory.safePlaceUp()
-        print(string.format("[inventory] safePlaceUp -> %s (%s)", tostring(upSuccess), upReason or ""))
+        log("safePlaceUp -> %s (%s)", tostring(upSuccess), upReason or "")
 
         local downSuccess, downReason = Inventory.safePlaceDown()
-        print(string.format("[inventory] safePlaceDown -> %s (%s)", tostring(downSuccess), downReason or ""))
+        log("safePlaceDown -> %s (%s)", tostring(downSuccess), downReason or "")
     else
-        print("[inventory] No items detected; add a block to demonstrate placement")
+        log("No items detected; add a block to demonstrate placement")
     end
 
     local pulled = select(2, Inventory.findItemInChest("", 1, "front"))
-    print(string.format("[inventory] Chest probe pulled %d item(s) (0 means none or no chest)", pulled))
+    log("Chest probe pulled %d item(s) (0 means none or no chest)", pulled)
 
     local deposited = Inventory.depositItems("__unlikely_item_name__", "front")
-    print(string.format("[inventory] depositItems on fake name moved %d item(s)", deposited))
+    log("depositItems on fake name moved %d item(s)", deposited)
 
-    print("[inventory] Self-test complete")
+    log("Self-test complete")
+
+    return table.concat(transcript, "\n")
 end
 
 local moduleName = ...

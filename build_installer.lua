@@ -1,62 +1,73 @@
--- Utility script that packages flattened factory_*.lua files into a single install_factory.lua payload
+-- Utility script that packages flattened factory_*.lua files into a single install_factory.lua payload.
+-- This version runs entirely inside a ComputerCraft computer.
+---@diagnostic disable: undefined-global
 
-local flattened_pattern = "factory_*.lua"
+local flattened_pattern = "^factory_.-%.lua$"
 local output_file = "install_factory.lua"
 
-local path_separator = package.config:sub(1, 1)
-local is_windows = path_separator == "\\"
+local function assert_computercraft_environment()
+    if not fs or type(fs.list) ~= "function" then
+        error("This script must run on a ComputerCraft computer.")
+    end
+end
+
+assert_computercraft_environment()
+
+local working_directory = shell and shell.dir() or ""
+
+local function resolve_local(path)
+    if path:sub(1, 1) == "/" then
+        return path
+    end
+
+    if working_directory == "" or working_directory == "/" then
+        return path
+    end
+
+    return fs.combine(working_directory, path)
+end
 
 local function collect_source_files()
-    if not io.popen then
-        error("Your Lua build does not expose io.popen; run this script with a standard Lua interpreter.")
-    end
+    local listing_directory = working_directory ~= "" and working_directory or ""
+    local ok, entries = pcall(fs.list, listing_directory)
 
-    local command
-
-    if is_windows then
-        command = string.format('cmd /C dir /b %s', flattened_pattern)
-    else
-        command = string.format("sh -c 'ls -1 %s 2>/dev/null'", flattened_pattern)
-    end
-
-    local handle, popen_error = io.popen(command, "r")
-
-    if not handle then
-        error("Unable to list source files: " .. tostring(popen_error))
+    if not ok then
+        error("Unable to list files in " .. (listing_directory ~= "" and listing_directory or "/") .. ": " .. tostring(entries))
     end
 
     local discovered_files = {}
 
-    for line in handle:lines() do
-        local trimmed = line:gsub("\r", "")
+    for _, entry in ipairs(entries) do
+        local absolute_path = resolve_local(entry)
 
-        if trimmed ~= "" then
-            local lower_trimmed = trimmed:lower()
-
-            if not lower_trimmed:find("file not found", 1, true)
-                and not lower_trimmed:find("cannot access", 1, true)
-            then
-                table.insert(discovered_files, trimmed)
-            end
+        if not fs.isDir(absolute_path)
+            and entry ~= output_file
+            and entry:match(flattened_pattern)
+        then
+            table.insert(discovered_files, entry)
         end
     end
-
-    handle:close()
 
     table.sort(discovered_files)
 
     return discovered_files
 end
 
-local function read_file_contents(file_path)
-    local file_handle, open_error = io.open(file_path, "rb")
+local function read_file_contents(relative_path)
+    local absolute_path = resolve_local(relative_path)
 
-    if not file_handle then
-        error("Failed to open " .. file_path .. ": " .. tostring(open_error))
+    if not fs.exists(absolute_path) then
+        error("Source file missing: " .. relative_path)
     end
 
-    local contents = file_handle:read("*a")
-    file_handle:close()
+    local handle, open_error = fs.open(absolute_path, "rb")
+
+    if not handle then
+        error("Failed to open " .. relative_path .. ": " .. tostring(open_error))
+    end
+
+    local contents = handle.readAll()
+    handle.close()
 
     return contents
 end
@@ -172,21 +183,27 @@ print(("Factory installer wrote %%d file(s)."):format(written_file_count))
 ]]
 
 local function write_output_file(installer_source)
-    local output_handle, open_error = io.open(output_file, "w")
+    local output_path = resolve_local(output_file)
 
-    if not output_handle then
+    if fs.exists(output_path) and not fs.isDir(output_path) then
+        fs.delete(output_path)
+    end
+
+    local handle, open_error = fs.open(output_path, "w")
+
+    if not handle then
         error("Unable to create " .. output_file .. ": " .. tostring(open_error))
     end
 
-    output_handle:write(installer_source)
-    output_handle:close()
+    handle.write(installer_source)
+    handle.close()
 end
 
 local function main()
     local file_paths = collect_source_files()
 
     if #file_paths == 0 then
-        error("No source files matched pattern " .. flattened_pattern)
+        error("No source files matched pattern factory_*.lua")
     end
 
     local packaged_entries = build_packaged_entries(file_paths)
