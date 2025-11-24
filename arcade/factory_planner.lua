@@ -63,6 +63,7 @@ local showSearch = false
 local searchQuery = ""
 local searchResults = {}
 local searchScroll = 1
+local selectedSearchIndex = 1
 
 -- Mouse State for Tools
 local mouseState = {
@@ -95,6 +96,7 @@ grid = layers[currentLayer]
 
 local function updateSearchResults()
     searchResults = {}
+    selectedSearchIndex = 1
     if searchQuery == "" then return end
     for _, block in ipairs(blockList) do
         -- Use plain search (4th arg = true) to avoid pattern matching errors with special chars
@@ -374,11 +376,13 @@ local function draw()
         
         drawText(sx + 2, sy + 2, "Search Block: " .. searchQuery .. "_", colors.white, colors.black)
         
-        for i = 1, sh - 4 do
+        for i = 1, sh - 5 do
             local idx = searchScroll + i - 1
             if idx <= #searchResults then
                 local block = searchResults[idx]
-                drawText(sx + 2, sy + 3 + i, tostring(block.label), colors.lightGray, colors.black)
+                local prefix = (idx == selectedSearchIndex) and "* " or "  "
+                local color = (idx == selectedSearchIndex) and colors.white or colors.lightGray
+                drawText(sx + 2, sy + 3 + i, prefix .. tostring(block.label), color, colors.black)
             end
         end
         
@@ -437,7 +441,42 @@ local function pasteGrid()
 end
 
 local function handleMouse(event, button, x, y)
-    if showSearch then return end -- Modal blocks clicks
+    if showSearch then
+        local sx, sy = 5, 4
+        local sw, sh = 40, 12
+        
+        if event == "mouse_click" then
+            -- Check if click is within the list area
+            -- List items are drawn at y = sy + 3 + i
+            -- i goes from 1 to sh - 4
+            -- So y range is [sy + 4, sy + 3 + sh - 4] = [sy + 4, sy + sh - 1]
+            -- But sy + sh - 1 is the footer.
+            -- So valid click range for items is [sy + 4, sy + sh - 2]
+            
+            if x >= sx and x < sx + sw and y >= sy + 4 and y <= sy + sh - 2 then
+                local i = y - (sy + 3)
+                local idx = searchScroll + i - 1
+                if idx <= #searchResults then
+                    selectedSearchIndex = idx -- Update selection on click
+                    local block = searchResults[idx]
+                    table.insert(palette, {
+                        id = block.id,
+                        char = string.sub(block.label, 1, 1),
+                        color = colors.cyan,
+                        label = block.label
+                    })
+                    selectedPaletteIndex = #palette
+                    message = "Added " .. block.label
+                    messageTimer = 30
+                    showSearch = false
+                end
+            elseif not (x >= sx and x < sx + sw and y >= sy and y < sy + sh) then
+                -- Click outside modal closes it
+                showSearch = false
+            end
+        end
+        return 
+    end
     if showResize then return end -- Modal blocks clicks
 
     -- Menu Bar Click
@@ -567,10 +606,10 @@ end
 
 local function handleKey(key, char)
     if showSearch then
-        if key == keys.enter then
-            if #searchResults > 0 then
-                -- Add first result to palette
-                local block = searchResults[1]
+        if key and key == keys.enter then
+            if #searchResults > 0 and selectedSearchIndex <= #searchResults then
+                -- Add selected result to palette
+                local block = searchResults[selectedSearchIndex]
                 table.insert(palette, {
                     id = block.id,
                     char = string.sub(block.label, 1, 1),
@@ -582,10 +621,27 @@ local function handleKey(key, char)
                 messageTimer = 30
                 showSearch = false
             end
-        elseif key == keys.backspace then
+        elseif key and key == keys.up then
+            if selectedSearchIndex > 1 then
+                selectedSearchIndex = selectedSearchIndex - 1
+                -- Scroll up if needed
+                if selectedSearchIndex < searchScroll then
+                    searchScroll = selectedSearchIndex
+                end
+            end
+        elseif key and key == keys.down then
+            if selectedSearchIndex < #searchResults then
+                selectedSearchIndex = selectedSearchIndex + 1
+                -- Scroll down if needed
+                local sh = 12 -- Height of search window content area roughly
+                if selectedSearchIndex >= searchScroll + (sh - 5) then
+                    searchScroll = selectedSearchIndex - (sh - 5) + 1
+                end
+            end
+        elseif key and key == keys.backspace then
             searchQuery = string.sub(searchQuery, 1, -2)
             updateSearchResults()
-        elseif key == keys.escape then
+        elseif key and key == keys.escape then
             showSearch = false
         elseif char then
             -- Filter control characters (like newline) which might cause issues
@@ -668,6 +724,11 @@ local function handleKey(key, char)
             messageTimer = 20
         end
     end
+end
+
+-- Ensure keys API is available
+if not keys then
+    error("keys API not found")
 end
 
 -- Main Loop
