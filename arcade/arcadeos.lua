@@ -446,6 +446,7 @@ local programs = {
     path = "blackjack.lua",
     price = 5,
     description = "Beat the dealer in a race to 21.",
+    category = "games",
   },
   {
     id = "slots",
@@ -453,6 +454,7 @@ local programs = {
     path = "slots.lua",
     price = 3,
     description = "Spin reels for quick wins.",
+    category = "games",
   },
   {
     id = "cantstop",
@@ -460,6 +462,7 @@ local programs = {
     path = "cantstop.lua",
     price = 4,
     description = "Push your luck dice classic.",
+    category = "games",
   },
   {
     id = "idlecraft",
@@ -467,6 +470,7 @@ local programs = {
     path = "idlecraft.lua",
     price = 6,
     description = "AFK-friendly cobble empire.",
+    category = "games",
   },
   {
     id = "artillery",
@@ -474,6 +478,24 @@ local programs = {
     path = "artillery.lua",
     price = 5,
     description = "2-player tank battle.",
+    category = "games",
+  },
+  {
+    id = "factory_planner",
+    name = "Factory Planner",
+    path = "factory_planner.lua",
+    price = 0,
+    description = "Design factory layouts for turtles.",
+    category = "actions",
+  },
+  -- Placeholder for Inventory Manager
+  {
+    id = "inv_manager",
+    name = "Inventory Manager",
+    path = "inv_manager.lua", -- Doesn't exist yet
+    price = 0,
+    description = "Manage inventory (Coming Soon).",
+    category = "actions",
   },
 }
 
@@ -484,48 +506,86 @@ local programs = {
 local state = {
   credits = 0,
   licenseStore = nil,
+  theme = {
+    text = colors.white,
+    bg = colors.black,
+    header = colors.blue,
+    highlight = colors.yellow
+  }
 }
+
+local THEME_FILE = "theme.settings"
+
+local function loadTheme()
+  if fs.exists(THEME_FILE) then
+    local handle = fs.open(THEME_FILE, "r")
+    if handle then
+      local data = textutils.unserialize(handle.readAll())
+      handle.close()
+      if data then
+        for k, v in pairs(data) do state.theme[k] = v end
+      end
+    end
+  end
+end
+
+local function saveTheme()
+  local handle = fs.open(THEME_FILE, "w")
+  if handle then
+    handle.write(textutils.serialize(state.theme))
+    handle.close()
+  end
+end
 
 local function initState()
   state.credits = loadCredits()
   local base = combinePath(detectDiskMount(), DEFAULT_LICENSE_DIR)
   state.licenseStore = LicenseStore.new(base, SECRET_SALT)
+  loadTheme()
 end
 
 -- ==========================
--- UI helpers
+-- DOS UI System
 -- ==========================
 
-local function printDivider()
-  print(string.rep("-", 40))
+local UI = {}
+
+function UI.clear(color)
+    term.setBackgroundColor(color)
+    term.clear()
 end
 
-local function pause(message)
-  print(message or "Press Enter to continue…")
-  read()
+function UI.drawWindow(x, y, w, h, title)
+    -- Shadow
+    paintutils.drawFilledBox(x + 1, y + 1, x + w, y + h, colors.black)
+    -- Body
+    paintutils.drawFilledBox(x, y, x + w - 1, y + h - 1, colors.lightGray)
+    -- Title Bar
+    paintutils.drawFilledBox(x, y, x + w - 1, y, colors.blue)
+    term.setTextColor(colors.white)
+    term.setBackgroundColor(colors.blue)
+    term.setCursorPos(x + math.floor((w - #title) / 2), y)
+    term.write(title)
+    -- Close button
+    term.setCursorPos(x + 2, y)
+    term.write("[X]")
 end
 
-local function showHeader()
-  term.clear()
-  term.setCursorPos(1, 1)
-  print("Arcade Shell")
-  printDivider()
-  print(string.format("Credits: %d", state.credits))
-  printDivider()
-end
-
-local function drawProgramList(showPrices)
-  for index, program in ipairs(programs) do
-    local owned = state.licenseStore:has(program.id)
-    local label = string.format("%d) %s", index, program.name)
-    if showPrices then
-      local status = owned and "Owned" or ("Price: " .. program.price)
-      print(string.format("%-18s [%s]", label, status))
-    else
-      print(label)
+function UI.drawButton(x, y, w, text, active, hovered)
+    local bg = active and colors.green or (hovered and colors.gray or colors.lightGray)
+    local fg = active and colors.white or (hovered and colors.white or colors.black)
+    
+    -- If it's a button on a gray background, we might want it to pop
+    if not active and not hovered then
+        bg = colors.gray
+        fg = colors.white
     end
-    print("   " .. program.description)
-  end
+
+    paintutils.drawFilledBox(x, y, x + w - 1, y, bg)
+    term.setTextColor(fg)
+    term.setBackgroundColor(bg)
+    term.setCursorPos(x + math.floor((w - #text) / 2), y)
+    term.write(text)
 end
 
 -- ==========================
@@ -538,128 +598,210 @@ local function ensureLicense(program)
     return true
   end
 
-  printDivider()
-  print(string.format("%s is locked. Purchase for %d credits? (y/n)", program.name, program.price))
-  write("> ")
-  local answer = string.lower(read())
-  if answer ~= "y" then
-    return false
+  term.setBackgroundColor(colors.blue)
+  term.clear()
+  local w, h = term.getSize()
+  local msg = string.format("Purchase %s for %d credits?", program.name, program.price)
+  
+  UI.drawWindow(math.floor((w-30)/2), math.floor((h-10)/2), 30, 10, "Purchase Required")
+  term.setCursorPos(math.floor((w-#msg)/2), math.floor((h-10)/2) + 3)
+  term.setTextColor(colors.black)
+  term.setBackgroundColor(colors.lightGray)
+  term.write(msg)
+  
+  term.setCursorPos(math.floor((w-20)/2), math.floor((h-10)/2) + 5)
+  term.write("Current Credits: " .. state.credits)
+  
+  term.setCursorPos(math.floor((w-20)/2), math.floor((h-10)/2) + 7)
+  term.write("(Y)es   (N)o")
+  
+  while true do
+      local event, key = os.pullEvent("char")
+      key = string.lower(key)
+      if key == "n" then return false end
+      if key == "y" then
+          if state.credits < program.price then
+              term.setCursorPos(math.floor((w-20)/2), math.floor((h-10)/2) + 8)
+              term.setTextColor(colors.red)
+              term.write("Not enough credits!")
+              os.sleep(1)
+              return false
+          end
+          
+          state.credits = state.credits - program.price
+          saveCredits(state.credits)
+          state.licenseStore:save(program.id, program.price, "purchased via shell")
+          return true
+      end
   end
-
-  if state.credits < program.price then
-    print("Not enough credits. Visit the store to top up or pick a cheaper game.")
-    return false
-  end
-
-  state.credits = state.credits - program.price
-  saveCredits(state.credits)
-  state.licenseStore:save(program.id, program.price, "purchased via shell")
-  print("License purchased! Enjoy your new game.")
-  return true
 end
 
 -- ==========================
--- Screens
+-- Package Manager
+-- ==========================
+
+local function downloadPackage(code, filename)
+    if not http then
+        print("Error: HTTP API not enabled.")
+        return false
+    end
+
+    local url = "https://pastebin.com/raw/" .. textutils.urlEncode(code)
+    print("Connecting to Pastebin...")
+    local response = http.get(url)
+    if response then
+        print("Downloading...")
+        local content = response.readAll()
+        response.close()
+        
+        local file = fs.open(filename, "w")
+        file.write(content)
+        file.close()
+        print("Saved to " .. filename)
+        return true
+    else
+        print("Failed to download.")
+        return false
+    end
+end
+
+local function packageManagerScreen()
+    term.setBackgroundColor(colors.black)
+    term.clear()
+    term.setCursorPos(1,1)
+    term.setTextColor(colors.white)
+    print("Pastebin Package Manager")
+    print("------------------------")
+    print("Enter Pastebin Code:")
+    write("> ")
+    local code = read()
+    if #code > 0 then
+        print("Enter Filename (e.g. game.lua):")
+        write("> ")
+        local name = read()
+        if #name > 0 then
+            downloadPackage(code, name)
+            os.sleep(2)
+        end
+    end
+end
+
+-- ==========================
+-- Main Loop
 -- ==========================
 
 local function launchProgram(program)
   if not ensureLicense(program) then
-    pause()
     return
   end
 
-  printDivider()
-  print("Launching " .. program.name .. "…")
-  -- Lua tip: pcall prevents the whole shell from crashing if the program errors.
+  term.setBackgroundColor(colors.black)
+  term.clear()
+  term.setCursorPos(1,1)
+  print("Launching " .. program.name .. "...")
+  
   local ok, err = pcall(function()
     shell.run(program.path)
   end)
+  
   if not ok then
     print("Program error: " .. tostring(err))
-  end
-  pause("Returning to shell. Press Enter…")
-end
-
-local function playScreen()
-  while true do
-    showHeader()
-    print("Pick a program to launch:")
-    drawProgramList(true)
-    print("0) Back")
-    printDivider()
-    write("Choice: ")
-    local choice = tonumber(read())
-    if not choice or choice < 0 or choice > #programs then
-      print("Invalid selection")
-      pause()
-    elseif choice == 0 then
-      return
-    else
-      launchProgram(programs[choice])
-    end
+    print("Press Enter to return...")
+    read()
   end
 end
-
-local function storeScreen()
-  while true do
-    showHeader()
-    print("Store - buy licenses with your credits")
-    drawProgramList(true)
-    print("0) Back")
-    printDivider()
-    write("Purchase which program? ")
-    local choice = tonumber(read())
-    if choice == 0 then
-      return
-    end
-    local program = programs[choice]
-    if not program then
-      print("Invalid selection")
-      pause()
-    else
-      if state.licenseStore:has(program.id) then
-        print("You already own " .. program.name .. ".")
-        pause()
-      else
-        ensureLicense(program)
-        pause()
-      end
-    end
-  end
-end
-
--- ==========================
--- Main loop
--- ==========================
 
 local function main()
   initState()
-  while true do
-    showHeader()
-    print("1) Play a game")
-    print("2) Store (buy/unlock programs)")
-    print("3) Add credits manually")
-    print("0) Exit")
-    printDivider()
-    write("Select: ")
-    local choice = tonumber(read())
-    if choice == 1 then
-      playScreen()
-    elseif choice == 2 then
-      storeScreen()
-    elseif choice == 3 then
-      print("Enter amount to add (for testing / admin):")
-      write("> ")
-      local delta = tonumber(read()) or 0
-      state.credits = math.max(0, state.credits + delta)
-      saveCredits(state.credits)
-    elseif choice == 0 then
-      return
-    else
-      print("Unknown option")
-      pause()
+  
+  local w, h = term.getSize()
+  local running = true
+  local currentMenu = "main" -- main, games, actions, utils
+  local mouseX, mouseY = 0, 0
+  
+  while running do
+    -- Draw Desktop
+    UI.clear(colors.cyan)
+    
+    -- Draw Window
+    local winW, winH = 26, 14
+    local winX = math.floor((w - winW) / 2) + 1
+    local winY = math.floor((h - winH) / 2) + 1
+    
+    local title = "ArcadeOS"
+    if currentMenu == "games" then title = "Games" end
+    if currentMenu == "actions" then title = "Actions" end
+    if currentMenu == "utils" then title = "Utilities" end
+    
+    UI.drawWindow(winX, winY, winW, winH, title)
+    
+    -- Define Buttons
+    local buttons = {}
+    local startY = winY + 2
+    local btnW = winW - 8
+    local btnX = winX + 4
+    
+    if currentMenu == "main" then
+        table.insert(buttons, {text = "Games", y = startY, action = function() currentMenu = "games" end})
+        table.insert(buttons, {text = "Actions", y = startY + 2, action = function() currentMenu = "actions" end})
+        table.insert(buttons, {text = "Utilities", y = startY + 4, action = function() currentMenu = "utils" end})
+        table.insert(buttons, {text = "Exit", y = startY + 8, action = function() running = false end})
+    elseif currentMenu == "games" or currentMenu == "actions" then
+        local list = {}
+        for _, p in ipairs(programs) do
+            if p.category == currentMenu then table.insert(list, p) end
+        end
+        
+        for i, p in ipairs(list) do
+            if i > 5 then break end
+            table.insert(buttons, {
+                text = p.name, 
+                y = startY + (i-1)*2, 
+                action = function() launchProgram(p) end
+            })
+        end
+        table.insert(buttons, {text = "Back", y = winY + winH - 2, action = function() currentMenu = "main" end})
+    elseif currentMenu == "utils" then
+        table.insert(buttons, {text = "Package Manager", y = startY, action = packageManagerScreen})
+        table.insert(buttons, {text = "Disk Info", y = startY + 2, action = function() 
+            term.setBackgroundColor(colors.black)
+            term.clear()
+            term.setCursorPos(1,1)
+            print("Free Space: " .. fs.getFreeSpace(detectDiskMount() or "/"))
+            os.sleep(2)
+        end})
+        table.insert(buttons, {text = "Back", y = winY + winH - 2, action = function() currentMenu = "main" end})
+    end
+    
+    -- Draw Buttons
+    for _, btn in ipairs(buttons) do
+        local isHovered = (mouseX >= btnX and mouseX <= btnX + btnW - 1 and mouseY == btn.y)
+        UI.drawButton(btnX, btn.y, btnW, btn.text, false, isHovered)
+    end
+    
+    -- Event Handling
+    local event, p1, p2, p3 = os.pullEvent()
+    
+    if event == "mouse_click" or event == "mouse_drag" or event == "mouse_move" then
+        mouseX, mouseY = p2, p3
+        if event == "mouse_click" and p1 == 1 then
+             for _, btn in ipairs(buttons) do
+                if mouseX >= btnX and mouseX <= btnX + btnW - 1 and mouseY == btn.y then
+                    UI.drawButton(btnX, btn.y, btnW, btn.text, true, true)
+                    os.sleep(0.1)
+                    btn.action()
+                    mouseX, mouseY = -1, -1 -- Reset
+                end
+             end
+        end
+    elseif event == "key" then
+        -- Basic keyboard nav could go here
     end
   end
+  
+  term.setBackgroundColor(colors.black)
+  term.clear()
+  term.setCursorPos(1,1)
 end
 
 main()
@@ -2059,6 +2201,222 @@ if not ok then
         os.pullEvent("key")
 end
 
+]]
+files["factory_planner.lua"] = [[---@diagnostic disable: undefined-global
+-- Factory Planner
+-- A tool to design factory layouts and save them to disk for turtles.
+-- Features: Mouse control, Palette, Copy/Paste, Schema saving.
+
+local filename = "factory_schema.lua"
+local diskPath = "disk/" .. filename
+
+-- Configuration
+local gridWidth = 20
+local gridHeight = 15
+local cellSize = 1 -- 1x1 char per cell? Or maybe 2x1 for square-ish look?
+-- Terminals are usually 51x19. 20x15 fits easily.
+
+local palette = {
+    { id = "minecraft:air", char = " ", color = colors.black, label = "Air" },
+    { id = "minecraft:stone", char = "#", color = colors.gray, label = "Stone" },
+    { id = "minecraft:dirt", char = "#", color = colors.brown, label = "Dirt" },
+    { id = "minecraft:planks", char = "=", color = colors.orange, label = "Planks" },
+    { id = "minecraft:cobblestone", char = "%", color = colors.lightGray, label = "Cobble" },
+    { id = "computercraft:turtle_advanced", char = "T", color = colors.yellow, label = "Turtle" },
+    { id = "minecraft:chest", char = "C", color = colors.orange, label = "Chest" },
+    { id = "minecraft:furnace", char = "F", color = colors.gray, label = "Furnace" },
+}
+
+-- State
+local grid = {} -- 2D array [y][x] = paletteIndex
+local selectedPaletteIndex = 2 -- Default to Stone
+local clipboard = nil
+local isRunning = true
+local message = "Welcome to Factory Planner"
+local messageTimer = 0
+
+-- Initialize Grid
+for y = 1, gridHeight do
+    grid[y] = {}
+    for x = 1, gridWidth do
+        grid[y][x] = 1 -- Air
+    end
+end
+
+-- Helper Functions
+local function clear()
+    term.setBackgroundColor(colors.black)
+    term.clear()
+    term.setCursorPos(1, 1)
+end
+
+local function drawRect(x, y, w, h, color)
+    term.setBackgroundColor(color)
+    for i = 0, h - 1 do
+        term.setCursorPos(x, y + i)
+        term.write(string.rep(" ", w))
+    end
+end
+
+local function drawText(x, y, text, fg, bg)
+    if fg then term.setTextColor(fg) end
+    if bg then term.setBackgroundColor(bg) end
+    term.setCursorPos(x, y)
+    term.write(text)
+end
+
+-- Drawing
+local function draw()
+    clear()
+
+    -- Draw Grid
+    local startX = 2
+    local startY = 2
+    
+    -- Draw Border
+    drawRect(startX - 1, startY - 1, gridWidth + 2, gridHeight + 2, colors.white)
+    drawRect(startX, startY, gridWidth, gridHeight, colors.black)
+
+    for y = 1, gridHeight do
+        for x = 1, gridWidth do
+            local itemIndex = grid[y][x]
+            local item = palette[itemIndex]
+            drawText(startX + x - 1, startY + y - 1, item.char, item.color, colors.black)
+        end
+    end
+
+    -- Draw Palette
+    local palX = startX + gridWidth + 3
+    local palY = 2
+    drawText(palX, palY - 1, "Palette:", colors.white, colors.black)
+    
+    for i, item in ipairs(palette) do
+        local prefix = (i == selectedPaletteIndex) and "> " or "  "
+        drawText(palX, palY + i - 1, prefix .. item.char .. " " .. item.label, item.color, colors.black)
+    end
+
+    -- Draw Controls / Help
+    local helpX = palX
+    local helpY = palY + #palette + 2
+    drawText(helpX, helpY, "Controls:", colors.white, colors.black)
+    drawText(helpX, helpY + 1, "L-Click: Paint", colors.lightGray, colors.black)
+    drawText(helpX, helpY + 2, "R-Click: Erase", colors.lightGray, colors.black)
+    drawText(helpX, helpY + 3, "C: Copy Grid", colors.lightGray, colors.black)
+    drawText(helpX, helpY + 4, "V: Paste Grid", colors.lightGray, colors.black)
+    drawText(helpX, helpY + 5, "S: Save to Disk", colors.lightGray, colors.black)
+    drawText(helpX, helpY + 6, "Q: Quit", colors.lightGray, colors.black)
+
+    -- Draw Message
+    if messageTimer > 0 then
+        drawText(2, gridHeight + 4, message, colors.yellow, colors.black)
+    end
+end
+
+-- Logic
+local function saveSchema()
+    local data = {
+        width = gridWidth,
+        height = gridHeight,
+        palette = palette,
+        grid = grid
+    }
+    
+    -- Try to save to disk first
+    local path = filename
+    if fs.exists("disk") then
+        path = diskPath
+    end
+
+    local file = fs.open(path, "w")
+    if file then
+        file.write(textutils.serialize(data))
+        file.close()
+        message = "Saved to " .. path
+    else
+        message = "Error saving to " .. path
+    end
+    messageTimer = 50
+end
+
+local function copyGrid()
+    clipboard = textutils.unserialize(textutils.serialize(grid)) -- Deep copy
+    message = "Grid copied to clipboard"
+    messageTimer = 30
+end
+
+local function pasteGrid()
+    if clipboard then
+        grid = textutils.unserialize(textutils.serialize(clipboard))
+        message = "Grid pasted from clipboard"
+    else
+        message = "Clipboard empty"
+    end
+    messageTimer = 30
+end
+
+local function handleMouse(button, x, y)
+    -- Grid Coordinates
+    local startX = 2
+    local startY = 2
+    
+    local gx = x - startX + 1
+    local gy = y - startY + 1
+
+    if gx >= 1 and gx <= gridWidth and gy >= 1 and gy <= gridHeight then
+        if button == 1 then -- Left Click
+            grid[gy][gx] = selectedPaletteIndex
+        elseif button == 2 then -- Right Click
+            grid[gy][gx] = 1 -- Air
+        end
+    else
+        -- Check Palette Click
+        local palX = startX + gridWidth + 3
+        local palY = 2
+        
+        if x >= palX and x <= palX + 15 then -- Approximate width
+            local py = y - palY + 1
+            if py >= 1 and py <= #palette then
+                selectedPaletteIndex = py
+            end
+        end
+    end
+end
+
+local function handleKey(key)
+    if key == keys.q then
+        isRunning = false
+    elseif key == keys.s then
+        saveSchema()
+    elseif key == keys.c then
+        copyGrid()
+    elseif key == keys.v then
+        pasteGrid()
+    end
+end
+
+-- Main Loop
+while isRunning do
+    draw()
+    
+    local event, p1, p2, p3 = os.pullEvent()
+    
+    if event == "mouse_click" or event == "mouse_drag" then
+        handleMouse(p1, p2, p3)
+    elseif event == "key" then
+        handleKey(p1)
+    elseif event == "timer" then
+        if p1 == messageTimerId then
+            -- Timer handled
+        end
+    end
+
+    if messageTimer > 0 then
+        messageTimer = messageTimer - 1
+    end
+end
+
+clear()
+print("Exited Factory Planner")
 ]]
 files["games/arcade.lua"] = [[---@diagnostic disable: undefined-global
 -- Shim so games written for `games/arcade.lua` can require the shared adapter
@@ -3609,7 +3967,7 @@ end
 return Renderer
 ]]
 
-print("Unpacking 15 files...")
+print("Unpacking 16 files...")
 
 for path, content in pairs(files) do
     print("  Installing: " .. path)
