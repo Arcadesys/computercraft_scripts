@@ -98,10 +98,13 @@ local function updateSearchResults()
     if searchQuery == "" then return end
     for _, block in ipairs(blockList) do
         -- Use plain search (4th arg = true) to avoid pattern matching errors with special chars
-        local labelMatch = block.label and string.find(string.lower(block.label), string.lower(searchQuery), 1, true)
-        local idMatch = block.id and string.find(string.lower(block.id), string.lower(searchQuery), 1, true)
+        -- Also ensure strings to avoid crashes
+        local label = tostring(block.label or "")
+        local id = tostring(block.id or "")
+        local query = tostring(searchQuery)
         
-        if labelMatch or idMatch then
+        if string.find(string.lower(label), string.lower(query), 1, true) or 
+           string.find(string.lower(id), string.lower(query), 1, true) then
             table.insert(searchResults, block)
         end
     end
@@ -375,7 +378,7 @@ local function draw()
             local idx = searchScroll + i - 1
             if idx <= #searchResults then
                 local block = searchResults[idx]
-                drawText(sx + 2, sy + 3 + i, block.label, colors.lightGray, colors.black)
+                drawText(sx + 2, sy + 3 + i, tostring(block.label), colors.lightGray, colors.black)
             end
         end
         
@@ -585,8 +588,11 @@ local function handleKey(key, char)
         elseif key == keys.escape then
             showSearch = false
         elseif char then
-            searchQuery = searchQuery .. char
-            updateSearchResults()
+            -- Filter control characters (like newline) which might cause issues
+            if string.byte(char) >= 32 then
+                searchQuery = searchQuery .. char
+                updateSearchResults()
+            end
         end
         return
     end
