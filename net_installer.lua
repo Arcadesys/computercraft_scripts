@@ -9,6 +9,7 @@ local files = {
     "arcade/arcadeos.lua",
     "arcade/data/valhelsia_blocks.lua",
     "arcade/factory_planner.lua",
+    "arcade/farm_manager.lua",
     "arcade/games/arcade.lua",
     "arcade/games/blackjack.lua",
     "arcade/games/cantstop.lua",

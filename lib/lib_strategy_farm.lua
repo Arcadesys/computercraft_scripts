@@ -13,6 +13,11 @@ local MATERIALS = {
     sapling = "minecraft:oak_sapling",
     cane = "minecraft:sugar_cane",
     potato = "minecraft:potatoes",
+    carrot = "minecraft:carrots",
+    wheat = "minecraft:wheat",
+    beetroot = "minecraft:beetroots",
+    nether_wart = "minecraft:nether_wart",
+    soul_sand = "minecraft:soul_sand",
     farmland = "minecraft:farmland",
     stone = "minecraft:stone_bricks", -- Border
     torch = "minecraft:torch"
@@ -78,7 +83,8 @@ function strategy.generate(farmType, width, length)
             end
         end
 
-    elseif farmType == "potato" then
+    elseif farmType == "potato" or farmType == "carrot" or farmType == "wheat" or farmType == "beetroot" then
+        -- Standard crop farm
         -- Rows of water every 4 blocks?
         -- Hydration is 4 blocks.
         -- Pattern: W D D D D D D D D W (9 blocks)
@@ -90,20 +96,32 @@ function strategy.generate(farmType, width, length)
                 else
                     if x % 4 == 0 then
                         set(x, 0, z, MATERIALS.water)
-                        -- Cover water with slab or lily pad? 
-                        -- For simplicity, leave open or put trapdoor?
-                        -- Let's just leave open for now.
                     else
                         set(x, 0, z, MATERIALS.dirt) -- Turtle will till this later or we place dirt
                         -- We can't place "farmland" item usually. We place dirt.
                         -- The build script places blocks.
-                        -- If we want potatoes, we need to till.
-                        -- For now, let's just place dirt and plant potatoes (which might fail if not tilled).
-                        -- Actually, "potatoes" block can't be placed on dirt.
-                        -- So this strategy is "Prepare the land".
-                        -- The user might need to till manually or we add a "TILL" state.
-                        -- Let's just lay the dirt and water.
+                        -- If we want crops, we need to till.
+                        -- For now, let's just lay the dirt and water.
+                        -- We can optionally indicate the crop type in metadata or just assume the user plants it.
+                        -- But for the schema, we might want to show the crop in Layer 1 for visualization.
+                        if farmType == "potato" then set(x, 1, z, MATERIALS.potato)
+                        elseif farmType == "carrot" then set(x, 1, z, MATERIALS.carrot)
+                        elseif farmType == "wheat" then set(x, 1, z, MATERIALS.wheat)
+                        elseif farmType == "beetroot" then set(x, 1, z, MATERIALS.beetroot)
+                        end
                     end
+                end
+            end
+        end
+    elseif farmType == "nether_wart" then
+        -- Soul sand field
+        for x = 0, width - 1 do
+            for z = 0, length - 1 do
+                if z == 0 or z == length - 1 or x == 0 or x == width - 1 then
+                    set(x, 0, z, MATERIALS.stone)
+                else
+                    set(x, 0, z, MATERIALS.soul_sand)
+                    set(x, 1, z, MATERIALS.nether_wart)
                 end
             end
         end
