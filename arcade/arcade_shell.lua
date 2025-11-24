@@ -190,14 +190,17 @@ local state = {
   licenseStore = nil,
   theme = {
     text = colors.white,
-    bg = colors.black,
+    bg = colors.cyan,
     header = colors.blue,
-    highlight = colors.yellow
+    highlight = colors.yellow,
+    windowBg = colors.lightGray,
+    buttonBg = colors.lightGray,
+    buttonFg = colors.black
   },
   environment = DEFAULT_ENVIRONMENT.mode,
 }
 
-local THEME_FILE = "theme.settings"
+local THEME_FILE = "arcade_skin.settings"
 
 local function loadTheme()
   if fs.exists(THEME_FILE) then
@@ -206,7 +209,15 @@ local function loadTheme()
       local data = textutils.unserialize(handle.readAll())
       handle.close()
       if data then
-        for k, v in pairs(data) do state.theme[k] = v end
+        -- Map skin to theme
+        state.theme.bg = data.background or state.theme.bg
+        state.theme.windowBg = data.playfield or state.theme.windowBg
+        state.theme.header = data.titleColor or state.theme.header
+        
+        if data.buttons and data.buttons.enabled then
+             state.theme.buttonBg = data.buttons.enabled.shadowColor or state.theme.buttonBg
+             state.theme.buttonFg = data.buttons.enabled.labelColor or state.theme.buttonFg
+        end
       end
     end
   end
@@ -257,11 +268,11 @@ function UI.drawWindow(x, y, w, h, title)
     -- Shadow
     paintutils.drawFilledBox(x + 1, y + 1, x + w, y + h, colors.black)
     -- Body
-    paintutils.drawFilledBox(x, y, x + w - 1, y + h - 1, colors.lightGray)
+    paintutils.drawFilledBox(x, y, x + w - 1, y + h - 1, state.theme.windowBg)
     -- Title Bar
-    paintutils.drawFilledBox(x, y, x + w - 1, y, colors.blue)
+    paintutils.drawFilledBox(x, y, x + w - 1, y, state.theme.header)
     term.setTextColor(colors.white)
-    term.setBackgroundColor(colors.blue)
+    term.setBackgroundColor(state.theme.header)
     term.setCursorPos(x + math.floor((w - #title) / 2), y)
     term.write(title)
     -- Close button
@@ -270,14 +281,8 @@ function UI.drawWindow(x, y, w, h, title)
 end
 
 function UI.drawButton(x, y, w, text, active, hovered)
-    local bg = active and colors.green or (hovered and colors.gray or colors.lightGray)
-    local fg = active and colors.white or (hovered and colors.white or colors.black)
-    
-    -- If it's a button on a gray background, we might want it to pop
-    if not active and not hovered then
-        bg = colors.gray
-        fg = colors.white
-    end
+    local bg = active and colors.green or (hovered and colors.gray or state.theme.buttonBg)
+    local fg = active and colors.white or (hovered and colors.white or state.theme.buttonFg)
 
     paintutils.drawFilledBox(x, y, x + w - 1, y, bg)
     term.setTextColor(fg)
@@ -461,7 +466,7 @@ local function main()
   
   while running do
     -- Draw Desktop
-    UI.clear(colors.cyan)
+    UI.clear(state.theme.bg)
     
     -- Draw Window
     local winW, winH = 26, 14

@@ -55,11 +55,11 @@ local winAmount = 0
 local game = {
     name = "Slots",
     
-    init = function(a)
+    init = function(self, a)
         a:setButtons({"Info", "Spin", "Quit"})
     end,
 
-    draw = function(a)
+    draw = function(self, a)
         a:clearPlayfield()
         a:centerPrint(2, "--- SLOTS ---", colors.yellow)
         
@@ -75,7 +75,7 @@ local game = {
         a:centerPrint(9, "Credits: " .. a:getCredits(), colors.orange)
     end,
 
-    onButton = function(a, button)
+    onButton = function(self, a, button)
         if button == "left" then
             message = "Cost: " .. COST .. " Credit"
             winAmount = 0
