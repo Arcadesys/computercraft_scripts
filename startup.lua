@@ -15,11 +15,11 @@ if platform == "turtle" then
         print("Factory TurtleOS not found at " .. turtle_os)
     end
 else
-    local arcade_os = "/arcade/arcadeos.lua"
+    local arcade_shell = "/arcade/arcade_shell.lua"
 
-    if fs.exists(arcade_os) then
-        shell.run(arcade_os)
+    if fs.exists(arcade_shell) then
+        shell.run(arcade_shell)
     else
-        print("ArcadeOS not found at " .. arcade_os)
+        print("Arcade Shell not found at " .. arcade_shell)
     end
 end

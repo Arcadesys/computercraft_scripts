@@ -1,5 +1,5 @@
 -- Arcadesys Unified Installer
--- Auto-generated at 2025-11-24T17:10:29.674Z
+-- Auto-generated at 2025-11-24T18:20:05.852Z
 print("Starting Arcadesys install...")
 local files = {}
 
@@ -4823,10 +4823,122 @@ print("Rebooting in 3 seconds...")
 sleep(3)
 os.reboot()
 ]=]
+files["arcade/data/valhelsia_blocks.lua"] = [[return {
+    -- Minecraft
+    { id = "minecraft:stone", label = "Stone" },
+    { id = "minecraft:dirt", label = "Dirt" },
+    { id = "minecraft:cobblestone", label = "Cobblestone" },
+    { id = "minecraft:planks", label = "Planks" },
+    { id = "minecraft:sand", label = "Sand" },
+    { id = "minecraft:gravel", label = "Gravel" },
+    { id = "minecraft:log", label = "Log" },
+    { id = "minecraft:glass", label = "Glass" },
+    { id = "minecraft:chest", label = "Chest" },
+    { id = "minecraft:furnace", label = "Furnace" },
+    { id = "minecraft:crafting_table", label = "Crafting Table" },
+    { id = "minecraft:iron_block", label = "Iron Block" },
+    { id = "minecraft:gold_block", label = "Gold Block" },
+    { id = "minecraft:diamond_block", label = "Diamond Block" },
+    
+    -- Create
+    { id = "create:andesite_casing", label = "Andesite Casing" },
+    { id = "create:brass_casing", label = "Brass Casing" },
+    { id = "create:copper_casing", label = "Copper Casing" },
+    { id = "create:shaft", label = "Shaft" },
+    { id = "create:cogwheel", label = "Cogwheel" },
+    { id = "create:large_cogwheel", label = "Large Cogwheel" },
+    { id = "create:gearbox", label = "Gearbox" },
+    { id = "create:clutch", label = "Clutch" },
+    { id = "create:gearshift", label = "Gearshift" },
+    { id = "create:encased_chain_drive", label = "Chain Drive" },
+    { id = "create:belt", label = "Mechanical Belt" },
+    { id = "create:chute", label = "Chute" },
+    { id = "create:smart_chute", label = "Smart Chute" },
+    { id = "create:fluid_pipe", label = "Fluid Pipe" },
+    { id = "create:mechanical_pump", label = "Mech Pump" },
+    { id = "create:fluid_tank", label = "Fluid Tank" },
+    { id = "create:mechanical_press", label = "Mech Press" },
+    { id = "create:mechanical_mixer", label = "Mech Mixer" },
+    { id = "create:basin", label = "Basin" },
+    { id = "create:blaze_burner", label = "Blaze Burner" },
+    { id = "create:millstone", label = "Millstone" },
+    { id = "create:crushing_wheel", label = "Crushing Wheel" },
+    { id = "create:mechanical_drill", label = "Mech Drill" },
+    { id = "create:mechanical_saw", label = "Mech Saw" },
+    { id = "create:deployer", label = "Deployer" },
+    { id = "create:portable_storage_interface", label = "Portable Storage" },
+    { id = "create:redstone_link", label = "Redstone Link" },
+    
+    -- Mekanism
+    { id = "mekanism:steel_casing", label = "Steel Casing" },
+    { id = "mekanism:metallurgic_infuser", label = "Met. Infuser" },
+    { id = "mekanism:enrichment_chamber", label = "Enrich. Chamber" },
+    { id = "mekanism:crusher", label = "Crusher" },
+    { id = "mekanism:osmium_compressor", label = "Osmium Comp." },
+    { id = "mekanism:combiner", label = "Combiner" },
+    { id = "mekanism:purification_chamber", label = "Purif. Chamber" },
+    { id = "mekanism:pressurized_reaction_chamber", label = "PRC" },
+    { id = "mekanism:chemical_injection_chamber", label = "Chem. Inj." },
+    { id = "mekanism:chemical_crystallizer", label = "Crystallizer" },
+    { id = "mekanism:chemical_dissolution_chamber", label = "Dissolution" },
+    { id = "mekanism:chemical_washer", label = "Washer" },
+    { id = "mekanism:digital_miner", label = "Digital Miner" },
+    { id = "mekanism:basic_universal_cable", label = "Univ. Cable" },
+    { id = "mekanism:basic_mechanical_pipe", label = "Mech. Pipe" },
+    { id = "mekanism:basic_pressurized_tube", label = "Press. Tube" },
+    { id = "mekanism:basic_logistical_transporter", label = "Log. Transp." },
+    
+    -- Immersive Engineering
+    { id = "immersiveengineering:coke_oven", label = "Coke Oven" },
+    { id = "immersiveengineering:blast_furnace", label = "Blast Furnace" },
+    { id = "immersiveengineering:windmill", label = "Windmill" },
+    { id = "immersiveengineering:watermill", label = "Watermill" },
+    { id = "immersiveengineering:dynamo", label = "Dynamo" },
+    { id = "immersiveengineering:hv_capacitor", label = "HV Capacitor" },
+    { id = "immersiveengineering:mv_capacitor", label = "MV Capacitor" },
+    { id = "immersiveengineering:lv_capacitor", label = "LV Capacitor" },
+    { id = "immersiveengineering:conveyor_basic", label = "Conveyor" },
+    
+    -- Applied Energistics 2
+    { id = "ae2:controller", label = "ME Controller" },
+    { id = "ae2:drive", label = "ME Drive" },
+    { id = "ae2:terminal", label = "ME Terminal" },
+    { id = "ae2:crafting_terminal", label = "Crafting Term" },
+    { id = "ae2:pattern_terminal", label = "Pattern Term" },
+    { id = "ae2:interface", label = "ME Interface" },
+    { id = "ae2:molecular_assembler", label = "Mol. Assembler" },
+    { id = "ae2:cable_glass", label = "Glass Cable" },
+    { id = "ae2:cable_smart", label = "Smart Cable" },
+    
+    -- ComputerCraft
+    { id = "computercraft:computer_normal", label = "Computer" },
+    { id = "computercraft:computer_advanced", label = "Adv Computer" },
+    { id = "computercraft:turtle_normal", label = "Turtle" },
+    { id = "computercraft:turtle_advanced", label = "Adv Turtle" },
+    { id = "computercraft:monitor_normal", label = "Monitor" },
+    { id = "computercraft:monitor_advanced", label = "Adv Monitor" },
+    { id = "computercraft:disk_drive", label = "Disk Drive" },
+    { id = "computercraft:printer", label = "Printer" },
+    { id = "computercraft:speaker", label = "Speaker" },
+    { id = "computercraft:wired_modem", label = "Wired Modem" },
+    { id = "computercraft:wireless_modem_normal", label = "Wireless Modem" },
+}]]
 files["arcade/factory_planner.lua"] = [[---@diagnostic disable: undefined-global
 -- Factory Planner
 -- A tool to design factory layouts and save them to disk for turtles.
 -- Features: Mouse control, Palette, Copy/Paste, Schema saving.
+-- Version: 2.0 (Search & Drawer Update)
+
+print("Loading Factory Planner v2.0...")
+sleep(1)
+
+-- Load Block Data
+local blockList = {}
+local ok, mod = pcall(require, "arcade.data.valhelsia_blocks")
+if not ok then
+    ok, mod = pcall(require, "data.valhelsia_blocks")
+end
+if ok then blockList = mod end
 
 local filename = "factory_schema.lua"
 local diskPath = "disk/" .. filename
@@ -4834,8 +4946,7 @@ local diskPath = "disk/" .. filename
 -- Configuration
 local gridWidth = 20
 local gridHeight = 15
-local cellSize = 1 -- 1x1 char per cell? Or maybe 2x1 for square-ish look?
--- Terminals are usually 51x19. 20x15 fits easily.
+local menuHeight = 1
 
 local palette = {
     { id = "minecraft:air", char = " ", color = colors.black, label = "Air" },
@@ -4856,11 +4967,29 @@ local isRunning = true
 local message = "Welcome to Factory Planner"
 local messageTimer = 0
 
+-- UI State
+local isDrawerOpen = false
+local showSearch = false
+local searchQuery = ""
+local searchResults = {}
+local searchScroll = 1
+
 -- Initialize Grid
 for y = 1, gridHeight do
     grid[y] = {}
     for x = 1, gridWidth do
         grid[y][x] = 1 -- Air
+    end
+end
+
+local function updateSearchResults()
+    searchResults = {}
+    if searchQuery == "" then return end
+    for _, block in ipairs(blockList) do
+        if string.find(string.lower(block.label), string.lower(searchQuery)) or 
+           string.find(string.lower(block.id), string.lower(searchQuery)) then
+            table.insert(searchResults, block)
+        end
     end
 end
 
@@ -4890,9 +5019,16 @@ end
 local function draw()
     clear()
 
+    -- Draw Menu Bar
+    drawRect(1, 1, 51, 1, colors.gray)
+    drawText(2, 1, "Save", colors.white, colors.gray)
+    drawText(8, 1, "Search", colors.white, colors.gray)
+    local drawerText = isDrawerOpen and "Hide >>" or "Show <<"
+    drawText(40, 1, drawerText, colors.white, colors.gray)
+
     -- Draw Grid
     local startX = 2
-    local startY = 2
+    local startY = 2 + menuHeight
     
     -- Draw Border
     drawRect(startX - 1, startY - 1, gridWidth + 2, gridHeight + 2, colors.white)
@@ -4906,30 +5042,54 @@ local function draw()
         end
     end
 
-    -- Draw Palette
-    local palX = startX + gridWidth + 3
-    local palY = 2
-    drawText(palX, palY - 1, "Palette:", colors.white, colors.black)
-    
-    for i, item in ipairs(palette) do
-        local prefix = (i == selectedPaletteIndex) and "> " or "  "
-        drawText(palX, palY + i - 1, prefix .. item.char .. " " .. item.label, item.color, colors.black)
+    -- Draw Drawer (Palette & Controls)
+    if isDrawerOpen then
+        local palX = startX + gridWidth + 3
+        local palY = startY
+        
+        -- Background for drawer
+        drawRect(palX - 1, 2, 20, 18, colors.black) -- Clear area
+
+        drawText(palX, palY - 1, "Palette:", colors.white, colors.black)
+        
+        for i, item in ipairs(palette) do
+            local prefix = (i == selectedPaletteIndex) and "> " or "  "
+            drawText(palX, palY + i - 1, prefix .. item.char .. " " .. item.label, item.color, colors.black)
+        end
+
+        -- Draw Controls / Help
+        local helpX = palX
+        local helpY = palY + #palette + 2
+        drawText(helpX, helpY, "Controls:", colors.white, colors.black)
+        drawText(helpX, helpY + 1, "L-Click: Paint", colors.lightGray, colors.black)
+        drawText(helpX, helpY + 2, "R-Click: Erase", colors.lightGray, colors.black)
+        drawText(helpX, helpY + 3, "C: Copy Grid", colors.lightGray, colors.black)
+        drawText(helpX, helpY + 4, "V: Paste Grid", colors.lightGray, colors.black)
     end
 
-    -- Draw Controls / Help
-    local helpX = palX
-    local helpY = palY + #palette + 2
-    drawText(helpX, helpY, "Controls:", colors.white, colors.black)
-    drawText(helpX, helpY + 1, "L-Click: Paint", colors.lightGray, colors.black)
-    drawText(helpX, helpY + 2, "R-Click: Erase", colors.lightGray, colors.black)
-    drawText(helpX, helpY + 3, "C: Copy Grid", colors.lightGray, colors.black)
-    drawText(helpX, helpY + 4, "V: Paste Grid", colors.lightGray, colors.black)
-    drawText(helpX, helpY + 5, "S: Save to Disk", colors.lightGray, colors.black)
-    drawText(helpX, helpY + 6, "Q: Quit", colors.lightGray, colors.black)
+    -- Draw Search Overlay
+    if showSearch then
+        local sx, sy = 5, 4
+        local sw, sh = 40, 12
+        drawRect(sx, sy, sw, sh, colors.blue)
+        drawRect(sx + 1, sy + 1, sw - 2, sh - 2, colors.black)
+        
+        drawText(sx + 2, sy + 2, "Search Block: " .. searchQuery .. "_", colors.white, colors.black)
+        
+        for i = 1, sh - 4 do
+            local idx = searchScroll + i - 1
+            if idx <= #searchResults then
+                local block = searchResults[idx]
+                drawText(sx + 2, sy + 3 + i, block.label, colors.lightGray, colors.black)
+            end
+        end
+        
+        drawText(sx + 2, sy + sh - 1, "Enter to Add, Esc to Close", colors.gray, colors.black)
+    end
 
     -- Draw Message
     if messageTimer > 0 then
-        drawText(2, gridHeight + 4, message, colors.yellow, colors.black)
+        drawText(2, gridHeight + 4 + menuHeight, message, colors.yellow, colors.black)
     end
 end
 
@@ -4976,9 +5136,25 @@ local function pasteGrid()
 end
 
 local function handleMouse(button, x, y)
+    if showSearch then return end -- Modal blocks clicks
+
+    -- Menu Bar Click
+    if y == 1 then
+        if x >= 2 and x <= 6 then -- Save
+            saveSchema()
+        elseif x >= 8 and x <= 14 then -- Search
+            showSearch = true
+            searchQuery = ""
+            updateSearchResults()
+        elseif x >= 40 and x <= 50 then -- Drawer
+            isDrawerOpen = not isDrawerOpen
+        end
+        return
+    end
+
     -- Grid Coordinates
     local startX = 2
-    local startY = 2
+    local startY = 2 + menuHeight
     
     local gx = x - startX + 1
     local gy = y - startY + 1
@@ -4989,10 +5165,10 @@ local function handleMouse(button, x, y)
         elseif button == 2 then -- Right Click
             grid[gy][gx] = 1 -- Air
         end
-    else
+    elseif isDrawerOpen then
         -- Check Palette Click
         local palX = startX + gridWidth + 3
-        local palY = 2
+        local palY = startY
         
         if x >= palX and x <= palX + 15 then -- Approximate width
             local py = y - palY + 1
@@ -5003,7 +5179,35 @@ local function handleMouse(button, x, y)
     end
 end
 
-local function handleKey(key)
+local function handleKey(key, char)
+    if showSearch then
+        if key == keys.enter then
+            if #searchResults > 0 then
+                -- Add first result to palette
+                local block = searchResults[1]
+                table.insert(palette, {
+                    id = block.id,
+                    char = string.sub(block.label, 1, 1),
+                    color = colors.cyan,
+                    label = block.label
+                })
+                selectedPaletteIndex = #palette
+                message = "Added " .. block.label
+                messageTimer = 30
+                showSearch = false
+            end
+        elseif key == keys.backspace then
+            searchQuery = string.sub(searchQuery, 1, -2)
+            updateSearchResults()
+        elseif key == keys.escape then
+            showSearch = false
+        elseif char then
+            searchQuery = searchQuery .. char
+            updateSearchResults()
+        end
+        return
+    end
+
     if key == keys.q then
         isRunning = false
     elseif key == keys.s then
@@ -5024,7 +5228,9 @@ while isRunning do
     if event == "mouse_click" or event == "mouse_drag" then
         handleMouse(p1, p2, p3)
     elseif event == "key" then
-        handleKey(p1)
+        handleKey(p1, nil)
+    elseif event == "char" then
+        handleKey(nil, p1)
     elseif event == "timer" then
         if p1 == messageTimerId then
             -- Timer handled
@@ -11902,6 +12108,25 @@ local function install()
     print("Structure OK.")
     print("")
     
+    local startupTargets = {
+        turtle = "/factory/turtle_os.lua",
+        computer = "/arcade/arcadeos.lua",
+    }
+
+    print("Validating startup targets...")
+    local missingTargets = {}
+    for platformName, path in pairs(startupTargets) do
+        if not fs.exists(path) then
+            table.insert(missingTargets, string.format("%s (%s)", platformName, path))
+        end
+    end
+
+    if #missingTargets > 0 then
+        print("! Missing startup targets: " .. table.concat(missingTargets, ", "))
+        print("Cannot create startup.lua until required files are present.")
+        return
+    end
+
     print("Creating startup.lua...")
     local startupContent = [[
 -- startup.lua
@@ -11913,17 +12138,9 @@ local platform = turtle and "turtle" or "computer"
 package.path = package.path .. ";/lib/?.lua;/arcade/?.lua;/factory/?.lua"
 
 if platform == "turtle" then
-    if fs.exists("/factory/factory.lua") then
-        shell.run("/factory/factory.lua")
-    else
-        print("Factory agent not found.")
-    end
+    shell.run("/factory/turtle_os.lua")
 else
-    if fs.exists("/arcade/arcade_shell.lua") then
-        shell.run("/arcade/arcade_shell.lua")
-    else
-        print("ArcadeOS not found.")
-    end
+    shell.run("/arcade/arcadeos.lua")
 end
 ]]
 
@@ -21912,21 +22129,25 @@ local platform = turtle and "turtle" or "computer"
 package.path = package.path .. ";/lib/?.lua;/arcade/?.lua;/factory/?.lua"
 
 if platform == "turtle" then
-    if fs.exists("/factory/factory.lua") then
-        shell.run("/factory/factory.lua")
+    local turtle_os = "/factory/turtle_os.lua"
+
+    if fs.exists(turtle_os) then
+        shell.run(turtle_os)
     else
-        print("Factory agent not found.")
+        print("Factory TurtleOS not found at " .. turtle_os)
     end
 else
-    if fs.exists("/arcade/arcade_shell.lua") then
-        shell.run("/arcade/arcade_shell.lua")
+    local arcade_shell = "/arcade/arcade_shell.lua"
+
+    if fs.exists(arcade_shell) then
+        shell.run(arcade_shell)
     else
-        print("ArcadeOS not found.")
+        print("Arcade Shell not found at " .. arcade_shell)
     end
 end
 ]]
 
-print("Unpacking 74 files...")
+print("Unpacking 75 files...")
 for path, content in pairs(files) do
     local dir = fs.getDir(path)
     if dir ~= "" and not fs.exists(dir) then
