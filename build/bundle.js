@@ -139,7 +139,20 @@ function buildInstaller() {
         `        handle.close()\n` +
         `    end\n` +
         `end\n` +
-        `print("Arcadesys install complete. Reboot or run startup to launch.")\n`;
+        `\nprint("Verifying installation...")\n` +
+        `local errors = 0\n` +
+        `for path, _ in pairs(files) do\n` +
+        `    if not fs.exists(path) then\n` +
+        `        printError("Missing: " .. path)\n` +
+        `        errors = errors + 1\n` +
+        `    end\n` +
+        `end\n` +
+        `if errors == 0 then\n` +
+        `    print("Verification successful.")\n` +
+        `    print("Arcadesys install complete. Reboot or run startup to launch.")\n` +
+        `else\n` +
+        `    printError("Verification failed with " .. errors .. " missing files.")\n` +
+        `end\n`;
 
     fs.writeFileSync(OUTPUT_PATH, lua, 'utf8');
     console.log(`✅ Wrote installer to ${OUTPUT_PATH}`);

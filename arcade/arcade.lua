@@ -25,7 +25,7 @@
 ---@diagnostic disable: undefined-global, undefined-field
 
  local M = {}
- local Renderer = require("ui.renderer")
+ local Renderer = require("arcade.ui.renderer")
  local Log = require("log")
 
 -- ==========================

@@ -5,7 +5,7 @@ const PROJECT_ROOT = path.resolve(__dirname, '..');
 const OUTPUT_NAME = 'net_installer.lua';
 const OUTPUT_PATH = path.join(PROJECT_ROOT, OUTPUT_NAME);
 const LUA_EXTENSION = '.lua';
-const REPO_BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/";
+const REPO_BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/appify/";
 
 const IGNORE_DIRS = new Set([
     '.git',
@@ -128,10 +128,21 @@ function buildNetInstaller() {
         `print("Install Complete!")\n` +
         `print("Downloaded: " .. successCount)\n` +
         `print("Failed: " .. failCount)\n` +
-        `if failCount == 0 then\n` +
+        `\nprint("Verifying installation...")\n` +
+        `local errors = 0\n` +
+        `for _, file in ipairs(files) do\n` +
+        `    if not fs.exists(file) then\n` +
+        `        printError("Missing: " .. file)\n` +
+        `        errors = errors + 1\n` +
+        `    end\n` +
+        `end\n` +
+        `if failCount == 0 and errors == 0 then\n` +
+        `    print("Verification successful.")\n` +
         `    print("Reboot or run startup to launch.")\n` +
         `else\n` +
-        `    print("Some files failed to download. Check your connection.")\n` +
+        `    print("Installation issues detected.")\n` +
+        `    if failCount > 0 then print("Failed downloads: " .. failCount) end\n` +
+        `    if errors > 0 then print("Missing files: " .. errors) end\n` +
         `end\n`;
 
     fs.writeFileSync(OUTPUT_PATH, lua, 'utf8');

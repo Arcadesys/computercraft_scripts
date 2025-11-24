@@ -56,7 +56,7 @@ setupPaths()
 -- Arcade wrapper note: we require the wrapper for consistency with other games,
 -- but Can't Stop currently uses its own bespoke UI/event loop.
 local _arcade_ok, _arcade = pcall(require, "arcade")
-local Renderer = require("ui.renderer")
+local Renderer = require("arcade.ui.renderer")
 
 local function toBlit(color)
         if colors.toBlit then return colors.toBlit(color) end

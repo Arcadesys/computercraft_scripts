@@ -1,8 +1,8 @@
 -- Arcadesys Network Installer
--- Auto-generated at 2025-11-24T22:42:35.323Z
+-- Auto-generated at 2025-11-24T23:11:52.899Z
 -- Downloads files from GitHub to bypass file size limits
 
-local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
+local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/appify/"
 local files = {
     "arcade/arcade_shell.lua",
     "arcade/arcade.lua",
@@ -76,7 +76,6 @@ local files = {
     "lib/lib_worldstate.lua",
     "lib/log.lua",
     "startup.lua",
-    "ui/renderer.lua",
 }
 
 print("Starting Network Install...")
@@ -126,8 +125,20 @@ print("")
 print("Install Complete!")
 print("Downloaded: " .. successCount)
 print("Failed: " .. failCount)
-if failCount == 0 then
+
+print("Verifying installation...")
+local errors = 0
+for _, file in ipairs(files) do
+    if not fs.exists(file) then
+        printError("Missing: " .. file)
+        errors = errors + 1
+    end
+end
+if failCount == 0 and errors == 0 then
+    print("Verification successful.")
     print("Reboot or run startup to launch.")
 else
-    print("Some files failed to download. Check your connection.")
+    print("Installation issues detected.")
+    if failCount > 0 then print("Failed downloads: " .. failCount) end
+    if errors > 0 then print("Missing files: " .. errors) end
 end
