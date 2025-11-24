@@ -14,6 +14,20 @@ return {
     { id = "minecraft:iron_block", label = "Iron Block" },
     { id = "minecraft:gold_block", label = "Gold Block" },
     { id = "minecraft:diamond_block", label = "Diamond Block" },
+    { id = "minecraft:torch", label = "Torch" },
+    { id = "minecraft:hopper", label = "Hopper" },
+    { id = "minecraft:dropper", label = "Dropper" },
+    { id = "minecraft:dispenser", label = "Dispenser" },
+    { id = "minecraft:observer", label = "Observer" },
+    { id = "minecraft:piston", label = "Piston" },
+    { id = "minecraft:sticky_piston", label = "Sticky Piston" },
+    { id = "minecraft:lever", label = "Lever" },
+    { id = "minecraft:redstone_block", label = "Redstone Block" },
+    
+    -- Storage Drawers
+    { id = "storagedrawers:controller", label = "Drawer Controller" },
+    { id = "storagedrawers:oak_full_drawers_1", label = "Oak Drawer" },
+    { id = "storagedrawers:compacting_drawers_3", label = "Compacting Drawer" },
     
     -- Create
     { id = "create:andesite_casing", label = "Andesite Casing" },
