@@ -145,6 +145,22 @@ local programs = {
     category = "actions",
     prodReady = false,
   },
+  {
+    id = "store",
+    name = "App Store",
+    path = "games/store.lua",
+    price = 0,
+    description = "Download new games.",
+    category = "system",
+  },
+  {
+    id = "themes",
+    name = "Themes",
+    path = "games/themes.lua",
+    price = 0,
+    description = "Change system theme.",
+    category = "system",
+  },
 }
 
 -- ==========================

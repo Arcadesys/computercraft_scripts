@@ -240,6 +240,11 @@ function M:consumeCredits(amount)
 	return false
 end
 
+function M:setSkin(skin)
+    applySkin(skin)
+    redrawAll()
+end
+
 -- ==========================
 -- Quit control
 -- ==========================

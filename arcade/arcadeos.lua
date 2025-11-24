@@ -247,6 +247,11 @@ function M:consumeCredits(amount)
 	return false
 end
 
+function M:setSkin(skin)
+    applySkin(skin)
+    redrawAll()
+end
+
 -- ==========================
 -- Quit control
 -- ==========================
@@ -1553,27 +1558,17 @@ local function computeLayout()
         -- Board takes everything above the bottom bar, minus top 2 lines (status & dice)
         local boardTop = 3
         local boardBottom = screenH - BUTTON_BAR_HEIGHT
-	if boardBottom < boardTop + 4 then
-		-- If monitor is tiny, collapse dice into status and shrink board
-		layout.statusY = 1
-		layout.diceY = 1
-		boardTop = 2
-		boardBottom = math.max(2, screenH - BUTTON_BAR_HEIGHT)
-	else
-		layout.statusY = 1
-		layout.diceY = 2
-	end
-	layout.board.x = 1
-	layout.board.y = boardTop
-	layout.board.w = screenW
-	layout.board.h = boardBottom - boardTop + 1
-
-	-- Buttons split width into 3 equal parts at the bottom
-	local btnW = math.floor(screenW / 3)
+        local pfH = math.max(1, screenH - BUTTON_BAR_HEIGHT)
+        layout.board.x = 1
+        layout.board.y = boardTop
+        layout.board.w = screenW
+        layout.board.h = pfH
+        -- buttons horizontally divided
+        local btnW = math.floor(screenW / 3)
         local leftover = screenW - (btnW * 3)
         local startY = screenH - BUTTON_BAR_HEIGHT + 1
         for i = 1, 3 do
-                local extra = (i <= leftover) and 1 or 0 -- distribute leftover pixels
+                local extra = (i <= leftover) and 1 or 0
                 local x = 1 + (i - 1) * btnW + math.min(i - 1, leftover)
                 layout.buttons[i].x = x
                 layout.buttons[i].y = startY
@@ -3298,7 +3293,9 @@ end
 local function startDeal()
         if gameState ~= "betting" and gameState ~= "settled" then return end
         if not arcadeAdapter:consumeCredits(bet) then
-                statusMessage = "Not enough credits!"
+                statusMessage = string.format("Not enough credits!")
+                resetFlash()
+                refreshButtons(adapter)
                 return
         end
         handBet = bet
@@ -3671,18 +3668,18 @@ local function drawWindow(grid)
         end
 end
 
-local function draw(adapter)
-        adapter:clearPlayfield(colors.black, colors.white)
-        local creditsText = string.format("Credits: %d", adapter:getCredits())
+local function draw(a)
+        a:clearPlayfield(colors.black, colors.white)
+        local creditsText = string.format("Credits: %d", a:getCredits())
         local betText = string.format("Bet: %d", state.betSteps[state.betIndex])
-        adapter:centerPrint(1, "Slots", colors.white)
-        adapter:centerPrint(2, creditsText .. "  |  " .. betText, colors.lightGray)
+        a:centerPrint(1, "Slots", colors.white)
+        a:centerPrint(2, creditsText .. "  |  " .. betText, colors.lightGray)
         local grid = currentWindow()
         drawWindow(grid)
         local _, screenH = term.getSize()
         local playfieldBottom = screenH - 3
         local messageY = math.min(playfieldBottom, 11)
-        adapter:centerPrint(messageY, state.message, colors.yellow)
+        a:centerPrint(messageY, state.message, colors.yellow)
         drawPayoutTable()
 end
 
@@ -3929,33 +3926,6 @@ function Renderer:drawTextureRect(texture, x, y, w, h)
     end
 end
 
-function Renderer:drawLabelCentered(x, y, w, text, color, shadowColor)
-    if not text or text == "" then return end
-    local tx = x + math.floor((w - #text) / 2)
-    if shadowColor then
-        term.setTextColor(shadowColor)
-        term.setCursorPos(tx + 1, y + 1)
-        term.write(text)
-    end
-    term.setTextColor(color or colors.white)
-    term.setCursorPos(tx, y)
-    term.write(text)
-end
-
-function Renderer:drawButton(rect, label, enabled)
-    local skin = enabled and self.skin.buttons.enabled or self.skin.buttons.disabled
-    self:drawTextureRect(skin.texture, rect.x, rect.y, rect.w, rect.h)
-    self:drawLabelCentered(rect.x, rect.y + math.floor(rect.h / 2), rect.w, label, skin.labelColor, skin.shadowColor)
-end
-
-function Renderer:paintSurface(rect, surface)
-    if type(surface) == "table" then
-        self:drawTextureRect(surface, rect.x, rect.y, rect.w, rect.h)
-    else
-        self:fillRect(rect.x, rect.y, rect.w, rect.h, surface or colors.black)
-    end
-end
-
 function Renderer.defaultSkin()
     return buildDefaultSkin()
 end
@@ -3966,7 +3936,6 @@ end
 
 return Renderer
 ]]
-
 print("Unpacking 16 files...")
 
 for path, content in pairs(files) do
