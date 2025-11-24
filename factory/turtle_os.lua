@@ -3,6 +3,11 @@ TurtleOS v2.0
 Graphical launcher for the factory agent.
 --]]
 
+-- Ensure package path includes lib and arcade
+if not string.find(package.path, "/lib/?.lua") then
+    package.path = package.path .. ";/lib/?.lua;/arcade/?.lua;/factory/?.lua"
+end
+
 local ui = require("lib_ui")
 local designer = require("lib_designer")
 local games = require("lib_games")

@@ -49,6 +49,13 @@ local searchQuery = ""
 local searchResults = {}
 local searchScroll = 1
 
+-- Edit Menu State
+local isEditMenuOpen = false
+local showResize = false
+local resizeWidthInput = ""
+local resizeHeightInput = ""
+local activeResizeInput = 1
+
 -- Initialize Grid
 for y = 1, gridHeight do
     grid[y] = {}
@@ -97,7 +104,7 @@ local function draw()
     -- Draw Menu Bar
     drawRect(1, 1, 51, 1, colors.gray)
     drawText(2, 1, "Save", colors.white, colors.gray)
-    drawText(8, 1, "Search", colors.white, colors.gray)
+    drawText(8, 1, "Edit", colors.white, colors.gray)
     local drawerText = isDrawerOpen and "Hide >>" or "Show <<"
     drawText(40, 1, drawerText, colors.white, colors.gray)
 
@@ -140,6 +147,27 @@ local function draw()
         drawText(helpX, helpY + 2, "R-Click: Erase", colors.lightGray, colors.black)
         drawText(helpX, helpY + 3, "C: Copy Grid", colors.lightGray, colors.black)
         drawText(helpX, helpY + 4, "V: Paste Grid", colors.lightGray, colors.black)
+    end
+
+    -- Draw Edit Menu
+    if isEditMenuOpen then
+        drawRect(8, 2, 10, 2, colors.lightGray)
+        drawText(9, 2, "Palette", colors.black, colors.lightGray)
+        drawText(9, 3, "Size", colors.black, colors.lightGray)
+    end
+
+    -- Draw Resize Dialog
+    if showResize then
+        local rx, ry, rw, rh = 10, 5, 30, 8
+        drawRect(rx, ry, rw, rh, colors.blue)
+        drawRect(rx + 1, ry + 1, rw - 2, rh - 2, colors.black)
+        
+        drawText(rx + 2, ry + 2, "Resize Grid", colors.white, colors.black)
+        
+        drawText(rx + 2, ry + 4, "Width:  " .. resizeWidthInput .. (activeResizeInput == 1 and "_" or ""), colors.white, colors.black)
+        drawText(rx + 2, ry + 5, "Height: " .. resizeHeightInput .. (activeResizeInput == 2 and "_" or ""), colors.white, colors.black)
+        
+        drawText(rx + 2, ry + 7, "Enter to Apply", colors.gray, colors.black)
     end
 
     -- Draw Search Overlay
@@ -212,19 +240,44 @@ end
 
 local function handleMouse(button, x, y)
     if showSearch then return end -- Modal blocks clicks
+    if showResize then return end -- Modal blocks clicks
 
     -- Menu Bar Click
     if y == 1 then
         if x >= 2 and x <= 6 then -- Save
             saveSchema()
-        elseif x >= 8 and x <= 14 then -- Search
-            showSearch = true
-            searchQuery = ""
-            updateSearchResults()
+            isEditMenuOpen = false
+        elseif x >= 8 and x <= 12 then -- Edit
+            isEditMenuOpen = not isEditMenuOpen
         elseif x >= 40 and x <= 50 then -- Drawer
             isDrawerOpen = not isDrawerOpen
+            isEditMenuOpen = false
+        else
+            isEditMenuOpen = false
         end
         return
+    end
+
+    -- Edit Menu Click
+    if isEditMenuOpen then
+        if x >= 8 and x <= 17 then
+            if y == 2 then -- Palette
+                showSearch = true
+                searchQuery = ""
+                updateSearchResults()
+                isEditMenuOpen = false
+                return
+            elseif y == 3 then -- Size
+                showResize = true
+                resizeWidthInput = tostring(gridWidth)
+                resizeHeightInput = tostring(gridHeight)
+                activeResizeInput = 1
+                isEditMenuOpen = false
+                return
+            end
+        end
+        isEditMenuOpen = false -- Clicked outside menu
+        return 
     end
 
     -- Grid Coordinates
@@ -279,6 +332,50 @@ local function handleKey(key, char)
         elseif char then
             searchQuery = searchQuery .. char
             updateSearchResults()
+        end
+        return
+    end
+
+    if showResize then
+        if key == keys.enter then
+            local w = tonumber(resizeWidthInput)
+            local h = tonumber(resizeHeightInput)
+            if w and h and w > 0 and h > 0 then
+                -- Resize grid
+                local newGrid = {}
+                for y = 1, h do
+                    newGrid[y] = {}
+                    for x = 1, w do
+                        if y <= gridHeight and x <= gridWidth then
+                            newGrid[y][x] = grid[y][x]
+                        else
+                            newGrid[y][x] = 1 -- Air
+                        end
+                    end
+                end
+                grid = newGrid
+                gridWidth = w
+                gridHeight = h
+                message = "Resized to " .. w .. "x" .. h
+                messageTimer = 30
+            end
+            showResize = false
+        elseif key == keys.tab then
+            activeResizeInput = (activeResizeInput % 2) + 1
+        elseif key == keys.backspace then
+            if activeResizeInput == 1 then
+                resizeWidthInput = string.sub(resizeWidthInput, 1, -2)
+            else
+                resizeHeightInput = string.sub(resizeHeightInput, 1, -2)
+            end
+        elseif key == keys.escape then
+            showResize = false
+        elseif char and tonumber(char) then
+            if activeResizeInput == 1 then
+                resizeWidthInput = resizeWidthInput .. char
+            else
+                resizeHeightInput = resizeHeightInput .. char
+            end
         end
         return
     end

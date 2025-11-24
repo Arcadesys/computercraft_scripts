@@ -3,6 +3,11 @@
 -- Simple shell UI that lists arcade programs, lets players buy licenses,
 -- and launches games once unlocked.
 
+-- Ensure package path includes lib and arcade
+if not string.find(package.path, "/lib/?.lua") then
+    package.path = package.path .. ";/lib/?.lua;/arcade/?.lua;/factory/?.lua"
+end
+
 local LicenseStore = require("license_store")
 
 local BASE_DIR = fs.getDir(shell and shell.getRunningProgram and shell.getRunningProgram() or "") or ""

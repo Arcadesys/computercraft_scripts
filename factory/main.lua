@@ -3,6 +3,11 @@ Main entry point for the modular agent system.
 Implements the finite state machine loop.
 --]]
 
+-- Ensure package path includes lib and arcade
+if not string.find(package.path, "/lib/?.lua") then
+    package.path = package.path .. ";/lib/?.lua;/arcade/?.lua;/factory/?.lua"
+end
+
 local logger = require("lib_logger")
 local movement = require("lib_movement")
 
