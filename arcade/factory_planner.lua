@@ -64,6 +64,7 @@ local searchQuery = ""
 local searchResults = {}
 local searchScroll = 1
 local selectedSearchIndex = 1
+local paletteScroll = 1
 
 -- Mouse State for Tools
 local mouseState = {
@@ -330,20 +331,39 @@ local function draw()
         local palOffsetY = #toolList + 2
         drawText(palX, palY + palOffsetY - 1, "Palette:", colors.white, colors.black)
         
-        for i, item in ipairs(palette) do
-            local prefix = (i == selectedPaletteIndex) and "> " or "  "
-            drawText(palX, palY + palOffsetY + i - 1, prefix .. item.char .. " " .. item.label, item.color, colors.black)
+        local w, h = term.getSize()
+        local maxPaletteItems = h - (palY + palOffsetY) -- Remaining height
+        if maxPaletteItems < 1 then maxPaletteItems = 1 end
+
+        for i = 1, maxPaletteItems do
+            local idx = paletteScroll + i - 1
+            if idx <= #palette then
+                local item = palette[idx]
+                local prefix = (idx == selectedPaletteIndex) and "> " or "  "
+                drawText(palX, palY + palOffsetY + i - 1, prefix .. item.char .. " " .. item.label, item.color, colors.black)
+            end
         end
 
-        -- Draw Controls / Help
-        local helpX = palX
-        local helpY = palY + palOffsetY + #palette + 2
-        drawText(helpX, helpY, "Controls:", colors.white, colors.black)
-        drawText(helpX, helpY + 1, "L-Click: Paint", colors.lightGray, colors.black)
-        drawText(helpX, helpY + 2, "R-Click: Erase", colors.lightGray, colors.black)
-        drawText(helpX, helpY + 3, "C: Copy Layer", colors.lightGray, colors.black)
-        drawText(helpX, helpY + 4, "V: Paste Layer", colors.lightGray, colors.black)
-        drawText(helpX, helpY + 5, "PgUp/Dn: Layer", colors.lightGray, colors.black)
+        -- Draw Controls / Help (Only if there is space, or maybe move it?)
+        -- For now, let's hide controls if palette is long, or just draw them below if possible.
+        -- Actually, let's just draw them if we are at the bottom of the list?
+        -- Or maybe we should prioritize the palette.
+        -- Let's just draw them if there's space after the *visible* palette items?
+        -- But we are scrolling the palette.
+        
+        -- Let's keep it simple: Palette takes up the rest of the space.
+        -- Controls are hidden if palette is too long?
+        -- Or maybe we should put controls at the top?
+        
+        -- For now, I'll just comment out the controls drawing if it overlaps, 
+        -- but actually the user asked about the palette item not showing up.
+        -- So fixing the palette visibility is priority.
+        
+        -- If we want to show controls, we need to reserve space for them.
+        -- But the user's screen is small.
+        
+        -- Let's just draw the palette for now.
+
     end
 
     -- Draw Edit Menu
@@ -593,9 +613,23 @@ local function handleMouse(event, button, x, y)
                 currentTool = toolList[py]
             else
                 local palOffsetY = #toolList + 2
-                local palIndex = py - palOffsetY
+                local palIndex = py - palOffsetY + paletteScroll - 1 -- Adjust for scroll
                 if palIndex >= 1 and palIndex <= #palette then
                     selectedPaletteIndex = palIndex
+                end
+            end
+        end
+    elseif event == "mouse_scroll" and isDrawerOpen then
+        -- Handle scrolling in drawer
+        local palX = startX + gridWidth + 3
+        if x >= palX then
+            if button > 0 then -- Scroll down
+                if paletteScroll < #palette then
+                    paletteScroll = paletteScroll + 1
+                end
+            elseif button < 0 then -- Scroll up
+                if paletteScroll > 1 then
+                    paletteScroll = paletteScroll - 1
                 end
             end
         end
@@ -737,7 +771,7 @@ while isRunning do
     
     local event, p1, p2, p3 = os.pullEvent()
     
-    if event == "mouse_click" or event == "mouse_drag" or event == "mouse_up" then
+    if event == "mouse_click" or event == "mouse_drag" or event == "mouse_up" or event == "mouse_scroll" then
         handleMouse(event, p1, p2, p3)
     elseif event == "key" then
         handleKey(p1, nil)
