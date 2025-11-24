@@ -7,15 +7,19 @@ local platform = turtle and "turtle" or "computer"
 package.path = package.path .. ";/lib/?.lua;/arcade/?.lua;/factory/?.lua"
 
 if platform == "turtle" then
-    if fs.exists("/factory/factory.lua") then
-        shell.run("/factory/factory.lua")
+    local turtle_os = "/factory/turtle_os.lua"
+
+    if fs.exists(turtle_os) then
+        shell.run(turtle_os)
     else
-        print("Factory agent not found.")
+        print("Factory TurtleOS not found at " .. turtle_os)
     end
 else
-    if fs.exists("/arcade/arcade_shell.lua") then
-        shell.run("/arcade/arcade_shell.lua")
+    local arcade_os = "/arcade/arcadeos.lua"
+
+    if fs.exists(arcade_os) then
+        shell.run(arcade_os)
     else
-        print("ArcadeOS not found.")
+        print("ArcadeOS not found at " .. arcade_os)
     end
 end
