@@ -24,13 +24,29 @@ function toLuaString(str) {
 function createInstaller() {
     console.log('📦 Packaging ArcadeOS...');
 
-    // 1. Find all files in the current directory
-    const allFiles = fs.readdirSync(SOURCE_DIR);
+    // 1. Recursively find all Lua files
+    function getAllLuaFiles(dir, baseDir = '') {
+        const files = [];
+        const items = fs.readdirSync(dir);
+        
+        items.forEach(item => {
+            const fullPath = path.join(dir, item);
+            const relativePath = baseDir ? path.join(baseDir, item) : item;
+            const stat = fs.statSync(fullPath);
+            
+            if (stat.isDirectory() && !item.startsWith('.')) {
+                // Recursively scan subdirectories
+                files.push(...getAllLuaFiles(fullPath, relativePath));
+            } else if (stat.isFile() && item.endsWith('.lua') && !IGNORE_FILES.includes(item)) {
+                files.push({ path: fullPath, relative: relativePath });
+            }
+        });
+        
+        return files;
+    }
     
-    // 2. Filter for Lua files and exclude ignored ones
-    const filesToBundle = allFiles.filter(file => {
-        return file.endsWith('.lua') && !IGNORE_FILES.includes(file);
-    });
+    // 2. Get all Lua files recursively
+    const filesToBundle = getAllLuaFiles(SOURCE_DIR);
 
     if (filesToBundle.length === 0) {
         console.log('❌ No Lua files found to bundle.');
@@ -49,14 +65,13 @@ local files = {}
 `;
 
     // 4. Append each file's content to the Lua table
-    filesToBundle.forEach(fileName => {
-        const filePath = path.join(SOURCE_DIR, fileName);
-        const content = fs.readFileSync(filePath, 'utf8');
+    filesToBundle.forEach(file => {
+        const content = fs.readFileSync(file.path, 'utf8');
         
-        console.log(`   - Adding ${fileName}`);
+        console.log(`   - Adding ${file.relative}`);
         
-        // We use the filename as the key and the content as the value
-        luaScript += `files["${fileName}"] = ${toLuaString(content)}\n`;
+        // We use the relative path as the key and the content as the value
+        luaScript += `files["${file.relative}"] = ${toLuaString(content)}\n`;
     });
 
     // 5. Add the installation logic (Lua code)
