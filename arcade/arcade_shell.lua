@@ -5,6 +5,22 @@
 
 local LicenseStore = require("license_store")
 
+local BASE_DIR = fs.getDir(shell and shell.getRunningProgram and shell.getRunningProgram() or "") or ""
+if BASE_DIR == "" then BASE_DIR = "." end
+
+local function resolvePath(rel)
+  if type(rel) ~= "string" or rel == "" then
+    return rel
+  end
+  if rel:sub(1, 1) == "/" then
+    return rel
+  end
+  if BASE_DIR == "." then
+    return rel
+  end
+  return fs.combine(BASE_DIR, rel)
+end
+
 -- ==========================
 -- Persistence helpers
 -- ==========================
@@ -63,7 +79,7 @@ local programs = {
   {
     id = "blackjack",
     name = "Blackjack",
-    path = "arcade/games/blackjack.lua",
+    path = "games/blackjack.lua",
     price = 5,
     description = "Beat the dealer in a race to 21.",
     category = "games",
@@ -71,7 +87,7 @@ local programs = {
   {
     id = "slots",
     name = "Slots",
-    path = "arcade/games/slots.lua",
+    path = "games/slots.lua",
     price = 3,
     description = "Spin reels for quick wins.",
     category = "games",
@@ -79,7 +95,7 @@ local programs = {
   {
     id = "cantstop",
     name = "Can't Stop",
-    path = "arcade/games/cantstop.lua",
+    path = "games/cantstop.lua",
     price = 4,
     description = "Push your luck dice classic.",
     category = "games",
@@ -87,7 +103,7 @@ local programs = {
   {
     id = "idlecraft",
     name = "IdleCraft",
-    path = "arcade/games/idlecraft.lua",
+    path = "games/idlecraft.lua",
     price = 6,
     description = "AFK-friendly cobble empire.",
     category = "games",
@@ -95,7 +111,7 @@ local programs = {
   {
     id = "artillery",
     name = "Artillery",
-    path = "arcade/games/artillery.lua",
+    path = "games/artillery.lua",
     price = 5,
     description = "2-player tank battle.",
     category = "games",
@@ -321,7 +337,7 @@ local function launchProgram(program)
   print("Launching " .. program.name .. "...")
   
   local ok, err = pcall(function()
-    shell.run(program.path)
+    shell.run(resolvePath(program.path))
   end)
   
   if not ok then
