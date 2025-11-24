@@ -1,3 +1,4 @@
+---@diagnostic disable: undefined-global, undefined-field
 -- Clear potentially failed loads
 package.loaded["arcade"] = nil
 package.loaded["log"] = nil
@@ -24,6 +25,11 @@ local function setupPaths()
     
     add("lib")
     add("arcade")
+
+    -- Ensure root is in path so require("arcade.ui.renderer") works
+    if not string.find(package.path, ";/?.lua", 1, true) then
+        package.path = package.path .. ";/?.lua"
+    end
 end
 
 setupPaths()

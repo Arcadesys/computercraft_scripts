@@ -55,7 +55,7 @@ function shouldSkip(relativePath, stat) {
         // Exclude games from bundle (download separately), but keep system apps
         if (relativePath.startsWith('arcade/games/')) {
             const filename = path.basename(relativePath);
-            if (filename !== 'store.lua' && filename !== 'themes.lua' && filename !== 'slots.lua') {
+            if (filename !== 'store.lua' && filename !== 'themes.lua' && filename !== 'slots.lua' && filename !== 'idlecraft.lua' && filename !== 'cantstop.lua') {
                 return true;
             }
         }

@@ -1,4 +1,5 @@
 -- Can't Stop (Sid Sackson) on ComputerCraft
+---@diagnostic disable: undefined-global, undefined-field
 -- Author: You + Copilot
 -- 
 -- This script implements a playable version of "Can't Stop" with:
@@ -49,6 +50,11 @@ local function setupPaths()
     add("arcade")
     -- Explicitly add ui folder just in case
     add("arcade/ui")
+
+    -- Ensure root is in path so require("arcade.ui.renderer") works
+    if not string.find(package.path, ";/?.lua", 1, true) then
+        package.path = package.path .. ";/?.lua"
+    end
 end
 
 setupPaths()

@@ -1,5 +1,5 @@
 -- Arcadesys Unified Installer
--- Auto-generated at 2025-11-24T23:11:52.824Z
+-- Auto-generated at 2025-11-24T23:33:46.045Z
 print("Starting Arcadesys install...")
 local files = {}
 
@@ -7,8 +7,965 @@ files["arcade/arcade_shell.lua"] = [[package.loaded["arcade"] = nilpackage.load
 files["arcade/arcade.lua"] = [[local M = {} local Renderer = require("arcade.ui.renderer") local Log = require("log")local DEFAULT = {        textScale = 0.5,         -- Monitor text scale for readability        buttonBarHeight = 3,     -- Height in rows of bottom bar        creditsFile = "credits.txt", -- File stored on disk drive media        tickSeconds = 0.25,      -- Passive tick interval (can drive animations)        skin = Renderer.defaultSkin(), -- Shared skin/theme for buttons and backgrounds        logFile = "arcade.log",  -- Where to write diagnostic information        logLevel = "info",       -- error < warn < info < debug}local state = {        monitor = nil,        termNative = term and term.current(),        screenW = 0, screenH = 0,	buttons = {"", "", ""},	buttonEnabled = {true, true, true},	quitRequested = false,	game = nil,              -- game table passed to start()	lastTickTime = 0,	layout = {		playfield = {x=1,y=1,w=0,h=0},		buttonRects = { -- will be filled by computeLayout			{x=1,y=1,w=1,h=1}, {x=1,y=1,w=1,h=1}, {x=1,y=1,w=1,h=1}		}	},        credits = 0,        drive = nil,             -- peripheral for disk drive        config = DEFAULT,        renderer = nil,        skin = Renderer.defaultSkin(),        logger = nil,}local function clamp(v, lo, hi) if v < lo then return lo elseif v > hi then return hi else return v end endlocal function log(level, message)        if not state.logger or not state.logger[level] then return end        state.logger[level](state.logger, message)endlocal function safeCall(label, fn, ...)        if type(fn) ~= "function" then return end        local ok, err = pcall(fn, ...)        if not ok then                log("warn", label .. " failed: " .. tostring(err))                local w,h = term.getSize()                term.setCursorPos(1, h)                term.setBackgroundColor(colors.black)                term.setTextColor(colors.red)                term.write("ERR: " .. label .. " " .. tostring(err))        endendlocal function pointInRect(px,py,r)	return px >= r.x and px <= r.x + r.w - 1 and py >= r.y and py <= r.y + r.h - 1endlocal function diskPath()	if not state.drive then return nil end	local mount = peripheral.getName(state.drive)	if state.drive.getMountPath then return state.drive.getMountPath() end	return nilendlocal function creditsFilePath()	local mp = diskPath()	if mp then return mp .. "/" .. state.config.creditsFile end	return state.config.creditsFile -- local fallbackendlocal function loadCredits()        local path = creditsFilePath()        if fs.exists(path) then                local ok, val = pcall(function()                        local h = fs.open(path, "r"); local txt = h.readAll(); h.close(); return tonumber(txt) end)                if ok and val then                        state.credits = clamp(val, 0, 10^12)                        log("info", "Credits loaded from " .. path .. ": " .. state.credits)                else                        log("warn", "Failed to read credits file, resetting balance.")                        state.credits = 0                end        else                state.credits = 0                log("info", "No credits file found; starting at 0")        endendlocal function saveCredits()        local path = creditsFilePath()        local ok, err = pcall(function()                local h = fs.open(path, "w"); h.write(tostring(state.credits)); h.close() end)        if not ok then                log("warn", "Failed to persist credits: " .. tostring(err))                return false, err        end        log("debug", "Credits saved to " .. path .. ": " .. state.credits)        return trueendlocal function applySkin(skinOverride)        state.skin = Renderer.mergeSkin(Renderer.defaultSkin(), skinOverride or {})        if state.renderer then state.renderer:setSkin(state.skin) endendlocal function computeLayout()        if not state.renderer then return end        state.screenW, state.screenH = state.renderer:getSize()        local barH = state.config.buttonBarHeight        local pfH = math.max(1, state.screenH - barH)        state.layout.playfield.x = 1        state.layout.playfield.y = 1        state.layout.playfield.w = state.screenW        state.layout.playfield.h = pfH        local btnW = math.floor(state.screenW / 3)        local leftover = state.screenW - btnW * 3        local startY = state.screenH - barH + 1        for i=1,3 do                local extra = (i <= leftover) and 1 or 0                local x = 1 + (i-1)*btnW + math.min(i-1, leftover)                local r = state.layout.buttonRects[i]                r.x, r.y, r.w, r.h = x, startY, btnW+extra, barH                state.renderer:registerHotspot("button"..i, r)        endendlocal function drawButtonBar()        if not state.renderer then return end        local barRect = { x = 1, y = state.screenH - state.config.buttonBarHeight + 1, w = state.screenW, h = state.config.buttonBarHeight }        state.renderer:paintSurface(barRect, state.skin.buttonBar.background or colors.black)endlocal function drawButtons()        if not state.renderer then return end        drawButtonBar()        for i=1,3 do                local r = state.layout.buttonRects[i]                local enabled = state.buttonEnabled[i]                local label = state.buttons[i]                state.renderer:drawButton(r, label, enabled)        endendfunction M:clearPlayfield(surface)        if not state.renderer then return end        local pf = state.layout.playfield        state.renderer:paintSurface(pf, surface or state.skin.playfield)endfunction M:centerPrint(relY, text, fg, bg)        if not state.renderer then return end        local pf = state.layout.playfield        local y = pf.y + relY - 1        if y < pf.y or y > pf.y + pf.h - 1 then return end	if bg then term.setBackgroundColor(bg) end	if fg then term.setTextColor(fg) end	local x = pf.x + math.floor((pf.w - #text)/2)	term.setCursorPos(x, y)	term.write(text)endfunction M:setButtons(labels, enabled)        if not state.renderer then return end        for i=1,3 do                state.buttons[i] = labels[i] or ""                state.buttonEnabled[i] = (not enabled) and true or (enabled[i] ~= false)        end        drawButtons()endfunction M:enableButton(index, value)        if not state.renderer then return end        state.buttonEnabled[index] = not not value        drawButtons()endfunction M:getCredits() return state.credits endfunction M:addCredits(delta)        local before = state.credits        state.credits = math.max(0, state.credits + delta)        log("info", string.format("Credits updated %d -> %d (delta %+d)", before, state.credits, delta))        saveCredits()endfunction M:consumeCredits(amount)        if state.credits >= amount then                log("debug", "Consuming credits: " .. amount)                state.credits = state.credits - amount                saveCredits(); return true        end	return falseendfunction M:setSkin(skin)    applySkin(skin)    redrawAll()endfunction M:getRenderer()    return state.rendererendfunction M:getMonitor()    return state.monitorendfunction M:requestQuit()        log("info", "Quit requested")        state.quitRequested = trueendlocal function detectMonitor()        state.monitor = peripheral.find and peripheral.find("monitor") or nil        if state.monitor then                state.renderer:attachToMonitor(state.monitor, state.config.textScale)                log("info", "Monitor detected: " .. (peripheral.getName and peripheral.getName(state.monitor) or "unknown"))        else                state.renderer:attachToMonitor(nil)                log("warn", "No monitor detected; falling back to terminal display")        endendlocal function detectDiskDrive()        state.drive = peripheral.find and peripheral.find("drive") or nil        if state.drive then                log("info", "Disk drive detected: " .. (peripheral.getName and peripheral.getName(state.drive) or "unknown"))        else                log("debug", "No disk drive; credits stored locally")        endendlocal function redrawAll()        computeLayout()        M:clearPlayfield()        drawButtons()        if state.game and state.game.draw then safeCall("game.draw", state.game.draw, state.game, M) endendlocal function handleButtonPress(idx)        local names = {"left","center","right"}        if not state.buttonEnabled[idx] then return end        if state.game and state.game.onButton then                log("debug", "Button pressed: " .. names[idx])                safeCall("game.onButton", state.game.onButton, state.game, M, names[idx])        endendlocal function waitEvent()	return { os.pullEvent() }endlocal function processEvent(e)        if not state.renderer then return end        local ev = e[1]        if ev == "term_resize" or ev == "monitor_resize" then                redrawAll(); return        elseif ev == "monitor_touch" then                local x,y = e[3], e[4]                for i=1,3 do if state.renderer:hitTest("button"..i, x, y) then handleButtonPress(i); return end end        elseif ev == "mouse_click" then                local x,y = e[3], e[4]                for i=1,3 do if state.renderer:hitTest("button"..i, x, y) then handleButtonPress(i); return end end        elseif ev == "timer" then                local id = e[2]                if id == state._tickTimer then                        if state.game and state.game.onTick then                                safeCall("game.onTick", state.game.onTick, state.game, M, state.config.tickSeconds)                        end			if state.quitRequested then return end			state._tickTimer = os.startTimer(state.config.tickSeconds)		end	elseif ev == "key" then		local keyCode = e[2]		if keyCode == keys.q then M:requestQuit() end		if keyCode == keys.space then handleButtonPress(1) end	elseif ev == "char" then		local ch = e[2]		if ch == "q" then M:requestQuit() end		if ch == "1" then handleButtonPress(1) elseif ch == "2" then handleButtonPress(2) elseif ch == "3" then handleButtonPress(3) end	endendlocal SKIN_FILE = "arcade_skin.settings"local function loadSkin()    if fs.exists(SKIN_FILE) then        local f = fs.open(SKIN_FILE, "r")        if f then            local data = textutils.unserialize(f.readAll())            f.close()            if data then                state.config.skin = Renderer.mergeSkin(Renderer.defaultSkin(), data)            end        end    endendfunction M.start(gameTable, configOverride)        state.game = gameTable        state.quitRequested = false        state.config = {}        for k,v in pairs(DEFAULT) do state.config[k] = v end        if configOverride then for k,v in pairs(configOverride) do state.config[k]=v end end        state.logger = Log.new({ logFile = state.config.logFile, level = state.config.logLevel })        log("info", "Starting arcade wrapper" .. (state.game and (" for " .. (state.game.name or "game")) or ""))        loadSkin()        applySkin(state.config.skin)        local okRenderer, rendererOrErr = pcall(Renderer.new, { skin = state.skin })        if not okRenderer or not rendererOrErr then                log("error", "Renderer initialization failed: " .. tostring(rendererOrErr))                return        end        state.renderer = rendererOrErr        detectMonitor()        detectDiskDrive()        loadCredits()        computeLayout()        if state.game and state.game.init then safeCall("game.init", state.game.init, state.game, M) end        redrawAll()        state._tickTimer = os.startTimer(state.config.tickSeconds)        while not state.quitRequested do                local e = waitEvent()                local ok, err = pcall(processEvent, e)                if not ok then                        log("error", "Event loop error: " .. tostring(err))                        M:clearPlayfield(colors.black)                        M:centerPrint(1, "Arcade error - see log", colors.red)                        break                end        end        if state.renderer then state.renderer:restore() end        saveCredits()        log("info", "Arcade wrapper stopped")endreturn M]]
 files["arcade/data/programs.lua"] = [[local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/arcade/"local PRICING = {    blackjack = 0,    slots = 0,    cantstop = 0,    idlecraft = 0,    artillery = 0,    factory_planner = 0,    inv_manager = 0,    store = 0,    themes = 0}local programs = {  {    id = "blackjack",    name = "Blackjack",    path = "games/blackjack.lua",    price = PRICING.blackjack,    description = "Beat the dealer in a race to 21.",    category = "games",    url = BASE_URL .. "games/blackjack.lua"  },  {    id = "slots",    name = "Slots",    path = "games/slots.lua",    price = PRICING.slots,    description = "Spin reels for quick wins.",    category = "games",    url = BASE_URL .. "games/slots.lua"  },  {    id = "cantstop",    name = "Can't Stop",    path = "games/cantstop.lua",    price = PRICING.cantstop,    description = "Push your luck dice classic.",    category = "games",    url = BASE_URL .. "games/cantstop.lua"  },  {    id = "idlecraft",    name = "IdleCraft",    path = "games/idlecraft.lua",    price = PRICING.idlecraft,    description = "AFK-friendly cobble empire.",    category = "games",    url = BASE_URL .. "games/idlecraft.lua"  },  {    id = "artillery",    name = "Artillery",    path = "games/artillery.lua",    price = PRICING.artillery,    description = "2-player tank battle.",    category = "games",    url = BASE_URL .. "games/artillery.lua"  },  {    id = "factory_planner",    name = "Factory Planner",    path = "factory_planner.lua",    price = PRICING.factory_planner,    description = "Design factory layouts for turtles.",    category = "actions",    url = BASE_URL .. "factory_planner.lua"  },  {    id = "inv_manager",    name = "Inventory Manager",    path = "inv_manager.lua",    price = PRICING.inv_manager,    description = "Manage inventory (Coming Soon).",    category = "actions",    prodReady = false,    url = BASE_URL .. "inv_manager.lua"  },  {    id = "store",    name = "App Store",    path = "store.lua",    price = PRICING.store,    description = "Download new games.",    category = "system",    url = BASE_URL .. "store.lua"  },  {    id = "themes",    name = "Themes",    path = "games/themes.lua",    price = PRICING.themes,    description = "Change system theme.",    category = "system",    url = BASE_URL .. "games/themes.lua"  },}return programs]]
 files["arcade/data/valhelsia_blocks.lua"] = [[return {    { id = "minecraft:stone", label = "Stone" },    { id = "minecraft:dirt", label = "Dirt" },    { id = "minecraft:cobblestone", label = "Cobblestone" },    { id = "minecraft:planks", label = "Planks" },    { id = "minecraft:sand", label = "Sand" },    { id = "minecraft:gravel", label = "Gravel" },    { id = "minecraft:log", label = "Log" },    { id = "minecraft:glass", label = "Glass" },    { id = "minecraft:chest", label = "Chest" },    { id = "minecraft:furnace", label = "Furnace" },    { id = "minecraft:crafting_table", label = "Crafting Table" },    { id = "minecraft:iron_block", label = "Iron Block" },    { id = "minecraft:gold_block", label = "Gold Block" },    { id = "minecraft:diamond_block", label = "Diamond Block" },    { id = "minecraft:torch", label = "Torch" },    { id = "minecraft:hopper", label = "Hopper" },    { id = "minecraft:dropper", label = "Dropper" },    { id = "minecraft:dispenser", label = "Dispenser" },    { id = "minecraft:observer", label = "Observer" },    { id = "minecraft:piston", label = "Piston" },    { id = "minecraft:sticky_piston", label = "Sticky Piston" },    { id = "minecraft:lever", label = "Lever" },    { id = "minecraft:redstone_block", label = "Redstone Block" },    { id = "storagedrawers:controller", label = "Drawer Controller" },    { id = "storagedrawers:oak_full_drawers_1", label = "Oak Drawer" },    { id = "storagedrawers:compacting_drawers_3", label = "Compacting Drawer" },    { id = "create:andesite_casing", label = "Andesite Casing" },    { id = "create:brass_casing", label = "Brass Casing" },    { id = "create:copper_casing", label = "Copper Casing" },    { id = "create:shaft", label = "Shaft" },    { id = "create:cogwheel", label = "Cogwheel" },    { id = "create:large_cogwheel", label = "Large Cogwheel" },    { id = "create:gearbox", label = "Gearbox" },    { id = "create:clutch", label = "Clutch" },    { id = "create:gearshift", label = "Gearshift" },    { id = "create:encased_chain_drive", label = "Chain Drive" },    { id = "create:belt", label = "Mechanical Belt" },    { id = "create:chute", label = "Chute" },    { id = "create:smart_chute", label = "Smart Chute" },    { id = "create:fluid_pipe", label = "Fluid Pipe" },    { id = "create:mechanical_pump", label = "Mech Pump" },    { id = "create:fluid_tank", label = "Fluid Tank" },    { id = "create:mechanical_press", label = "Mech Press" },    { id = "create:mechanical_mixer", label = "Mech Mixer" },    { id = "create:basin", label = "Basin" },    { id = "create:blaze_burner", label = "Blaze Burner" },    { id = "create:millstone", label = "Millstone" },    { id = "create:crushing_wheel", label = "Crushing Wheel" },    { id = "create:mechanical_drill", label = "Mech Drill" },    { id = "create:mechanical_saw", label = "Mech Saw" },    { id = "create:deployer", label = "Deployer" },    { id = "create:portable_storage_interface", label = "Portable Storage" },    { id = "create:redstone_link", label = "Redstone Link" },    { id = "mekanism:steel_casing", label = "Steel Casing" },    { id = "mekanism:metallurgic_infuser", label = "Met. Infuser" },    { id = "mekanism:enrichment_chamber", label = "Enrich. Chamber" },    { id = "mekanism:crusher", label = "Crusher" },    { id = "mekanism:osmium_compressor", label = "Osmium Comp." },    { id = "mekanism:combiner", label = "Combiner" },    { id = "mekanism:purification_chamber", label = "Purif. Chamber" },    { id = "mekanism:pressurized_reaction_chamber", label = "PRC" },    { id = "mekanism:chemical_injection_chamber", label = "Chem. Inj." },    { id = "mekanism:chemical_crystallizer", label = "Crystallizer" },    { id = "mekanism:chemical_dissolution_chamber", label = "Dissolution" },    { id = "mekanism:chemical_washer", label = "Washer" },    { id = "mekanism:digital_miner", label = "Digital Miner" },    { id = "mekanism:basic_universal_cable", label = "Univ. Cable" },    { id = "mekanism:basic_mechanical_pipe", label = "Mech. Pipe" },    { id = "mekanism:basic_pressurized_tube", label = "Press. Tube" },    { id = "mekanism:basic_logistical_transporter", label = "Log. Transp." },    { id = "immersiveengineering:coke_oven", label = "Coke Oven" },    { id = "immersiveengineering:blast_furnace", label = "Blast Furnace" },    { id = "immersiveengineering:windmill", label = "Windmill" },    { id = "immersiveengineering:watermill", label = "Watermill" },    { id = "immersiveengineering:dynamo", label = "Dynamo" },    { id = "immersiveengineering:hv_capacitor", label = "HV Capacitor" },    { id = "immersiveengineering:mv_capacitor", label = "MV Capacitor" },    { id = "immersiveengineering:lv_capacitor", label = "LV Capacitor" },    { id = "immersiveengineering:conveyor_basic", label = "Conveyor" },    { id = "ae2:controller", label = "ME Controller" },    { id = "ae2:drive", label = "ME Drive" },    { id = "ae2:terminal", label = "ME Terminal" },    { id = "ae2:crafting_terminal", label = "Crafting Term" },    { id = "ae2:pattern_terminal", label = "Pattern Term" },    { id = "ae2:interface", label = "ME Interface" },    { id = "ae2:molecular_assembler", label = "Mol. Assembler" },    { id = "ae2:cable_glass", label = "Glass Cable" },    { id = "ae2:cable_smart", label = "Smart Cable" },    { id = "computercraft:computer_normal", label = "Computer" },    { id = "computercraft:computer_advanced", label = "Adv Computer" },    { id = "computercraft:turtle_normal", label = "Turtle" },    { id = "computercraft:turtle_advanced", label = "Adv Turtle" },    { id = "computercraft:monitor_normal", label = "Monitor" },    { id = "computercraft:monitor_advanced", label = "Adv Monitor" },    { id = "computercraft:disk_drive", label = "Disk Drive" },    { id = "computercraft:printer", label = "Printer" },    { id = "computercraft:speaker", label = "Speaker" },    { id = "computercraft:wired_modem", label = "Wired Modem" },    { id = "computercraft:wireless_modem_normal", label = "Wireless Modem" },}]]
-files["arcade/games/slots.lua"] = [[package.loaded["arcade"] = nilpackage.loaded["log"] = nillocal function setupPaths()    local program = shell.getRunningProgram()    local dir = fs.getDir(program)    local gamesDir = fs.getDir(program)    local arcadeDir = fs.getDir(gamesDir)    local root = fs.getDir(arcadeDir)    local function add(path)        local part = fs.combine(root, path)        local pattern = "/" .. fs.combine(part, "?.lua")        if not string.find(package.path, pattern, 1, true) then            package.path = package.path .. ";" .. pattern        end    end    add("lib")    add("arcade")endsetupPaths()local arcade = require("arcade")local function toBlit(color)    if colors.toBlit then return colors.toBlit(color) end    local idx = math.floor(math.log(color, 2))    return ("0123456789abcdef"):sub(idx + 1, idx + 1)endlocal function solidTex(char, fg, bg, w, h)    local f = string.rep(toBlit(fg), w)    local b = string.rep(toBlit(bg), w)    local t = string.rep(char, w)    local rows = {}    for i=1,h do table.insert(rows, {text=t, fg=f, bg=b}) end    return { rows = rows }endlocal SYMBOLS = {    ["Cherry"] = solidTex("@", colors.red, colors.white, 4, 3),    ["Lemon"] = solidTex("O", colors.yellow, colors.white, 4, 3),    ["Orange"] = solidTex("O", colors.orange, colors.white, 4, 3),    ["Plum"] = solidTex("%", colors.purple, colors.white, 4, 3),    ["Bell"] = solidTex("A", colors.gold or colors.yellow, colors.white, 4, 3),    ["Bar"] = solidTex("=", colors.black, colors.white, 4, 3),    ["7"] = solidTex("7", colors.red, colors.white, 4, 3)}local REELS = {    {"Cherry", "Lemon", "Orange", "Plum", "Bell", "Bar", "7"},    {"Cherry", "Lemon", "Orange", "Plum", "Bell", "Bar", "7"},    {"Cherry", "Lemon", "Orange", "Plum", "Bell", "Bar", "7"}}local PAYOUTS = {    ["Cherry"] = 2,    ["Lemon"] = 3,    ["Orange"] = 5,    ["Plum"] = 10,    ["Bell"] = 20,    ["Bar"] = 50,    ["7"] = 100}local COST = 1local result = {"-", "-", "-"}local message = "Press Spin!"local winAmount = 0local game = {    name = "Slots",    init = function(self, a)        a:setButtons({"Info", "Spin", "Quit"})    end,    draw = function(self, a)        a:clearPlayfield(colors.green)        local r = a:getRenderer()        if not r then return end        local w, h = r:getSize()        local cx = math.floor(w / 2)        local cy = math.floor(h / 2)        a:centerPrint(2, "--- SLOTS ---", colors.yellow, colors.green)        local reelW = 6        local reelH = 5        local spacing = 2        local totalW = (reelW * 3) + (spacing * 2)        local startX = cx - math.floor(totalW / 2)        local startY = 4        for i=1,3 do            local symName = result[i]            local tex = SYMBOLS[symName]            local x = startX + (i-1)*(reelW+spacing)            r:fillRect(x, startY, reelW, reelH, colors.white, colors.black, " ")            if tex then                local tx = x + 1                local ty = startY + 1                r:drawTextureRect(tex, tx, ty, 4, 3)            else                r:drawLabelCentered(x, startY + 2, reelW, "?", colors.black)            end        end        if winAmount > 0 then            a:centerPrint(startY + reelH + 2, "WINNER! " .. winAmount, colors.lime, colors.green)        else            a:centerPrint(startY + reelH + 2, message, colors.white, colors.green)        end        a:centerPrint(startY + reelH + 4, "Credits: " .. a:getCredits(), colors.orange, colors.green)    end,    onButton = function(self, a, button)        if button == "left" then            message = "Cost: " .. COST .. " Credit"            winAmount = 0        elseif button == "center" then            if a:consumeCredits(COST) then                winAmount = 0                for i=1,3 do                    result[i] = REELS[i][math.random(1, #REELS[i])]                end                if result[1] == result[2] and result[2] == result[3] then                    local sym = result[1]                    winAmount = (PAYOUTS[sym] or 0) * COST                    a:addCredits(winAmount)                    message = "JACKPOT!"                elseif result[1] == result[2] or result[2] == result[3] or result[1] == result[3] then                     message = "Spin again!"                else                    message = "Try again!"                end            else                message = "Insert Coin"            end        elseif button == "right" then            a:requestQuit()        end    end}arcade.start(game)]]
-files["arcade/games/themes.lua"] = [[package.loaded["arcade"] = nilpackage.loaded["log"] = nillocal function setupPaths()    local program = shell.getRunningProgram()    local gamesDir = fs.getDir(program)    local arcadeDir = fs.getDir(gamesDir)    local root = fs.getDir(arcadeDir)    local function add(path)        local part = fs.combine(root, path)        local pattern = "/" .. fs.combine(part, "?.lua")        if not string.find(package.path, pattern, 1, true) then            package.path = package.path .. ";" .. pattern        end    end    add("lib")    add("arcade")endsetupPaths()local themes = {    {        name = "Default",        skin = {            background = colors.black,            playfield = colors.black,            buttonBar = { background = colors.black },            titleColor = colors.orange,            buttons = {                enabled = { labelColor = colors.orange, shadowColor = colors.gray },                disabled = { labelColor = colors.lightGray, shadowColor = colors.black }            }        }    },    {        name = "Ocean",        skin = {            background = colors.blue,            playfield = colors.lightBlue,            buttonBar = { background = colors.blue },            titleColor = colors.cyan,            buttons = {                enabled = { labelColor = colors.white, shadowColor = colors.blue },                disabled = { labelColor = colors.gray, shadowColor = colors.blue }            }        }    },    {        name = "Forest",        skin = {            background = colors.green,            playfield = colors.lime,            buttonBar = { background = colors.green },            titleColor = colors.yellow,            buttons = {                enabled = { labelColor = colors.white, shadowColor = colors.green },                disabled = { labelColor = colors.gray, shadowColor = colors.green }            }        }    },    {        name = "Retro",        skin = {            background = colors.gray,            playfield = colors.lightGray,            buttonBar = { background = colors.gray },            titleColor = colors.black,            buttons = {                enabled = { labelColor = colors.black, shadowColor = colors.white },                disabled = { labelColor = colors.gray, shadowColor = colors.white }            }        }    }}local currentIndex = 1local SKIN_FILE = "arcade_skin.settings"local function saveSkin(skin)    local f = fs.open(SKIN_FILE, "w")    if f then        f.write(textutils.serialize(skin))        f.close()    endendlocal function loadSkin()    if fs.exists(SKIN_FILE) then        local f = fs.open(SKIN_FILE, "r")        if f then            local content = f.readAll()            f.close()            return textutils.unserialize(content)        end    end    return nilendlocal w, h = term.getSize()local currentSkin = loadSkin()local function draw()    term.setCursorPos(1, 1)    term.setBackgroundColor(colors.blue)    term.setTextColor(colors.white)    term.clearLine()    term.write(" Theme Switcher")    term.setCursorPos(1, h)    term.setBackgroundColor(colors.gray)    term.setTextColor(colors.white)    term.clearLine()    term.write(" Enter: Apply  Q: Quit")    for i, theme in ipairs(themes) do        local y = i + 2        term.setCursorPos(1, y)        term.clearLine()        if i == currentIndex then            term.setBackgroundColor(colors.lightGray)            term.setTextColor(colors.black)        else            term.setBackgroundColor(colors.black)            term.setTextColor(colors.white)        end        term.write(" " .. theme.name)        if currentSkin and currentSkin.background == theme.skin.background and currentSkin.titleColor == theme.skin.titleColor then            term.setCursorPos(w - 8, y)            term.setTextColor(colors.green)            term.write("(Active)")        end    endendwhile true do    draw()    local ev, p1 = os.pullEvent()    if ev == "key" then        if p1 == keys.up then            currentIndex = currentIndex - 1            if currentIndex < 1 then currentIndex = #themes end        elseif p1 == keys.down then            currentIndex = currentIndex + 1            if currentIndex > #themes then currentIndex = 1 end        elseif p1 == keys.enter then            local theme = themes[currentIndex]            saveSkin(theme.skin)            currentSkin = theme.skin            term.setCursorPos(1, h-1)            term.setBackgroundColor(colors.green)            term.setTextColor(colors.white)            term.clearLine()            term.write(" Theme Applied! ")            os.sleep(1)        elseif p1 == keys.q then            break        end    endendterm.setBackgroundColor(colors.black)term.clear()term.setCursorPos(1, 1)]]
+files["arcade/games/cantstop.lua"] = [[package.loaded["arcade"] = nil
+package.loaded["log"] = nil
+local function setupPaths()
+    local program = shell.getRunningProgram()
+    local dir = fs.getDir(program)
+    local gamesDir = fs.getDir(program)
+    local arcadeDir = fs.getDir(gamesDir)
+    local root = fs.getDir(arcadeDir)
+    local function add(path)
+        local part = fs.combine(root, path)
+        local pattern = "/" .. fs.combine(part, "?.lua")
+        if not string.find(package.path, pattern, 1, true) then
+            package.path = package.path .. ";" .. pattern
+        end
+    end
+    add("lib")
+    add("arcade")
+    add("arcade/ui")
+    if not string.find(package.path, ";/?.lua", 1, true) then
+        package.path = package.path .. ";/?.lua"
+    end
+end
+setupPaths()
+local _arcade_ok, _arcade = pcall(require, "arcade")
+local Renderer = require("arcade.ui.renderer")
+local function toBlit(color)
+        if colors.toBlit then return colors.toBlit(color) end
+        return string.format("%x", math.floor(math.log(color, 2)))
+end
+local SAVE_FILE = "cantstop.save" -- (Arcade wrapper note: this game predates arcade.lua and runs standalone.)
+local BOARD_HEIGHTS = {
+	[2] = 3, [3] = 5, [4] = 7, [5] = 9, [6] = 11,
+	[7] = 13, [8] = 11, [9] = 9, [10] = 7, [11] = 5, [12] = 3
+}
+local PLAYER_COLORS = {
+	colors.red, colors.lime, colors.blue, colors.orange,
+	colors.purple, colors.cyan, colors.yellow, colors.magenta, colors.brown
+}
+local BUTTON_BAR_HEIGHT = 3
+local PHASE = {
+	LOBBY = "LOBBY",
+	TURN = "TURN",           -- Player may Roll or Stop
+	CHOOSE = "CHOOSE",       -- Player chooses among valid pairings
+	GAME_OVER = "GAME_OVER"
+}
+local BTN = { LEFT = 1, CENTER = 2, RIGHT = 3 }
+local function deepcopy(tbl)
+	if type(tbl) ~= "table" then return tbl end
+	local out = {}
+	for k, v in pairs(tbl) do out[k] = deepcopy(v) end
+	return out
+end
+local function clamp(v, lo, hi)
+	if v < lo then return lo end
+	if v > hi then return hi end
+	return v
+end
+local function countKeys(t)
+	local c = 0
+	for _ in pairs(t) do c = c + 1 end
+	return c
+end
+local monitor = nil
+local termNative = term.current()
+local screenW, screenH = term.getSize()
+local rendererSkin = Renderer.mergeSkin(Renderer.defaultSkin(), {
+        playfield = colors.black,
+        buttonBar = { background = colors.black },
+        buttons = {
+                enabled = {
+                        texture = { rows = {
+                                { text = "::::", fg = string.rep(toBlit(colors.white), 4), bg = string.rep(toBlit(colors.orange), 4) },
+                                { text = "++++", fg = string.rep(toBlit(colors.white), 4), bg = string.rep(toBlit(colors.red), 4) },
+                                { text = "....", fg = string.rep(toBlit(colors.white), 4), bg = string.rep(toBlit(colors.brown), 4) },
+                        }},
+                        labelColor = colors.white,
+                        shadowColor = colors.black,
+                },
+                disabled = {
+                        texture = { rows = {
+                                { text = "    ", fg = string.rep(toBlit(colors.gray), 4), bg = string.rep(toBlit(colors.black), 4) },
+                                { text = "    ", fg = string.rep(toBlit(colors.gray), 4), bg = string.rep(toBlit(colors.black), 4) },
+                        }},
+                        labelColor = colors.lightGray,
+                        shadowColor = colors.black,
+                }
+        },
+})
+local renderer = Renderer.new({ skin = rendererSkin })
+local function initMonitor()
+        monitor = peripheral.find and peripheral.find("monitor") or nil
+        if monitor then
+                renderer:attachToMonitor(monitor, 0.5) -- smaller text for more info
+        else
+                renderer:attachToMonitor(nil)
+        end
+        screenW, screenH = renderer:getSize()
+end
+local layout = {
+	board = { x = 1, y = 3, w = 0, h = 0 },  -- main board area
+	statusY = 1,                              -- top status line
+	diceY = 2,                                -- dice/detail line below status
+	buttons = {                               -- three buttons at bottom
+		{ x = 1, y = 1, w = 1, h = BUTTON_BAR_HEIGHT },
+		{ x = 1, y = 1, w = 1, h = BUTTON_BAR_HEIGHT },
+		{ x = 1, y = 1, w = 1, h = BUTTON_BAR_HEIGHT },
+	}
+}
+local function computeLayout()
+        screenW, screenH = renderer:getSize()
+        local boardTop = 3
+        local boardBottom = screenH - BUTTON_BAR_HEIGHT
+	if boardBottom < boardTop + 4 then
+		layout.statusY = 1
+		layout.diceY = 1
+		boardTop = 2
+		boardBottom = math.max(2, screenH - BUTTON_BAR_HEIGHT)
+	else
+		layout.statusY = 1
+		layout.diceY = 2
+	end
+	layout.board.x = 1
+	layout.board.y = boardTop
+	layout.board.w = screenW
+	layout.board.h = boardBottom - boardTop + 1
+	local btnW = math.floor(screenW / 3)
+        local leftover = screenW - (btnW * 3)
+        local startY = screenH - BUTTON_BAR_HEIGHT + 1
+        for i = 1, 3 do
+                local extra = (i <= leftover) and 1 or 0 -- distribute leftover pixels
+                local x = 1 + (i - 1) * btnW + math.min(i - 1, leftover)
+                layout.buttons[i].x = x
+                layout.buttons[i].y = startY
+                layout.buttons[i].w = btnW + extra
+                layout.buttons[i].h = BUTTON_BAR_HEIGHT
+                renderer:registerHotspot("button" .. i, layout.buttons[i])
+        end
+end
+local state = {
+	phase = PHASE.LOBBY,
+	players = {},                 -- array: { {name, color}, ... }
+	currentPlayer = 1,
+	claimedColumns = {},          -- [col] = playerIndex
+	permanentProgress = {},       -- [playerIndex] = { [col] = height }
+	neutralMarkers = {},          -- in-turn markers: [col] = height this turn
+	lastRoll = nil,               -- {d1,d2,d3,d4}
+	validPairings = nil,          -- array of pairings {{s1,s2}, ...}
+	statusText = "Welcome to Can't Stop!",
+}
+local function clearArea(x, y, w, h, bg, fg)
+        renderer:paintSurface({ x = x, y = y, w = w, h = h }, bg or rendererSkin.playfield)
+        if fg then term.setTextColor(fg) end
+end
+local function centerText(x, y, w, text)
+	local tx = x + math.floor((w - #text) / 2)
+	term.setCursorPos(tx, y)
+	term.write(text)
+end
+local function drawStatus()
+	term.setBackgroundColor(colors.black)
+	term.setTextColor(colors.white)
+	term.setCursorPos(1, layout.statusY)
+	term.clearLine()
+	term.write(state.statusText or "")
+end
+local function drawDice()
+	term.setBackgroundColor(colors.black)
+	term.setTextColor(colors.lightGray)
+	term.setCursorPos(1, layout.diceY)
+	term.clearLine()
+	if state.lastRoll then
+		term.write(string.format("Dice: %d %d %d %d", state.lastRoll[1], state.lastRoll[2], state.lastRoll[3], state.lastRoll[4]))
+	else
+		term.write("Dice: -- -- -- --")
+	end
+end
+local function drawButtons(labels, enabled)
+        enabled = enabled or { true, true, true }
+        renderer:paintSurface({ x = 1, y = layout.buttons[1].y, w = screenW, h = BUTTON_BAR_HEIGHT }, rendererSkin.buttonBar.background)
+        for i = 1, 3 do
+                local r = layout.buttons[i]
+                renderer:drawButton(r, labels[i] or "", enabled[i] ~= false)
+        end
+end
+local function countClaimedColumnsForPlayer(playerIndex)
+	local claimed = 0
+	for _, owner in pairs(state.claimedColumns) do
+		if owner == playerIndex then claimed = claimed + 1 end
+	end
+	return claimed
+end
+local function buildPlayerProgressString(playerIndex)
+	local player = state.players[playerIndex]
+	if not player then return "" end
+	local marker = (playerIndex == state.currentPlayer) and "*" or " "
+	local name = player.name or ("P" .. playerIndex)
+	local claimed = countClaimedColumnsForPlayer(playerIndex)
+	local entries = {}
+	local perm = state.permanentProgress[playerIndex] or {}
+	for col, h in pairs(perm) do
+		local colHeight = BOARD_HEIGHTS[col]
+		if colHeight then
+			table.insert(entries, {col = col, h = h, remaining = colHeight - h})
+		end
+	end
+	table.sort(entries, function(a,b)
+		if a.remaining == b.remaining then return a.col < b.col end
+		return a.remaining < b.remaining
+	end)
+	local parts = {}
+	local shown = 0
+	for _, e in ipairs(entries) do
+		shown = shown + 1
+		if shown > 4 then break end -- show at most 4 columns per player
+		local displayH = e.h
+		if playerIndex == state.currentPlayer and state.neutralMarkers[e.col] and state.neutralMarkers[e.col] > e.h then
+			displayH = state.neutralMarkers[e.col]
+		end
+		table.insert(parts, string.format("%d@%d", e.col, displayH))
+	end
+	return string.format("%s%s(%d): %s", marker, name, claimed, table.concat(parts, " "))
+end
+local function drawPlayersSummary()
+	local parts = {}
+	for i = 1, #state.players do
+		table.insert(parts, buildPlayerProgressString(i))
+	end
+	local summary = table.concat(parts, "  |  ")
+	local y = layout.diceY
+	term.setTextColor(colors.white)
+	if #summary > screenW then
+		summary = string.sub(summary, #summary - screenW + 1)
+	end
+	term.setCursorPos(math.max(1, screenW - #summary + 1), y)
+	term.write(summary)
+end
+local function drawBoard()
+	local r = layout.board
+	clearArea(r.x, r.y, r.w, r.h, colors.black, colors.white)
+	local maxH = BOARD_HEIGHTS[7] or 13
+	local usableH = math.max(3, r.h - 2) -- leave a small header/footer inside board area
+	local columns = {}
+	for c = 2, 12 do table.insert(columns, c) end
+	local colCount = #columns -- 11
+	local padding = 1
+	local minColW = 3 -- at least 3 characters per column
+	local totalPad = padding * (colCount + 1)
+	local availableW = math.max(1, r.w - totalPad)
+	local colW = math.max(minColW, math.floor(availableW / colCount))
+	local leftover = availableW - (colW * colCount)
+	local x = r.x + padding
+	local headerY = r.y
+	term.setTextColor(colors.orange)
+	for idx, col in ipairs(columns) do
+		local w = colW + (idx <= leftover and 1 or 0)
+		local label = tostring(col)
+		local cx = x + math.floor((w - #label) / 2)
+		term.setCursorPos(cx, headerY)
+		term.write(label)
+		x = x + w + padding
+	end
+	local baseY = r.y + 1
+	local heightArea = usableH
+	x = r.x + padding
+	for idx, col in ipairs(columns) do
+		local w = colW + (idx <= leftover and 1 or 0)
+		local colHeight = BOARD_HEIGHTS[col]
+		paintutils.drawFilledBox(x, baseY, x + w - 1, baseY + heightArea - 1, colors.gray)
+		if state.claimedColumns[col] then
+			local owner = state.claimedColumns[col]
+			local ownerColor = state.players[owner] and state.players[owner].color or colors.white
+			paintutils.drawFilledBox(x, baseY, x + w - 1, baseY + heightArea - 1, ownerColor)
+		end
+		local function toYFromHeight(h)
+			local t = (h / colHeight)
+			local rel = heightArea - math.max(1, math.floor(t * (heightArea - 1)))
+			return baseY + rel - 1
+		end
+		for pIndex, p in ipairs(state.players) do
+			local perm = (state.permanentProgress[pIndex] and state.permanentProgress[pIndex][col]) or 0
+			if perm > 0 then
+				local yy = toYFromHeight(perm)
+				local color = p.color or colors.white
+				paintutils.drawLine(x, yy, x + w - 1, yy, color)
+			end
+		end
+		local temp = state.neutralMarkers[col]
+		if temp and temp > 0 then
+			local yy = toYFromHeight(temp)
+			paintutils.drawLine(x, yy, x + w - 1, yy, colors.lime)
+		end
+		local topY = toYFromHeight(colHeight)
+		paintutils.drawLine(x, topY, x + w - 1, topY, colors.white)
+		x = x + w + padding
+	end
+end
+local function drawAll(labels, enabled)
+        computeLayout()
+        renderer:paintSurface({ x = 1, y = 1, w = screenW, h = screenH }, rendererSkin.playfield)
+        drawStatus()
+        drawDice()
+        drawPlayersSummary()
+        drawBoard()
+	drawButtons(labels, enabled)
+end
+local function seedRandom()
+	math.randomseed(os.epoch("utc"))
+	for _ = 1, 5 do math.random() end
+end
+local function roll4Dice()
+	return { math.random(1, 6), math.random(1, 6), math.random(1, 6), math.random(1, 6) }
+end
+local function computePairings(d)
+	local pairsList = {
+		{ d[1] + d[2], d[3] + d[4] },
+		{ d[1] + d[3], d[2] + d[4] },
+		{ d[1] + d[4], d[2] + d[3] },
+	}
+	local unique = {}
+	local out = {}
+	for _, pr in ipairs(pairsList) do
+		local a, b = pr[1], pr[2]
+		local k = (a < b) and (a .. "-" .. b) or (b .. "-" .. a)
+		if not unique[k] then
+			unique[k] = true
+			table.insert(out, { a, b })
+		end
+	end
+	return out
+end
+local function activeColumnsCount(neutral)
+	local c = 0
+	for _ in pairs(neutral) do c = c + 1 end
+	return c
+end
+local function canPlaceSumForCurrentPlayer(sum)
+	if state.claimedColumns[sum] then return false end
+	local curP = state.currentPlayer
+	local perm = (state.permanentProgress[curP] and state.permanentProgress[curP][sum]) or 0
+	local temp = state.neutralMarkers[sum] or perm
+	local nextStep = temp + 1
+	if nextStep > BOARD_HEIGHTS[sum] then return false end
+	if state.neutralMarkers[sum] == nil then
+		if activeColumnsCount(state.neutralMarkers) >= 3 then return false end
+	end
+	return true
+end
+local function filterValidPairings(pairings)
+	local valid = {}
+	for _, pr in ipairs(pairings) do
+		local s1, s2 = pr[1], pr[2]
+		if canPlaceSumForCurrentPlayer(s1) and canPlaceSumForCurrentPlayer(s2) then
+			table.insert(valid, { s1, s2 })
+		end
+	end
+	return valid
+end
+local function placePairing(pairing)
+	local s1, s2 = pairing[1], pairing[2]
+	local curP = state.currentPlayer
+	local perm1 = (state.permanentProgress[curP] and state.permanentProgress[curP][s1]) or 0
+	local perm2 = (state.permanentProgress[curP] and state.permanentProgress[curP][s2]) or 0
+	state.neutralMarkers[s1] = (state.neutralMarkers[s1] or perm1) + 1
+	state.neutralMarkers[s2] = (state.neutralMarkers[s2] or perm2) + 1
+end
+local function bustTurn()
+	state.neutralMarkers = {}
+	state.statusText = "Busted! No valid pairings."
+end
+local function commitTurn()
+	local curP = state.currentPlayer
+	if not state.permanentProgress[curP] then state.permanentProgress[curP] = {} end
+	for col, h in pairs(state.neutralMarkers) do
+		state.permanentProgress[curP][col] = h
+		if h == BOARD_HEIGHTS[col] then
+			state.claimedColumns[col] = curP
+		end
+	end
+	state.neutralMarkers = {}
+	local claimedByCur = 0
+	for _, owner in pairs(state.claimedColumns) do
+		if owner == curP then claimedByCur = claimedByCur + 1 end
+	end
+	if claimedByCur >= 3 then
+		state.phase = PHASE.GAME_OVER
+		state.statusText = (state.players[curP].name or ("Player " .. curP)) .. " wins!"
+	else
+		state.statusText = "Progress saved."
+	end
+end
+local function nextPlayer()
+	state.currentPlayer = ((state.currentPlayer) % #state.players) + 1
+	state.neutralMarkers = {}
+	state.lastRoll = nil
+	state.validPairings = nil
+	state.phase = PHASE.TURN
+	state.statusText = (state.players[state.currentPlayer].name or ("Player " .. state.currentPlayer)) .. ": Roll or Stop"
+end
+local function newGame(keepPlayers)
+	local savedPlayers = keepPlayers and deepcopy(state.players) or {}
+	state.phase = (#savedPlayers >= 2) and PHASE.TURN or PHASE.LOBBY
+	state.players = savedPlayers
+	state.currentPlayer = 1
+	state.claimedColumns = {}
+	state.permanentProgress = {}
+	state.neutralMarkers = {}
+	state.lastRoll = nil
+	state.validPairings = nil
+	if #state.players >= 2 then
+		state.statusText = (state.players[1].name or "Player 1") .. ": Roll or Stop"
+	else
+		state.statusText = "Add at least 2 players."
+	end
+end
+local function saveGame()
+	local data = {
+		phase = state.phase,
+		players = state.players,
+		currentPlayer = state.currentPlayer,
+		claimedColumns = state.claimedColumns,
+		permanentProgress = state.permanentProgress,
+	}
+	local ok, err = pcall(function()
+		local fh = fs.open(SAVE_FILE, "w")
+		fh.write(textutils.serialize(data))
+		fh.close()
+	end)
+	if ok then
+		state.statusText = "Game saved."
+	else
+		state.statusText = "Save failed: " .. tostring(err)
+	end
+end
+local function loadGame()
+	if not fs.exists(SAVE_FILE) then
+		state.statusText = "No save file found."
+		return false
+	end
+	local ok, res = pcall(function()
+		local fh = fs.open(SAVE_FILE, "r")
+		local txt = fh.readAll()
+		fh.close()
+		return textutils.unserialize(txt)
+	end)
+	if ok and type(res) == "table" then
+		state.phase = res.phase or PHASE.LOBBY
+		state.players = res.players or {}
+		state.currentPlayer = clamp(tonumber(res.currentPlayer) or 1, 1, math.max(1, #state.players))
+		state.claimedColumns = res.claimedColumns or {}
+		state.permanentProgress = res.permanentProgress or {}
+		state.neutralMarkers = {}
+		state.lastRoll = nil
+		state.validPairings = nil
+		state.statusText = "Save loaded."
+		return true
+	else
+		state.statusText = "Load failed."
+		return false
+	end
+end
+local function waitForButtonPress()
+	while true do
+		local e = { os.pullEvent() }
+		local ev = e[1]
+                if ev == "monitor_touch" then
+                        local _side, x, y = e[2], e[3], e[4]
+                        for i = 1, 3 do if renderer:hitTest("button" .. i, x, y) then return i end end
+                elseif ev == "mouse_click" then
+                        local _btn, x, y = e[2], e[3], e[4]
+                        for i = 1, 3 do if renderer:hitTest("button" .. i, x, y) then return i end end
+                elseif ev == "term_resize" or ev == "monitor_resize" then
+                        drawAll({"","",""}, {false,false,false})
+                end
+	end
+end
+local function addAutoPlayer()
+	local idx = #state.players + 1
+	local name = "Player " .. idx
+	local color = PLAYER_COLORS[((idx - 1) % #PLAYER_COLORS) + 1]
+	table.insert(state.players, { name = name, color = color })
+	state.statusText = string.format("Added %s. Players: %d", name, #state.players)
+end
+local function showMenuDuringTurn()
+	state.statusText = "Menu: Left=Rules, Center=Save, Right=Close"
+	drawAll({"Rules","Save","Close"})
+	while true do
+		local b = waitForButtonPress()
+		if b == BTN.LEFT then
+			state.statusText = "Rules: Roll 4 dice, pick a pairing, use <=3 columns, Stop to save."
+			drawAll({"Rules","Save","Close"})
+		elseif b == BTN.CENTER then
+			saveGame()
+			drawAll({"Rules","Save","Close"})
+		elseif b == BTN.RIGHT then
+			state.statusText = (state.players[state.currentPlayer].name or "Player") .. ": Roll or Stop"
+			return
+		end
+	end
+end
+local function runLobby()
+	while state.phase == PHASE.LOBBY do
+		drawAll({"Add Player","Start","Load/Reset"})
+		local b = waitForButtonPress()
+		if b == BTN.LEFT then
+			addAutoPlayer()
+		elseif b == BTN.CENTER then
+			if #state.players >= 2 then
+				newGame(true) -- keep players, move to TURN
+			else
+				state.statusText = "Need at least 2 players to start."
+			end
+		elseif b == BTN.RIGHT then
+			if fs.exists(SAVE_FILE) then
+				loadGame()
+				if #state.players >= 2 then
+					state.phase = PHASE.TURN
+				else
+					state.phase = PHASE.LOBBY
+				end
+			else
+				state.players = {}
+				state.statusText = "Reset lobby."
+			end
+		end
+	end
+end
+local function runTurns()
+	while state.phase == PHASE.TURN or state.phase == PHASE.CHOOSE do
+		if state.phase == PHASE.TURN then
+			drawAll({"Roll","Stop","Menu"})
+			local b = waitForButtonPress()
+			if b == BTN.LEFT then
+				state.lastRoll = roll4Dice()
+				local pairsList = computePairings(state.lastRoll)
+				state.validPairings = filterValidPairings(pairsList)
+				if #state.validPairings == 0 then
+					bustTurn()
+					drawAll({"","",""}, {false,false,false})
+					sleep(0.8)
+					nextPlayer()
+				else
+					state.phase = PHASE.CHOOSE
+					state.statusText = "Choose a pairing"
+				end
+			elseif b == BTN.CENTER then
+				commitTurn()
+				drawAll({"","",""}, {false,false,false})
+				if state.phase ~= PHASE.GAME_OVER then
+					sleep(0.5)
+					nextPlayer()
+				end
+			elseif b == BTN.RIGHT then
+				showMenuDuringTurn()
+			end
+		elseif state.phase == PHASE.CHOOSE then
+			local labels = {"","",""}
+			local enabled = {false,false,false}
+			for i = 1, math.min(3, #state.validPairings) do
+				local pr = state.validPairings[i]
+				labels[i] = string.format("%d + %d", pr[1], pr[2])
+				enabled[i] = true
+			end
+			drawAll(labels, enabled)
+			local b = waitForButtonPress()
+			local choice = nil
+			if b >= 1 and b <= 3 and enabled[b] then
+				choice = state.validPairings[b]
+			end
+			if choice then
+				placePairing(choice)
+				state.phase = PHASE.TURN
+				state.statusText = "Placed. Roll or Stop."
+			else
+			end
+		end
+	end
+end
+local function runGameOver()
+	while state.phase == PHASE.GAME_OVER do
+		drawAll({"New Game","Save","Exit"})
+		local b = waitForButtonPress()
+		if b == BTN.LEFT then
+			newGame(true)
+		elseif b == BTN.CENTER then
+			saveGame()
+		elseif b == BTN.RIGHT then
+			newGame(false)
+		end
+	end
+end
+local function main()
+	seedRandom()
+	initMonitor()
+	computeLayout()
+	state.phase = PHASE.LOBBY
+	state.statusText = "Add players, then Start."
+	while true do
+		if state.phase == PHASE.LOBBY then
+			runLobby()
+		elseif state.phase == PHASE.TURN or state.phase == PHASE.CHOOSE then
+			runTurns()
+		elseif state.phase == PHASE.GAME_OVER then
+			runGameOver()
+		else
+			state.phase = PHASE.LOBBY
+		end
+	end
+end
+local ok, err = pcall(main)
+if not ok then
+        if renderer then renderer:restore() end
+        print("Can't Stop crashed:\n" .. tostring(err))
+        print("Press any key to exit...")
+        os.pullEvent("key")
+end]]
+files["arcade/games/idlecraft.lua"] = [[package.loaded["arcade"] = nil
+package.loaded["log"] = nil
+local function setupPaths()
+    local program = shell.getRunningProgram()
+    local dir = fs.getDir(program)
+    local gamesDir = fs.getDir(program)
+    local arcadeDir = fs.getDir(gamesDir)
+    local root = fs.getDir(arcadeDir)
+    local function add(path)
+        local part = fs.combine(root, path)
+        local pattern = "/" .. fs.combine(part, "?.lua")
+        if not string.find(package.path, pattern, 1, true) then
+            package.path = package.path .. ";" .. pattern
+        end
+    end
+    add("lib")
+    add("arcade")
+    add("arcade/ui")
+    if not string.find(package.path, ";/?.lua", 1, true) then
+        package.path = package.path .. ";/?.lua"
+    end
+end
+setupPaths()
+local arcade = require("arcade")
+local config = {
+    tickSeconds = 1,          -- Arcade tick cadence drives passive income & events
+    baseManualGain = 1,
+    toolUpgradeScale = 1.45,
+    baseToolCost = 25,
+    toolCostGrowth = 1.85,
+    baseSteveCost = 30,
+    steveCostGrowth = 1.18,
+    baseSteveRate = 1,
+    baseModCost = 400,
+    modCostGrowth = 1.35,
+    baseModRate = 12,
+    minimumModRate = 1,
+    stageNames = {
+        [1] = "Stage 1: Manual Labor",
+        [2] = "Stage 2: Mod Madness",
+    },
+    stage2SteveRequirement = 100,
+    stage2CobbleRequirement = 1000,
+    modEventChance = 0.17,
+    maxMessages = 6,
+}
+local state = {
+    cobble = 0,
+    steves = 0,
+    mods = 0,
+    toolLevel = 1,
+    manualCobblePerClick = config.baseManualGain,
+    toolUpgradeCost = config.baseToolCost,
+    steveCost = config.baseSteveCost,
+    modCost = config.baseModCost,
+    stevePassiveRate = config.baseSteveRate,
+    modPassiveRate = config.baseModRate,
+    stage = 1,
+    ops = 0,                  -- Ore per second (passive this tick)
+    totalCobbleEarned = 0,
+    elapsedSeconds = 0,
+    flags = {
+        firstMine = false,
+        firstSteve = false,
+        firstMod = false,
+        stage2Announced = false,
+    },
+    menuOpen = false,
+    menuSelection = 1,
+    messages = {},
+}
+local function formatNumber(value)
+    if value >= 1e9 then return string.format("%.2fB", value / 1e9)
+    elseif value >= 1e6 then return string.format("%.2fM", value / 1e6)
+    elseif value >= 1e3 then return string.format("%.1fk", value / 1e3)
+    elseif value < 10 and value ~= math.floor(value) then return string.format("%.2f", value) end
+    return tostring(math.floor(value + 0.5))
+end
+local function formatRate(rate)
+    if rate >= 100 then return string.format("%.0f", rate)
+    elseif rate >= 10 then return string.format("%.1f", rate) end
+    return string.format("%.2f", rate)
+end
+local function addMessage(text)
+    local msgs = state.messages
+    if #msgs == config.maxMessages then table.remove(msgs, 1) end
+    msgs[#msgs+1] = text
+end
+local function calculateManualGain(level)
+    local gain = config.baseManualGain * (config.toolUpgradeScale ^ (level - 1))
+    return math.max(1, math.floor(gain + 0.5))
+end
+local function mineBlock()
+    local gain = state.manualCobblePerClick
+    state.cobble = state.cobble + gain
+    state.totalCobbleEarned = state.totalCobbleEarned + gain
+    if not state.flags.firstMine then
+        addMessage("You punch a tree. It feels nostalgic.")
+        state.flags.firstMine = true
+    end
+end
+local function upgradeTools()
+    if state.cobble < state.toolUpgradeCost then
+        addMessage("Not enough Cobble to craft better tools.")
+        return
+    end
+    state.cobble = state.cobble - state.toolUpgradeCost
+    state.toolLevel = state.toolLevel + 1
+    state.manualCobblePerClick = calculateManualGain(state.toolLevel)
+    state.toolUpgradeCost = math.ceil(state.toolUpgradeCost * config.toolCostGrowth)
+    addMessage("Your tools shine brighter. Manual mining hits harder now.")
+end
+local function hireSteve()
+    if state.cobble < state.steveCost then
+        addMessage("You need more Cobble before another Steve signs up.")
+        return
+    end
+    state.cobble = state.cobble - state.steveCost
+    state.steves = state.steves + 1
+    state.steveCost = math.ceil(state.steveCost * config.steveCostGrowth)
+    if not state.flags.firstSteve then
+        addMessage("Your first Steve joins. He mines when you're not looking.")
+        state.flags.firstSteve = true
+    else
+        addMessage("Another Steve mans the cobble line. Passive OPS climbs.")
+    end
+end
+local function installMod()
+    if state.stage < 2 then
+        addMessage("Mods still locked. Grow your workforce or cobble reserves first.")
+        return
+    end
+    if state.cobble < state.modCost then
+        addMessage("That mod pack costs more Cobble than you have right now.")
+        return
+    end
+    state.cobble = state.cobble - state.modCost
+    state.mods = state.mods + 1
+    state.modCost = math.ceil(state.modCost * config.modCostGrowth)
+    if not state.flags.firstMod then
+        addMessage("You taught a turtle to mine. It never complains.")
+        state.flags.firstMod = true
+    else
+        addMessage("A new mod hums to life, amplifying your automation stack.")
+    end
+end
+local modEvents = {
+    {
+        weight = 3,
+        condition = function() return state.mods > 0 end,
+        resolve = function()
+            state.modPassiveRate = state.modPassiveRate * 1.2
+            return "+20% mod efficiency!"
+        end,
+    },
+    {
+        weight = 2,
+        condition = function() return true end,
+        resolve = function()
+            local bonus = 2
+            state.steves = state.steves + bonus
+            return string.format("%d more Steves volunteer.", bonus)
+        end,
+    },
+    {
+        weight = 2,
+        condition = function() return state.steves > 0 end,
+        resolve = function()
+            local loss = math.min(5, state.steves)
+            state.steves = state.steves - loss
+            return string.format("Update snafu costs %d Steves.", loss)
+        end,
+    },
+}
+local function pickWeightedEvent()
+    local pool, total = {}, 0
+    for _, ev in ipairs(modEvents) do
+        if ev.condition() then
+            total = total + ev.weight
+            pool[#pool+1] = ev
+        end
+    end
+    if total == 0 then return nil end
+    local roll, acc = math.random() * total, 0
+    for _, ev in ipairs(pool) do
+        acc = acc + ev.weight
+        if roll <= acc then return ev end
+    end
+    return pool[#pool]
+end
+local function maybeTriggerModEvent()
+    if state.stage < 2 or state.mods == 0 then return end
+    if math.random() > config.modEventChance then return end
+    local ev = pickWeightedEvent(); if not ev then return end
+    local msg = ev.resolve(); if msg then addMessage(msg) end
+end
+local function checkStageProgress()
+    if state.stage == 1 then
+        if state.steves >= config.stage2SteveRequirement or state.totalCobbleEarned >= config.stage2CobbleRequirement then
+            state.stage = 2
+            if not state.flags.stage2Announced then
+                addMessage("Mods unlocked! Automation just got a lot stranger.")
+                state.flags.stage2Announced = true
+            end
+        end
+    end
+end
+local function passiveTick()
+    local steveIncome = state.steves * state.stevePassiveRate
+    local modIncome = state.mods * state.modPassiveRate
+    local total = steveIncome + modIncome
+    if total > 0 then
+        state.cobble = state.cobble + total
+        state.totalCobbleEarned = state.totalCobbleEarned + total
+    end
+    state.ops = total
+    state.elapsedSeconds = state.elapsedSeconds + config.tickSeconds
+    maybeTriggerModEvent()
+    checkStageProgress()
+end
+local function getMenuItems()
+    local items = {}
+    table.insert(items, {
+        label = "Upgrade Tools (" .. formatNumber(state.toolUpgradeCost) .. ")",
+        action = function() upgradeTools() end,
+        enabled = state.cobble >= state.toolUpgradeCost
+    })
+    if state.stage >= 2 then
+        table.insert(items, {
+            label = "Install Mod (" .. formatNumber(state.modCost) .. ")",
+            action = function() installMod() end,
+            enabled = state.cobble >= state.modCost
+        })
+    end
+    table.insert(items, {
+        label = "Resume",
+        action = function() state.menuOpen = false end,
+        enabled = true
+    })
+    table.insert(items, {
+        label = "Quit Game",
+        action = function(a) a:requestQuit() end,
+        enabled = true
+    })
+    return items
+end
+local function getStageName()
+    return config.stageNames[state.stage] or ("Stage " .. tostring(state.stage))
+end
+local function drawGame(a)
+    local r = a:getRenderer()
+    if not r then return end
+    a:clearPlayfield(colors.black)
+    local w, h = r:getSize()
+    r:fillRect(1, 1, w, 1, colors.blue, colors.white, " ")
+    r:drawLabelCentered(1, 1, w, "IdleCraft - " .. getStageName(), colors.white)
+    r:fillRect(1, 2, w, 3, colors.gray, colors.white, " ")
+    r:drawLabelCentered(1, 2, math.floor(w/2), "Cobble: " .. formatNumber(state.cobble), colors.white)
+    r:drawLabelCentered(math.floor(w/2)+1, 2, math.floor(w/2), "OPS: " .. formatRate(state.ops), colors.white)
+    r:drawLabelCentered(1, 3, math.floor(w/2), "Steves: " .. formatNumber(state.steves), colors.lightGray)
+    r:drawLabelCentered(math.floor(w/2)+1, 3, math.floor(w/2), "Mods: " .. formatNumber(state.mods), colors.lightGray)
+    local msgY = 5
+    local msgs = state.messages
+    local start = math.max(1, #msgs - 7)
+    for i = start, #msgs do
+        r:drawLabelCentered(1, msgY, w, msgs[i], colors.white)
+        msgY = msgY + 1
+    end
+    if state.menuOpen then
+        local menuWidth = 30
+        local menuX = w - menuWidth + 1
+        local menuH = h - 1
+        r:fillRect(menuX, 2, menuWidth, menuH, colors.lightGray, colors.black, " ")
+        r:drawLabelCentered(menuX, 2, menuWidth, "--- MENU ---", colors.black)
+        local items = getMenuItems()
+        for i, item in ipairs(items) do
+            local y = 4 + (i-1)*2
+            local fg = colors.black
+            local bg = colors.lightGray
+            local prefix = "  "
+            if i == state.menuSelection then
+                fg = colors.white
+                bg = colors.blue
+                prefix = "> "
+            end
+            if i == state.menuSelection then
+                r:fillRect(menuX + 1, y, menuWidth - 2, 1, bg, fg, " ")
+            end
+            r:drawLabel(menuX + 2, y, prefix .. item.label, fg, bg)
+        end
+    end
+end
+local game = {
+    name = "IdleCraft",
+    init = function(self, a)
+        math.randomseed(os.epoch and os.epoch("utc") or os.clock()) -- Reseed per session
+        addMessage("Welcome to IdleCraft. Mine, Hire Steves, and Automate!")
+        self.draw(self, a)
+    end,
+    draw = function(self, a)
+        if state.menuOpen then
+            a:setButtons({"Up", "Select", "Down"}, {true, true, true})
+        else
+            local steveLabel = "Steve (" .. formatNumber(state.steveCost) .. ")"
+            local canAffordSteve = state.cobble >= state.steveCost
+            a:setButtons({"Mine", steveLabel, "Menu"}, {true, canAffordSteve, true})
+        end
+        drawGame(a)
+    end,
+    onButton = function(self, a, which)
+        if state.menuOpen then
+            local items = getMenuItems()
+            if which == "left" then
+                state.menuSelection = state.menuSelection - 1
+                if state.menuSelection < 1 then state.menuSelection = #items end
+            elseif which == "right" then
+                state.menuSelection = state.menuSelection + 1
+                if state.menuSelection > #items then state.menuSelection = 1 end
+            elseif which == "center" then
+                local item = items[state.menuSelection]
+                if item and item.enabled then
+                    item.action(a)
+                end
+            end
+        else
+            if which == "left" then
+                mineBlock()
+            elseif which == "center" then
+                hireSteve()
+            elseif which == "right" then
+                state.menuOpen = true
+                state.menuSelection = 1
+            end
+        end
+        self.draw(self, a)
+    end,
+    onTick = function(self, a, dt)
+        passiveTick()
+        self.draw(self, a)
+    end,
+}
+arcade.start(game, { tickSeconds = config.tickSeconds })]]
+files["arcade/games/slots.lua"] = [[package.loaded["arcade"] = nilpackage.loaded["log"] = nillocal function setupPaths()    local program = shell.getRunningProgram()    local dir = fs.getDir(program)    local gamesDir = fs.getDir(program)    local arcadeDir = fs.getDir(gamesDir)    local root = fs.getDir(arcadeDir)    local function add(path)        local part = fs.combine(root, path)        local pattern = "/" .. fs.combine(part, "?.lua")        if not string.find(package.path, pattern, 1, true) then            package.path = package.path .. ";" .. pattern        end    end    add("lib")    add("arcade")    if not string.find(package.path, ";/?.lua", 1, true) then        package.path = package.path .. ";/?.lua"    endendsetupPaths()local arcade = require("arcade")local function toBlit(color)    if colors.toBlit then return colors.toBlit(color) end    local idx = math.floor(math.log(color, 2))    return ("0123456789abcdef"):sub(idx + 1, idx + 1)endlocal function solidTex(char, fg, bg, w, h)    local f = string.rep(toBlit(fg), w)    local b = string.rep(toBlit(bg), w)    local t = string.rep(char, w)    local rows = {}    for i=1,h do table.insert(rows, {text=t, fg=f, bg=b}) end    return { rows = rows }endlocal SYMBOLS = {    ["Cherry"] = solidTex("@", colors.red, colors.white, 4, 3),    ["Lemon"] = solidTex("O", colors.yellow, colors.white, 4, 3),    ["Orange"] = solidTex("O", colors.orange, colors.white, 4, 3),    ["Plum"] = solidTex("%", colors.purple, colors.white, 4, 3),    ["Bell"] = solidTex("A", colors.gold or colors.yellow, colors.white, 4, 3),    ["Bar"] = solidTex("=", colors.black, colors.white, 4, 3),    ["7"] = solidTex("7", colors.red, colors.white, 4, 3)}local REELS = {    {"Cherry", "Lemon", "Orange", "Plum", "Bell", "Bar", "7"},    {"Cherry", "Lemon", "Orange", "Plum", "Bell", "Bar", "7"},    {"Cherry", "Lemon", "Orange", "Plum", "Bell", "Bar", "7"}}local PAYOUTS = {    ["Cherry"] = 2,    ["Lemon"] = 3,    ["Orange"] = 5,    ["Plum"] = 10,    ["Bell"] = 20,    ["Bar"] = 50,    ["7"] = 100}local COST = 1local result = {"-", "-", "-"}local message = "Press Spin!"local winAmount = 0local game = {    name = "Slots",    init = function(self, a)        a:setButtons({"Info", "Spin", "Quit"})    end,    draw = function(self, a)        a:clearPlayfield(colors.green)        local r = a:getRenderer()        if not r then return end        local w, h = r:getSize()        local cx = math.floor(w / 2)        local cy = math.floor(h / 2)        a:centerPrint(2, "--- SLOTS ---", colors.yellow, colors.green)        local reelW = 6        local reelH = 5        local spacing = 2        local totalW = (reelW * 3) + (spacing * 2)        local startX = cx - math.floor(totalW / 2)        local startY = 4        for i=1,3 do            local symName = result[i]            local tex = SYMBOLS[symName]            local x = startX + (i-1)*(reelW+spacing)            r:fillRect(x, startY, reelW, reelH, colors.white, colors.black, " ")            if tex then                local tx = x + 1                local ty = startY + 1                r:drawTextureRect(tex, tx, ty, 4, 3)            else                r:drawLabelCentered(x, startY + 2, reelW, "?", colors.black)            end        end        if winAmount > 0 then            a:centerPrint(startY + reelH + 2, "WINNER! " .. winAmount, colors.lime, colors.green)        else            a:centerPrint(startY + reelH + 2, message, colors.white, colors.green)        end        a:centerPrint(startY + reelH + 4, "Credits: " .. a:getCredits(), colors.orange, colors.green)    end,    onButton = function(self, a, button)        if button == "left" then            message = "Cost: " .. COST .. " Credit"            winAmount = 0        elseif button == "center" then            if a:consumeCredits(COST) then                winAmount = 0                for i=1,3 do                    result[i] = REELS[i][math.random(1, #REELS[i])]                end                if result[1] == result[2] and result[2] == result[3] then                    local sym = result[1]                    winAmount = (PAYOUTS[sym] or 0) * COST                    a:addCredits(winAmount)                    message = "JACKPOT!"                elseif result[1] == result[2] or result[2] == result[3] or result[1] == result[3] then                     message = "Spin again!"                else                    message = "Try again!"                end            else                message = "Insert Coin"            end        elseif button == "right" then            a:requestQuit()        end    end}arcade.start(game)]]
+files["arcade/games/themes.lua"] = [[package.loaded["arcade"] = nilpackage.loaded["log"] = nillocal function setupPaths()    local program = shell.getRunningProgram()    local gamesDir = fs.getDir(program)    local arcadeDir = fs.getDir(gamesDir)    local root = fs.getDir(arcadeDir)    local function add(path)        local part = fs.combine(root, path)        local pattern = "/" .. fs.combine(part, "?.lua")        if not string.find(package.path, pattern, 1, true) then            package.path = package.path .. ";" .. pattern        end    end    add("lib")    add("arcade")    if not string.find(package.path, ";/?.lua", 1, true) then        package.path = package.path .. ";/?.lua"    endendsetupPaths()local themes = {    {        name = "Default",        skin = {            background = colors.black,            playfield = colors.black,            buttonBar = { background = colors.black },            titleColor = colors.orange,            buttons = {                enabled = { labelColor = colors.orange, shadowColor = colors.gray },                disabled = { labelColor = colors.lightGray, shadowColor = colors.black }            }        }    },    {        name = "Ocean",        skin = {            background = colors.blue,            playfield = colors.lightBlue,            buttonBar = { background = colors.blue },            titleColor = colors.cyan,            buttons = {                enabled = { labelColor = colors.white, shadowColor = colors.blue },                disabled = { labelColor = colors.gray, shadowColor = colors.blue }            }        }    },    {        name = "Forest",        skin = {            background = colors.green,            playfield = colors.lime,            buttonBar = { background = colors.green },            titleColor = colors.yellow,            buttons = {                enabled = { labelColor = colors.white, shadowColor = colors.green },                disabled = { labelColor = colors.gray, shadowColor = colors.green }            }        }    },    {        name = "Retro",        skin = {            background = colors.gray,            playfield = colors.lightGray,            buttonBar = { background = colors.gray },            titleColor = colors.black,            buttons = {                enabled = { labelColor = colors.black, shadowColor = colors.white },                disabled = { labelColor = colors.gray, shadowColor = colors.white }            }        }    }}local currentIndex = 1local SKIN_FILE = "arcade_skin.settings"local function saveSkin(skin)    local f = fs.open(SKIN_FILE, "w")    if f then        f.write(textutils.serialize(skin))        f.close()    endendlocal function loadSkin()    if fs.exists(SKIN_FILE) then        local f = fs.open(SKIN_FILE, "r")        if f then            local content = f.readAll()            f.close()            return textutils.unserialize(content)        end    end    return nilendlocal w, h = term.getSize()local currentSkin = loadSkin()local function draw()    term.setCursorPos(1, 1)    term.setBackgroundColor(colors.blue)    term.setTextColor(colors.white)    term.clearLine()    term.write(" Theme Switcher")    term.setCursorPos(1, h)    term.setBackgroundColor(colors.gray)    term.setTextColor(colors.white)    term.clearLine()    term.write(" Enter: Apply  Q: Quit")    for i, theme in ipairs(themes) do        local y = i + 2        term.setCursorPos(1, y)        term.clearLine()        if i == currentIndex then            term.setBackgroundColor(colors.lightGray)            term.setTextColor(colors.black)        else            term.setBackgroundColor(colors.black)            term.setTextColor(colors.white)        end        term.write(" " .. theme.name)        if currentSkin and currentSkin.background == theme.skin.background and currentSkin.titleColor == theme.skin.titleColor then            term.setCursorPos(w - 8, y)            term.setTextColor(colors.green)            term.write("(Active)")        end    endendwhile true do    draw()    local ev, p1 = os.pullEvent()    if ev == "key" then        if p1 == keys.up then            currentIndex = currentIndex - 1            if currentIndex < 1 then currentIndex = #themes end        elseif p1 == keys.down then            currentIndex = currentIndex + 1            if currentIndex > #themes then currentIndex = 1 end        elseif p1 == keys.enter then            local theme = themes[currentIndex]            saveSkin(theme.skin)            currentSkin = theme.skin            term.setCursorPos(1, h-1)            term.setBackgroundColor(colors.green)            term.setTextColor(colors.white)            term.clearLine()            term.write(" Theme Applied! ")            os.sleep(1)        elseif p1 == keys.q then            break        end    endendterm.setBackgroundColor(colors.black)term.clear()term.setCursorPos(1, 1)]]
 files["arcade/license_store.lua"] = [[local LicenseStore = {}LicenseStore.__index = LicenseStorelocal function ensureDirectory(path)  if not fs.exists(path) then    fs.makeDir(path)  endendlocal function computeHash(input)  if textutils.sha256 then    return textutils.sha256(input)  end  local sum = 0  for i = 1, #input do    sum = (sum + string.byte(input, i)) % 0xFFFFFFFF  end  return string.format("%08x", sum)endlocal function signaturePayload(license)  return table.concat({    license.programId or "",    tostring(license.purchasedAt or ""),    tostring(license.pricePaid or ""),    tostring(license.note or ""),  }, "|")endlocal function signatureFor(license, secret)  return computeHash(signaturePayload(license) .. "|" .. secret)endfunction LicenseStore.new(rootPath, secret)  local store = setmetatable({}, LicenseStore)  store.rootPath = rootPath or "licenses"  store.secret = secret or "arcade-license-v1"  ensureDirectory(store.rootPath)  return storeendfunction LicenseStore:licensePath(programId)  return fs.combine(self.rootPath, programId .. ".lic")endfunction LicenseStore:load(programId)  local path = self:licensePath(programId)  if not fs.exists(path) then    return nil, "missing"  end  local handle = fs.open(path, "r")  local content = handle.readAll()  handle.close()  local data = textutils.unserialize(content)  if type(data) ~= "table" then    return nil, "corrupt"  end  local expected = signatureFor(data, self.secret)  if data.signature ~= expected then    return nil, "invalid_signature"  end  return dataendfunction LicenseStore:has(programId)  local license = self:load(programId)  if license then    return true, license  end  return falseendfunction LicenseStore:save(programId, pricePaid, note)  local license = {    programId = programId,    purchasedAt = os.epoch("utc"),    pricePaid = pricePaid or 0,    note = note,  }  license.signature = signatureFor(license, self.secret)  local handle = fs.open(self:licensePath(programId), "w")  handle.write(textutils.serialize(license))  handle.close()  return licenseendreturn LicenseStore]]
 files["arcade/store.lua"] = [[package.loaded["arcade"] = nilpackage.loaded["log"] = nillocal function setupPaths()    local program = shell.getRunningProgram()    local dir = fs.getDir(program)    local root = fs.getDir(dir)    local function add(path)        local part = fs.combine(root, path)        local pattern = "/" .. fs.combine(part, "?.lua")        if not string.find(package.path, pattern, 1, true) then            package.path = package.path .. ";" .. pattern        end    end    add("lib")    add("arcade")endsetupPaths()local programs = require("data.programs")local LicenseStore = require("license_store")local CREDITS_FILE = "credits.txt"local LICENSE_DIR = "licenses"local function getDiskPath()    local drive = peripheral.find("drive")    if drive and drive.getMountPath then        return drive.getMountPath()    end    return nilendlocal function getCreditsPath()    local disk = getDiskPath()    if disk then return fs.combine(disk, CREDITS_FILE) end    return CREDITS_FILEendlocal function loadCredits()    local path = getCreditsPath()    if fs.exists(path) then        local f = fs.open(path, "r")        if f then            local n = tonumber(f.readAll())            f.close()            return n or 0        end    end    return 0endlocal function saveCredits(amount)    local path = getCreditsPath()    local f = fs.open(path, "w")    if f then        f.write(tostring(amount))        f.close()    endendlocal function getLicenseStore()    local disk = getDiskPath()    local root = disk or ""    local path = fs.combine(root, LICENSE_DIR)    return LicenseStore.new(path)endlocal function isInstalled(item)    local path = fs.combine("arcade", item.path)    return fs.exists(path)endlocal function downloadItem(item)    if not http then return false, "HTTP API disabled" end    if not item.url then return false, "No URL" end    local response = http.get(item.url)    if not response then return false, "Connection failed" end    local content = response.readAll()    response.close()    local path = fs.combine("arcade", item.path)    local dir = fs.getDir(path)    if not fs.exists(dir) then fs.makeDir(dir) end    local f = fs.open(path, "w")    if f then        f.write(content)        f.close()        return true    end    return false, "Write failed"endlocal w, h = term.getSize()local selectedIndex = 1local scrollOffset = 0local credits = loadCredits()local licenseStore = getLicenseStore()local function drawHeader()    term.setCursorPos(1, 1)    term.setBackgroundColor(colors.blue)    term.setTextColor(colors.white)    term.clearLine()    term.write(" App Store")    local cStr = "Credits: " .. credits    term.setCursorPos(w - #cStr, 1)    term.write(cStr)endlocal function drawList(items)    local listH = h - 2 -- Header and footer    for i = 1, listH do        local idx = i + scrollOffset        local item = items[idx]        local y = i + 1        term.setCursorPos(1, y)        term.setBackgroundColor(colors.black)        term.clearLine()        if item then            if idx == selectedIndex then                term.setBackgroundColor(colors.lightGray)                term.setTextColor(colors.black)            else                term.setBackgroundColor(colors.black)                term.setTextColor(colors.white)            end            local status = ""            if isInstalled(item) then                status = "Installed"            elseif licenseStore:has(item.id) then                status = "Owned"            else                status = item.price .. " C"            end            local label = " " .. item.name            term.write(label)            term.setCursorPos(w - #status - 1, y)            term.write(status)        end    endendlocal function drawFooter()    term.setCursorPos(1, h)    term.setBackgroundColor(colors.gray)    term.setTextColor(colors.white)    term.clearLine()    term.write(" Enter: Details/Buy  Q: Quit")endlocal function showDetails(item)    term.setBackgroundColor(colors.blue)    term.clear()    local function center(y, text, bg, fg)        term.setCursorPos(math.floor((w - #text) / 2) + 1, y)        if bg then term.setBackgroundColor(bg) end        if fg then term.setTextColor(fg) end        term.write(text)    end    local bw, bh = 26, 12    local bx = math.floor((w - bw) / 2) + 1    local by = math.floor((h - bh) / 2) + 1    paintutils.drawFilledBox(bx, by, bx + bw - 1, by + bh - 1, colors.lightGray)    paintutils.drawFilledBox(bx, by, bx + bw - 1, by, colors.cyan)    term.setCursorPos(bx + 1, by)    term.setTextColor(colors.black)    term.setBackgroundColor(colors.cyan)    term.write(item.name)    term.setBackgroundColor(colors.lightGray)    term.setTextColor(colors.black)    local desc = item.description or "No description."    local lines = {}    local line = ""    for word in desc:gmatch("%S+") do        if #line + #word + 1 > bw - 2 then            table.insert(lines, line)            line = word        else            if #line > 0 then line = line .. " " .. word else line = word end        end    end    table.insert(lines, line)    for i, l in ipairs(lines) do        if i > 5 then break end        term.setCursorPos(bx + 1, by + 1 + i)        term.write(l)    end    local owned = licenseStore:has(item.id)    local installed = isInstalled(item)    local price = item.price or 0    local action = ""    if installed then        action = "Re-download"    elseif owned then        action = "Download"    else        action = "Buy (" .. price .. ")"    end    term.setCursorPos(bx + 1, by + bh - 3)    term.write("Status: " .. (installed and "Installed" or (owned and "Owned" or "Available")))    term.setCursorPos(bx + 2, by + bh - 2)    term.setBackgroundColor(colors.green)    term.setTextColor(colors.white)    term.write(" " .. action .. " ")    term.setBackgroundColor(colors.blue)    while true do        local ev, p1 = os.pullEvent()        if ev == "key" then            if p1 == keys.enter or p1 == keys.space then                if not owned and not installed then                    if credits >= price then                        credits = credits - price                        saveCredits(credits)                        licenseStore:save(item.id, price, "store purchase")                        owned = true                    else                        term.setCursorPos(bx + 2, by + bh - 1)                        term.setBackgroundColor(colors.red)                        term.write(" Not enough credits! ")                        os.sleep(1)                        return                    end                end                term.setCursorPos(bx + 2, by + bh - 1)                term.setBackgroundColor(colors.yellow)                term.setTextColor(colors.black)                term.write(" Downloading... ")                local ok, err = downloadItem(item)                if ok then                    term.setCursorPos(bx + 2, by + bh - 1)                    term.setBackgroundColor(colors.green)                    term.write(" Success! ")                else                    term.setCursorPos(bx + 2, by + bh - 1)                    term.setBackgroundColor(colors.red)                    term.write(" Error: " .. (err or "?") .. " ")                end                os.sleep(1)                return            elseif p1 == keys.q or p1 == keys.backspace then                return            end        end    endendlocal function main()    local items = {}    for _, p in ipairs(programs) do        if p.id ~= "store" then            table.insert(items, p)        end    end    while true do        drawHeader()        drawList(items)        drawFooter()        local ev, p1, p2, p3 = os.pullEvent()        if ev == "key" then            if p1 == keys.up then                selectedIndex = selectedIndex - 1                if selectedIndex < 1 then selectedIndex = 1 end                if selectedIndex <= scrollOffset then scrollOffset = selectedIndex - 1 end            elseif p1 == keys.down then                selectedIndex = selectedIndex + 1                if selectedIndex > #items then selectedIndex = #items end                if selectedIndex > scrollOffset + (h - 2) then scrollOffset = selectedIndex - (h - 2) end            elseif p1 == keys.enter then                showDetails(items[selectedIndex])                credits = loadCredits()                licenseStore = getLicenseStore()                term.setBackgroundColor(colors.black)                term.clear()            elseif p1 == keys.q then                break            end        elseif ev == "mouse_scroll" then            if p1 > 0 then                selectedIndex = selectedIndex + 1                if selectedIndex > #items then selectedIndex = #items end                if selectedIndex > scrollOffset + (h - 2) then scrollOffset = selectedIndex - (h - 2) end            elseif p1 < 0 then                selectedIndex = selectedIndex - 1                if selectedIndex < 1 then selectedIndex = 1 end                if selectedIndex <= scrollOffset then scrollOffset = selectedIndex - 1 end            end        end    end    term.setBackgroundColor(colors.black)    term.clear()    term.setCursorPos(1, 1)endmain()]]
 files["arcade/ui/renderer.lua"] = [[local Renderer = {}Renderer.__index = Rendererlocal function toBlit(color)    if colors.toBlit then return colors.toBlit(color) end    local idx = math.floor(math.log(color, 2))    return ("0123456789abcdef"):sub(idx + 1, idx + 1)endlocal function repeatToWidth(pattern, desiredWidth)    local out = ""    while #out < desiredWidth do        out = out .. pattern    end    if #out > desiredWidth then        out = out:sub(1, desiredWidth)    end    return outendlocal function copyTable(tbl)    local out = {}    for k, v in pairs(tbl or {}) do        if type(v) == "table" then            out[k] = copyTable(v)        else            out[k] = v        end    end    return outendlocal function deepMerge(base, override)    local out = copyTable(base)    for k, v in pairs(override or {}) do        if type(v) == "table" and type(out[k]) == "table" then            out[k] = deepMerge(out[k], v)        else            out[k] = v        end    end    return outendlocal function normalizeTexture(texture)    if not texture then return nil end    if not texture.rows or #texture.rows == 0 then return nil end    texture.width = texture.width or #texture.rows[1].text    texture.height = texture.height or #texture.rows    return textureendlocal function tryBuildPineTexture(width, height, baseColor, accentColor)    local ok, pine3d = pcall(require, "pine3d")    if not ok or type(pine3d) ~= "table" then return nil end    local okTexture, texture = pcall(function()        local canvasBuilder = pine3d.newCanvas or pine3d.canvas or pine3d.newRenderer        if not canvasBuilder then return nil end        local canvas = canvasBuilder(width, height)        if canvas.clear then canvas:clear(baseColor) end        if canvas.polygon then            canvas:polygon({0, 0}, {width - 1, 1}, {width - 2, height - 1}, {0, height - 2}, accentColor)            canvas:polygon({2, 0}, {width - 1, 0}, {width - 1, height - 1}, {3, height - 2}, colors.black)        end        if canvas.exportTexture then return normalizeTexture(canvas:exportTexture()) end        if canvas.toTexture then return normalizeTexture(canvas:toTexture()) end        if canvas.export then return normalizeTexture(canvas:export()) end        return nil    end)    if okTexture then return texture end    return nilendlocal function defaultButtonTexture(light, mid, dark)    local pineTexture = tryBuildPineTexture(6, 3, dark, light)    if pineTexture then return pineTexture end    local fgLight, fgDark = toBlit(colors.white), toBlit(colors.lightGray)    return normalizeTexture({        rows = {            { text = "\\\\\\\\", fg = repeatToWidth(fgDark, 4), bg = repeatToWidth(toBlit(light), 4) },            { text = "////", fg = repeatToWidth(fgLight, 4), bg = repeatToWidth(toBlit(mid), 4) },            { text = "    ", fg = repeatToWidth(fgDark, 4), bg = repeatToWidth(toBlit(dark), 4) },        }    })endlocal function buildDefaultSkin()    local base = colors.black    local accent = colors.orange    local accentDark = colors.brown    return {        background = base,        playfield = base,        buttonBar = { background = base },        buttons = {            enabled = {                texture = defaultButtonTexture(accent, accentDark, base),                labelColor = colors.orange,                shadowColor = colors.gray,            },            disabled = {                texture = defaultButtonTexture(colors.gray, colors.black, colors.black),                labelColor = colors.lightGray,                shadowColor = colors.black,            }        },        titleColor = colors.orange,    }endfunction Renderer.new(opts)    opts = opts or {}    local self = setmetatable({}, Renderer)    self.skin = deepMerge(buildDefaultSkin(), opts.skin or {})    self.monitor = nil    self.nativeTerm = term.current()    self.w, self.h = term.getSize()    self.hotspots = {}    if opts.monitor then        self:attachToMonitor(opts.monitor, opts.textScale)    end    return selfendfunction Renderer:getSize()    self.w, self.h = term.getSize()    return self.w, self.hendfunction Renderer:attachToMonitor(monitor, textScale)    self.monitor = monitor    if not monitor then        if self.nativeTerm then term.redirect(self.nativeTerm) end        self.w, self.h = term.getSize()        return    end    if textScale then monitor.setTextScale(textScale) end    term.redirect(monitor)    self.w, self.h = term.getSize()endfunction Renderer:restore()    if self.nativeTerm then        term.redirect(self.nativeTerm)        self.monitor = nil    endendfunction Renderer:setSkin(skin)    self.skin = deepMerge(buildDefaultSkin(), skin or {})endfunction Renderer:registerHotspot(name, rect)    self.hotspots[name] = copyTable(rect)endfunction Renderer:hitTest(name, x, y)    local r = self.hotspots[name]    if not r then return false end    return x >= r.x and x <= r.x + r.w - 1 and y >= r.y and y <= r.y + r.h - 1endfunction Renderer:fillRect(x, y, w, h, bg, fg, ch)    local bgBlit = repeatToWidth(toBlit(bg or colors.black), w)    local fgBlit = repeatToWidth(toBlit(fg or bg or colors.black), w)    local text = repeatToWidth(ch or " ", w)    for yy = y, y + h - 1 do        term.setCursorPos(x, yy)        term.blit(text, fgBlit, bgBlit)    endendfunction Renderer:drawTextureRect(texture, x, y, w, h)    local tex = normalizeTexture(texture)    if not tex then        self:fillRect(x, y, w, h, colors.black, colors.black, " ")        return    end    for row = 0, h - 1 do        local src = tex.rows[(row % tex.height) + 1]        local text = repeatToWidth(src.text, w)        local fg = repeatToWidth(src.fg, w)        local bg = repeatToWidth(src.bg, w)        term.setCursorPos(x, y + row)        term.blit(text, fg, bg)    endendfunction Renderer:drawLabelCentered(x, y, w, text, color, shadowColor)    if not text or text == "" then return end    local tx = x + math.floor((w - #text) / 2)    if shadowColor then        term.setTextColor(shadowColor)        term.setCursorPos(tx + 1, y + 1)        term.write(text)    end    term.setTextColor(color or colors.white)    term.setCursorPos(tx, y)    term.write(text)endfunction Renderer:drawButton(rect, label, enabled)    local skin = enabled and self.skin.buttons.enabled or self.skin.buttons.disabled    self:drawTextureRect(skin.texture, rect.x, rect.y, rect.w, rect.h)    self:drawLabelCentered(rect.x, rect.y + math.floor(rect.h / 2), rect.w, label, skin.labelColor, skin.shadowColor)endfunction Renderer:paintSurface(rect, surface)    if type(surface) == "table" then        self:drawTextureRect(surface, rect.x, rect.y, rect.w, rect.h)    else        self:fillRect(rect.x, rect.y, rect.w, rect.h, surface or colors.black)    endendfunction Renderer.defaultSkin()    return buildDefaultSkin()endfunction Renderer.mergeSkin(base, override)    return deepMerge(base, override)endreturn Renderer]]
@@ -1051,10 +2008,21 @@ print("")
 print("Install Complete!")
 print("Downloaded: " .. successCount)
 print("Failed: " .. failCount)
-if failCount == 0 then
+print("Verifying installation...")
+local errors = 0
+for _, file in ipairs(files) do
+    if not fs.exists(file) then
+        printError("Missing: " .. file)
+        errors = errors + 1
+    end
+end
+if failCount == 0 and errors == 0 then
+    print("Verification successful.")
     print("Reboot or run startup to launch.")
 else
-    print("Some files failed to download. Check your connection.")
+    print("Installation issues detected.")
+    if failCount > 0 then print("Failed downloads: " .. failCount) end
+    if errors > 0 then print("Missing files: " .. errors) end
 end]]
 files["startup.lua"] = [[local platform = turtle and "turtle" or "computer"package.path = package.path .. ";/?.lua;/lib/?.lua;/arcade/?.lua;/factory/?.lua"if platform == "turtle" then    local turtle_os = "/factory/turtle_os.lua"    if fs.exists(turtle_os) then        shell.run(turtle_os)    else        print("Factory TurtleOS not found at " .. turtle_os)    endelse    local arcade_shell = "/arcade/arcade_shell.lua"    if fs.exists(arcade_shell) then        shell.run(arcade_shell)    else        print("Arcade Shell not found at " .. arcade_shell)    endend]]
 
@@ -1063,7 +2031,7 @@ if fs.exists("arcade") then fs.delete("arcade") end
 if fs.exists("lib") then fs.delete("lib") end
 if fs.exists("factory") then fs.delete("factory") end
 
-print("Unpacking 57 files...")
+print("Unpacking 59 files...")
 for path, content in pairs(files) do
     local dir = fs.getDir(path)
     if dir ~= "" and not fs.exists(dir) then
