@@ -48,6 +48,25 @@ local function install()
     print("Structure OK.")
     print("")
     
+    local startupTargets = {
+        turtle = "/factory/turtle_os.lua",
+        computer = "/arcade/arcadeos.lua",
+    }
+
+    print("Validating startup targets...")
+    local missingTargets = {}
+    for platformName, path in pairs(startupTargets) do
+        if not fs.exists(path) then
+            table.insert(missingTargets, string.format("%s (%s)", platformName, path))
+        end
+    end
+
+    if #missingTargets > 0 then
+        print("! Missing startup targets: " .. table.concat(missingTargets, ", "))
+        print("Cannot create startup.lua until required files are present.")
+        return
+    end
+
     print("Creating startup.lua...")
     local startupContent = [[
 -- startup.lua
@@ -59,17 +78,9 @@ local platform = turtle and "turtle" or "computer"
 package.path = package.path .. ";/lib/?.lua;/arcade/?.lua;/factory/?.lua"
 
 if platform == "turtle" then
-    if fs.exists("/factory/factory.lua") then
-        shell.run("/factory/factory.lua")
-    else
-        print("Factory agent not found.")
-    end
+    shell.run("/factory/turtle_os.lua")
 else
-    if fs.exists("/arcade/arcade_shell.lua") then
-        shell.run("/arcade/arcade_shell.lua")
-    else
-        print("ArcadeOS not found.")
-    end
+    shell.run("/arcade/arcadeos.lua")
 end
 ]]
 
