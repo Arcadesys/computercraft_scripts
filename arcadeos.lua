@@ -31,8 +31,9 @@ files["arcade.lua"] = [[-- arcade.lua
 
 ---@diagnostic disable: undefined-global, undefined-field
 
-local M = {}
-local Renderer = require("ui.renderer")
+ local M = {}
+ local Renderer = require("ui.renderer")
+ local Log = require("log")
 
 -- ==========================
 -- Configuration defaults
@@ -44,6 +45,8 @@ local DEFAULT = {
         creditsFile = "credits.txt", -- File stored on disk drive media
         tickSeconds = 0.25,      -- Passive tick interval (can drive animations)
         skin = Renderer.defaultSkin(), -- Shared skin/theme for buttons and backgrounds
+        logFile = "arcade.log",  -- Where to write diagnostic information
+        logLevel = "info",       -- error < warn < info < debug
 }
 
 -- ==========================
@@ -70,6 +73,7 @@ local state = {
         config = DEFAULT,
         renderer = nil,
         skin = Renderer.defaultSkin(),
+        logger = nil,
 }
 
 -- ==========================
@@ -77,6 +81,19 @@ local state = {
 -- ==========================
 
 local function clamp(v, lo, hi) if v < lo then return lo elseif v > hi then return hi else return v end end
+
+local function log(level, message)
+        if not state.logger or not state.logger[level] then return end
+        state.logger[level](state.logger, message)
+end
+
+local function safeCall(label, fn, ...)
+        if type(fn) ~= "function" then return end
+        local ok, err = pcall(fn, ...)
+        if not ok then
+                log("warn", label .. " failed: " .. tostring(err))
+        end
+end
 
 local function pointInRect(px,py,r)
 	return px >= r.x and px <= r.x + r.w - 1 and py >= r.y and py <= r.y + r.h - 1
@@ -99,25 +116,34 @@ local function creditsFilePath()
 end
 
 local function loadCredits()
-	local path = creditsFilePath()
-	if fs.exists(path) then
-		local ok, val = pcall(function()
-			local h = fs.open(path, "r"); local txt = h.readAll(); h.close(); return tonumber(txt) end)
-		if ok and val then state.credits = clamp(val, 0, 10^12) end
-	else
-		state.credits = 0
-	end
+        local path = creditsFilePath()
+        if fs.exists(path) then
+                local ok, val = pcall(function()
+                        local h = fs.open(path, "r"); local txt = h.readAll(); h.close(); return tonumber(txt) end)
+                if ok and val then
+                        state.credits = clamp(val, 0, 10^12)
+                        log("info", "Credits loaded from " .. path .. ": " .. state.credits)
+                else
+                        log("warn", "Failed to read credits file, resetting balance.")
+                        state.credits = 0
+                end
+        else
+                state.credits = 0
+                log("info", "No credits file found; starting at 0")
+        end
 end
 
 local function saveCredits()
-	local path = creditsFilePath()
-	local ok, err = pcall(function()
-		local h = fs.open(path, "w"); h.write(tostring(state.credits)); h.close() end)
-	if not ok then
-		-- Non-fatal; games can choose to display warning
-		return false, err
-	end
-	return true
+        local path = creditsFilePath()
+        local ok, err = pcall(function()
+                local h = fs.open(path, "w"); h.write(tostring(state.credits)); h.close() end)
+        if not ok then
+                -- Non-fatal; games can choose to display warning
+                log("warn", "Failed to persist credits: " .. tostring(err))
+                return false, err
+        end
+        log("debug", "Credits saved to " .. path .. ": " .. state.credits)
+        return true
 end
 
 -- ==========================
@@ -130,6 +156,7 @@ local function applySkin(skinOverride)
 end
 
 local function computeLayout()
+        if not state.renderer then return end
         state.screenW, state.screenH = state.renderer:getSize()
         local barH = state.config.buttonBarHeight
         local pfH = math.max(1, state.screenH - barH)
@@ -151,11 +178,13 @@ local function computeLayout()
 end
 
 local function drawButtonBar()
+        if not state.renderer then return end
         local barRect = { x = 1, y = state.screenH - state.config.buttonBarHeight + 1, w = state.screenW, h = state.config.buttonBarHeight }
         state.renderer:paintSurface(barRect, state.skin.buttonBar.background or colors.black)
 end
 
 local function drawButtons()
+        if not state.renderer then return end
         drawButtonBar()
         for i=1,3 do
                 local r = state.layout.buttonRects[i]
@@ -166,14 +195,16 @@ local function drawButtons()
 end
 
 function M:clearPlayfield(surface)
+        if not state.renderer then return end
         local pf = state.layout.playfield
         state.renderer:paintSurface(pf, surface or state.skin.playfield)
 end
 
 function M:centerPrint(relY, text, fg, bg)
-	local pf = state.layout.playfield
-	local y = pf.y + relY - 1
-	if y < pf.y or y > pf.y + pf.h - 1 then return end
+        if not state.renderer then return end
+        local pf = state.layout.playfield
+        local y = pf.y + relY - 1
+        if y < pf.y or y > pf.y + pf.h - 1 then return end
 	if bg then term.setBackgroundColor(bg) end
 	if fg then term.setTextColor(fg) end
 	local x = pf.x + math.floor((pf.w - #text)/2)
@@ -182,16 +213,18 @@ function M:centerPrint(relY, text, fg, bg)
 end
 
 function M:setButtons(labels, enabled)
-	for i=1,3 do
-		state.buttons[i] = labels[i] or ""
-		state.buttonEnabled[i] = (not enabled) and true or (enabled[i] ~= false)
-	end
-	drawButtons()
+        if not state.renderer then return end
+        for i=1,3 do
+                state.buttons[i] = labels[i] or ""
+                state.buttonEnabled[i] = (not enabled) and true or (enabled[i] ~= false)
+        end
+        drawButtons()
 end
 
 function M:enableButton(index, value)
-	state.buttonEnabled[index] = not not value
-	drawButtons()
+        if not state.renderer then return end
+        state.buttonEnabled[index] = not not value
+        drawButtons()
 end
 
 -- ==========================
@@ -200,14 +233,17 @@ end
 
 function M:getCredits() return state.credits end
 function M:addCredits(delta)
-	state.credits = math.max(0, state.credits + delta)
-	saveCredits()
+        local before = state.credits
+        state.credits = math.max(0, state.credits + delta)
+        log("info", string.format("Credits updated %d -> %d (delta %+d)", before, state.credits, delta))
+        saveCredits()
 end
 function M:consumeCredits(amount)
-	if state.credits >= amount then
-		state.credits = state.credits - amount
-		saveCredits(); return true
-	end
+        if state.credits >= amount then
+                log("debug", "Consuming credits: " .. amount)
+                state.credits = state.credits - amount
+                saveCredits(); return true
+        end
 	return false
 end
 
@@ -216,7 +252,8 @@ end
 -- ==========================
 
 function M:requestQuit()
-	state.quitRequested = true
+        log("info", "Quit requested")
+        state.quitRequested = true
 end
 
 -- ==========================
@@ -227,29 +264,37 @@ local function detectMonitor()
         state.monitor = peripheral.find and peripheral.find("monitor") or nil
         if state.monitor then
                 state.renderer:attachToMonitor(state.monitor, state.config.textScale)
+                log("info", "Monitor detected: " .. (peripheral.getName and peripheral.getName(state.monitor) or "unknown"))
         else
                 state.renderer:attachToMonitor(nil)
+                log("warn", "No monitor detected; falling back to terminal display")
         end
 end
 
 local function detectDiskDrive()
-	state.drive = peripheral.find and peripheral.find("drive") or nil
-	-- If a disk is inserted we will persist credits there; else local file.
+        state.drive = peripheral.find and peripheral.find("drive") or nil
+        -- If a disk is inserted we will persist credits there; else local file.
+        if state.drive then
+                log("info", "Disk drive detected: " .. (peripheral.getName and peripheral.getName(state.drive) or "unknown"))
+        else
+                log("debug", "No disk drive; credits stored locally")
+        end
 end
 
 local function redrawAll()
         computeLayout()
         M:clearPlayfield()
         drawButtons()
-        if state.game and state.game.draw then state.game.draw(M) end
+        if state.game and state.game.draw then safeCall("game.draw", state.game.draw, state.game, M) end
 end
 
 local function handleButtonPress(idx)
-	local names = {"left","center","right"}
-	if not state.buttonEnabled[idx] then return end
-	if state.game and state.game.onButton then
-		state.game.onButton(M, names[idx])
-	end
+        local names = {"left","center","right"}
+        if not state.buttonEnabled[idx] then return end
+        if state.game and state.game.onButton then
+                log("debug", "Button pressed: " .. names[idx])
+                safeCall("game.onButton", state.game.onButton, state.game, M, names[idx])
+        end
 end
 
 local function waitEvent()
@@ -257,6 +302,7 @@ local function waitEvent()
 end
 
 local function processEvent(e)
+        if not state.renderer then return end
         local ev = e[1]
         if ev == "term_resize" or ev == "monitor_resize" then
                 redrawAll(); return
@@ -269,9 +315,9 @@ local function processEvent(e)
         elseif ev == "timer" then
                 local id = e[2]
                 if id == state._tickTimer then
-			if state.game and state.game.onTick then
-				state.game.onTick(M, state.config.tickSeconds)
-			end
+                        if state.game and state.game.onTick then
+                                safeCall("game.onTick", state.game.onTick, state.game, M, state.config.tickSeconds)
+                        end
 			if state.quitRequested then return end
 			state._tickTimer = os.startTimer(state.config.tickSeconds)
 		end
@@ -296,23 +342,37 @@ function M.start(gameTable, configOverride)
         state.config = {}
         for k,v in pairs(DEFAULT) do state.config[k] = v end
         if configOverride then for k,v in pairs(configOverride) do state.config[k]=v end end
+        state.logger = Log.new({ logFile = state.config.logFile, level = state.config.logLevel })
+        log("info", "Starting arcade wrapper" .. (state.game and (" for " .. (state.game.name or "game")) or ""))
         applySkin(state.config.skin)
-        state.renderer = Renderer.new({ skin = state.skin })
+        local okRenderer, rendererOrErr = pcall(Renderer.new, { skin = state.skin })
+        if not okRenderer or not rendererOrErr then
+                log("error", "Renderer initialization failed: " .. tostring(rendererOrErr))
+                return
+        end
+        state.renderer = rendererOrErr
         detectMonitor()
         detectDiskDrive()
         loadCredits()
-	computeLayout()
-	if state.game and state.game.init then state.game.init(M) end
-	redrawAll()
-	state._tickTimer = os.startTimer(state.config.tickSeconds)
+        computeLayout()
+        if state.game and state.game.init then safeCall("game.init", state.game.init, state.game, M) end
+        redrawAll()
+        state._tickTimer = os.startTimer(state.config.tickSeconds)
         while not state.quitRequested do
                 local e = waitEvent()
-                processEvent(e)
+                local ok, err = pcall(processEvent, e)
+                if not ok then
+                        log("error", "Event loop error: " .. tostring(err))
+                        M:clearPlayfield(colors.black)
+                        M:centerPrint(1, "Arcade error - see log", colors.red)
+                        break
+                end
         end
         -- Clean up terminal redirection
         if state.renderer then state.renderer:restore() end
         -- Persist credits one last time
         saveCredits()
+        log("info", "Arcade wrapper stopped")
 end
 
 -- Return module table for require()
@@ -606,7 +666,7 @@ files["blackjack.lua"] = [[---@diagnostic disable: undefined-global, undefined-f
 
 local arcade = require("games.arcade")
 
-local suits = {"\226\153\160", "\226\153\165", "\226\153\167", "\226\153\163"} -- spade, heart, club, diamond
+local suits = {"S", "H", "C", "D"} -- spade, heart, club, diamond
 local ranks = {
         {label = "A", value = 11},
         {label = "2", value = 2}, {label = "3", value = 3}, {label = "4", value = 4}, {label = "5", value = 5},
@@ -2253,6 +2313,76 @@ end
 
 return LicenseStore
 ]]
+files["log.lua"] = [[-- log.lua
+-- Tiny logger tailored for ComputerCraft turtles/computers.
+-- Provides leveled logging with safe file writes so crashes are easier
+-- to diagnose. Defaults to `arcade.log` in the working directory.
+-- Lua Tip: Returning a constructor function lets you keep state private
+-- while still exposing an easy-to-use API.
+
+local Log = {}
+Log.__index = Log
+
+local LEVELS = {
+  error = 1,
+  warn = 2,
+  info = 3,
+  debug = 4,
+}
+
+local function now()
+  if os and os.date then
+    return os.date("%Y-%m-%d %H:%M:%S")
+  end
+  return "unknown-time"
+end
+
+---Create a new logger.
+---@param options table|nil {logFile:string, level:string}
+function Log.new(options)
+  options = options or {}
+  local self = setmetatable({}, Log)
+  self.logFile = options.logFile or "arcade.log"
+  self.threshold = LEVELS[string.lower(options.level or "info")] or LEVELS.info
+  return self
+end
+
+local function tryWrite(path, line)
+  local ok, err = pcall(function()
+    local handle = fs.open(path, "a")
+    if handle then
+      handle.writeLine(line)
+      handle.close()
+    end
+  end)
+  if not ok then
+    return false, err
+  end
+  return true
+end
+
+---Internal helper used by all level-specific methods.
+function Log:log(level, message)
+  local numeric = LEVELS[level] or LEVELS.info
+  if numeric > self.threshold then return end
+  local safeMessage = tostring(message)
+  local line = string.format("[%s] %-5s %s", now(), level:upper(), safeMessage)
+  local success, err = tryWrite(self.logFile, line)
+  if not success and term then
+    -- Fallback to terminal output instead of crashing the program.
+    term.setTextColor(colors.red)
+    print("Log write failed: " .. tostring(err))
+    term.setTextColor(colors.white)
+  end
+end
+
+function Log:error(message) self:log("error", message) end
+function Log:warn(message) self:log("warn", message) end
+function Log:info(message) self:log("info", message) end
+function Log:debug(message) self:log("debug", message) end
+
+return Log
+]]
 files["poker.lua"] = [[---@diagnostic disable: undefined-global, undefined-field
 
 -- Video Poker (full game)
@@ -2265,10 +2395,10 @@ local arcade = require("games.arcade")
 
 -- Card metadata for rendering and evaluation
 local SUITS = {
-        { name = "Spades",   glyph = "\5", color = colors.lightGray },
-        { name = "Hearts",   glyph = "\3", color = colors.red },
-        { name = "Clubs",    glyph = "\6", color = colors.green },
-        { name = "Diamonds", glyph = "\4", color = colors.orange },
+        { name = "Spades",   glyph = "S", color = colors.lightGray },
+        { name = "Hearts",   glyph = "H", color = colors.red },
+        { name = "Clubs",    glyph = "C", color = colors.green },
+        { name = "Diamonds", glyph = "D", color = colors.orange },
 }
 
 local VALUES = {
@@ -2422,12 +2552,12 @@ end
 -- Rendering --------------------------------------------------------------
 
 local function cardArt(card, isRevealed)
-        if not card then return {"┌─────┐", "│     │", "└─────┘"}, colors.lightGray end
+        if not card then return {"+-----+", "|     |", "+-----+"}, colors.lightGray end
         if not isRevealed then
-                return {"┌─────┐", "│▒▒▒▒▒│", "└─────┘"}, colors.lightGray
+                return {"+-----+", "|#####|", "+-----+"}, colors.lightGray
         end
-        local face = string.format("│%-2s %s │", card.label, card.suit.glyph)
-        return {"┌─────┐", face, "└─────┘"}, card.suit.color
+        local face = string.format("|%-2s %s |", card.label, card.suit.glyph)
+        return {"+-----+", face, "+-----+"}, card.suit.color
 end
 
 local function drawCardAt(x, y, card, isRevealed, isHeld, isCursor)
@@ -2997,8 +3127,37 @@ local function normalizeTexture(texture)
     return texture
 end
 
+local function tryBuildPineTexture(width, height, baseColor, accentColor)
+    -- We intentionally use pcall to avoid crashing when pine3d isn't present.
+    local ok, pine3d = pcall(require, "pine3d")
+    if not ok or type(pine3d) ~= "table" then return nil end
+
+    local okTexture, texture = pcall(function()
+        -- Lua Tip: feature detection keeps optional dependencies from breaking core logic.
+        local canvasBuilder = pine3d.newCanvas or pine3d.canvas or pine3d.newRenderer
+        if not canvasBuilder then return nil end
+        local canvas = canvasBuilder(width, height)
+        if canvas.clear then canvas:clear(baseColor) end
+        -- Draw a pair of angular polygons for a "90s" tech-panel vibe.
+        if canvas.polygon then
+            canvas:polygon({0, 0}, {width - 1, 1}, {width - 2, height - 1}, {0, height - 2}, accentColor)
+            canvas:polygon({2, 0}, {width - 1, 0}, {width - 1, height - 1}, {3, height - 2}, colors.black)
+        end
+        -- Exporters vary by pine3d version; try the common ones.
+        if canvas.exportTexture then return normalizeTexture(canvas:exportTexture()) end
+        if canvas.toTexture then return normalizeTexture(canvas:toTexture()) end
+        if canvas.export then return normalizeTexture(canvas:export()) end
+        return nil
+    end)
+
+    if okTexture then return texture end
+    return nil
+end
+
 local function defaultButtonTexture(light, mid, dark)
-    -- Two-tone diagonal stripes to give a bit of depth.
+    local pineTexture = tryBuildPineTexture(6, 3, dark, light)
+    if pineTexture then return pineTexture end
+    -- Two-tone diagonal stripes to give a bit of depth when pine3d is unavailable.
     local fgLight, fgDark = toBlit(colors.white), toBlit(colors.lightGray)
     return normalizeTexture({
         rows = {
@@ -3011,26 +3170,25 @@ end
 
 local function buildDefaultSkin()
     local base = colors.black
-    local accent = colors.gray
-    local accentDark = colors.gray
-    local accentMid = colors.lightGray
+    local accent = colors.orange
+    local accentDark = colors.brown
     return {
         background = base,
         playfield = base,
         buttonBar = { background = base },
         buttons = {
             enabled = {
-                texture = defaultButtonTexture(accentMid, accent, base),
-                labelColor = colors.white,
+                texture = defaultButtonTexture(accent, accentDark, base),
+                labelColor = colors.orange,
                 shadowColor = colors.gray,
             },
             disabled = {
-                texture = defaultButtonTexture(colors.gray, colors.gray, colors.black),
+                texture = defaultButtonTexture(colors.gray, colors.black, colors.black),
                 labelColor = colors.lightGray,
                 shadowColor = colors.black,
             }
         },
-        titleColor = colors.white,
+        titleColor = colors.orange,
     }
 end
 
@@ -3152,7 +3310,7 @@ end
 return Renderer
 ]]
 
-print("Unpacking 11 files...")
+print("Unpacking 12 files...")
 
 for path, content in pairs(files) do
     print("  Installing: " .. path)

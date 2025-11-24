@@ -326,7 +326,7 @@ end
 
 local game = {
     name = "IdleCraft",
-    init = function(a)
+    init = function(self, a)
         math.randomseed(os.epoch and os.epoch("utc") or os.clock()) -- Reseed per session
         -- Enable/disable left button if an action mode is selected but not affordable
         local enableLeft = true
@@ -336,7 +336,7 @@ local game = {
         a:setButtons({currentModeLabel(), "Cycle", "Quit"}, {enableLeft, true, true})
         addMessage("Welcome to IdleCraft (Arcade edition). Press Center to pick an action mode.")
     end,
-    draw = function(a)
+    draw = function(self, a)
         -- Update button labels each frame (mode can change between ticks)
         local enableLeft = true
         if state.mode == "upgrade" then enableLeft = state.cobble >= state.toolUpgradeCost
@@ -345,7 +345,7 @@ local game = {
         a:setButtons({currentModeLabel(), "Cycle", "Quit"}, {enableLeft, true, true})
         drawGame(a)
     end,
-    onButton = function(a, which)
+    onButton = function(self, a, which)
         if which == "left" then
             performPrimary()
         elseif which == "center" then
@@ -354,9 +354,11 @@ local game = {
             a:requestQuit()
             return
         end
+        self.draw(self, a)
     end,
-    onTick = function(a, dt)
+    onTick = function(self, a, dt)
         passiveTick()
+        self.draw(self, a)
     end,
 }
 
