@@ -5,6 +5,7 @@ local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scri
 local PRICING = {
     blackjack = 0,
     slots = 0,
+    videopoker = 0,
     cantstop = 0,
     idlecraft = 0,
     artillery = 0,
@@ -32,6 +33,15 @@ local programs = {
     description = "Spin reels for quick wins.",
     category = "games",
     url = BASE_URL .. "games/slots.lua"
+  },
+  {
+    id = "videopoker",
+    name = "Video Poker",
+    path = "games/videopoker.lua",
+    price = PRICING.videopoker,
+    description = "Jacks or Better poker.",
+    category = "games",
+    url = BASE_URL .. "games/videopoker.lua"
   },
   {
     id = "cantstop",

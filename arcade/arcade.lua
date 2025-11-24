@@ -345,6 +345,10 @@ local function processEvent(e)
 		if ch == "q" then M:requestQuit() end
 		if ch == "1" then handleButtonPress(1) elseif ch == "2" then handleButtonPress(2) elseif ch == "3" then handleButtonPress(3) end
 	end
+    
+    if state.game and state.game.handleEvent then
+        safeCall("game.handleEvent", state.game.handleEvent, state.game, M, e)
+    end
 end
 
 -- ==========================
