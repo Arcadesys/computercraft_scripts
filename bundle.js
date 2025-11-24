@@ -31,7 +31,7 @@ function createInstaller() {
         
         items.forEach(item => {
             const fullPath = path.join(dir, item);
-            const relativePath = baseDir ? path.join(baseDir, item) : item;
+            const relativePath = (baseDir ? path.join(baseDir, item) : item).replace(/\\/g, '/');
             const stat = fs.statSync(fullPath);
             
             if (stat.isDirectory() && !item.startsWith('.')) {

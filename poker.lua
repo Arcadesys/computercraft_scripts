@@ -10,10 +10,10 @@ local arcade = require("games.arcade")
 
 -- Card metadata for rendering and evaluation
 local SUITS = {
-        { name = "Spades",   glyph = "\5", color = colors.lightGray },
-        { name = "Hearts",   glyph = "\3", color = colors.red },
-        { name = "Clubs",    glyph = "\6", color = colors.green },
-        { name = "Diamonds", glyph = "\4", color = colors.orange },
+        { name = "Spades",   glyph = "S", color = colors.lightGray },
+        { name = "Hearts",   glyph = "H", color = colors.red },
+        { name = "Clubs",    glyph = "C", color = colors.green },
+        { name = "Diamonds", glyph = "D", color = colors.orange },
 }
 
 local VALUES = {
@@ -167,12 +167,12 @@ end
 -- Rendering --------------------------------------------------------------
 
 local function cardArt(card, isRevealed)
-        if not card then return {"┌─────┐", "│     │", "└─────┘"}, colors.lightGray end
+        if not card then return {"+-----+", "|     |", "+-----+"}, colors.lightGray end
         if not isRevealed then
-                return {"┌─────┐", "│▒▒▒▒▒│", "└─────┘"}, colors.lightGray
+                return {"+-----+", "|#####|", "+-----+"}, colors.lightGray
         end
-        local face = string.format("│%-2s %s │", card.label, card.suit.glyph)
-        return {"┌─────┐", face, "└─────┘"}, card.suit.color
+        local face = string.format("|%-2s %s |", card.label, card.suit.glyph)
+        return {"+-----+", face, "+-----+"}, card.suit.color
 end
 
 local function drawCardAt(x, y, card, isRevealed, isHeld, isCursor)

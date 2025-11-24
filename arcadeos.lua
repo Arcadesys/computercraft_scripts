@@ -1781,7 +1781,7 @@ if not ok then
 end
 
 ]]
-files["games\arcade.lua"] = [[---@diagnostic disable: undefined-global
+files["games/arcade.lua"] = [[---@diagnostic disable: undefined-global
 -- Shim so games written for `games/arcade.lua` can require the shared adapter
 -- even when the files are placed at the repository root.
 return require("arcade")
@@ -2932,7 +2932,9 @@ local game = {
 
 arcade.start(game, { tickSeconds = 0.15 })
 ]]
-files["ui\renderer.lua"] = [[-- ui/renderer.lua
+files["startup.lua"] = [[shell.run("arcade_shell.lua")
+]]
+files["ui/renderer.lua"] = [[-- ui/renderer.lua
 -- Lightweight textured renderer for ComputerCraft monitors/terminals.
 -- Provides sprite-style drawing helpers, hit-testing, and a pluggable skin
 -- system so games can share visual assets while keeping logic minimal.
@@ -3150,7 +3152,7 @@ end
 return Renderer
 ]]
 
-print("Unpacking 10 files...")
+print("Unpacking 11 files...")
 
 for path, content in pairs(files) do
     print("  Installing: " .. path)

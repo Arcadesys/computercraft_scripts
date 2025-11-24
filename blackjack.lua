@@ -7,7 +7,7 @@
 
 local arcade = require("games.arcade")
 
-local suits = {"\226\153\160", "\226\153\165", "\226\153\167", "\226\153\163"} -- spade, heart, club, diamond
+local suits = {"S", "H", "C", "D"} -- spade, heart, club, diamond
 local ranks = {
         {label = "A", value = 11},
         {label = "2", value = 2}, {label = "3", value = 3}, {label = "4", value = 4}, {label = "5", value = 5},
