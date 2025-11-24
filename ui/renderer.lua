@@ -61,8 +61,37 @@ local function normalizeTexture(texture)
     return texture
 end
 
+local function tryBuildPineTexture(width, height, baseColor, accentColor)
+    -- We intentionally use pcall to avoid crashing when pine3d isn't present.
+    local ok, pine3d = pcall(require, "pine3d")
+    if not ok or type(pine3d) ~= "table" then return nil end
+
+    local okTexture, texture = pcall(function()
+        -- Lua Tip: feature detection keeps optional dependencies from breaking core logic.
+        local canvasBuilder = pine3d.newCanvas or pine3d.canvas or pine3d.newRenderer
+        if not canvasBuilder then return nil end
+        local canvas = canvasBuilder(width, height)
+        if canvas.clear then canvas:clear(baseColor) end
+        -- Draw a pair of angular polygons for a "90s" tech-panel vibe.
+        if canvas.polygon then
+            canvas:polygon({0, 0}, {width - 1, 1}, {width - 2, height - 1}, {0, height - 2}, accentColor)
+            canvas:polygon({2, 0}, {width - 1, 0}, {width - 1, height - 1}, {3, height - 2}, colors.black)
+        end
+        -- Exporters vary by pine3d version; try the common ones.
+        if canvas.exportTexture then return normalizeTexture(canvas:exportTexture()) end
+        if canvas.toTexture then return normalizeTexture(canvas:toTexture()) end
+        if canvas.export then return normalizeTexture(canvas:export()) end
+        return nil
+    end)
+
+    if okTexture then return texture end
+    return nil
+end
+
 local function defaultButtonTexture(light, mid, dark)
-    -- Two-tone diagonal stripes to give a bit of depth.
+    local pineTexture = tryBuildPineTexture(6, 3, dark, light)
+    if pineTexture then return pineTexture end
+    -- Two-tone diagonal stripes to give a bit of depth when pine3d is unavailable.
     local fgLight, fgDark = toBlit(colors.white), toBlit(colors.lightGray)
     return normalizeTexture({
         rows = {
@@ -75,26 +104,25 @@ end
 
 local function buildDefaultSkin()
     local base = colors.black
-    local accent = colors.gray
-    local accentDark = colors.gray
-    local accentMid = colors.lightGray
+    local accent = colors.orange
+    local accentDark = colors.brown
     return {
         background = base,
         playfield = base,
         buttonBar = { background = base },
         buttons = {
             enabled = {
-                texture = defaultButtonTexture(accentMid, accent, base),
-                labelColor = colors.white,
+                texture = defaultButtonTexture(accent, accentDark, base),
+                labelColor = colors.orange,
                 shadowColor = colors.gray,
             },
             disabled = {
-                texture = defaultButtonTexture(colors.gray, colors.gray, colors.black),
+                texture = defaultButtonTexture(colors.gray, colors.black, colors.black),
                 labelColor = colors.lightGray,
                 shadowColor = colors.black,
             }
         },
-        titleColor = colors.white,
+        titleColor = colors.orange,
     }
 end
 
