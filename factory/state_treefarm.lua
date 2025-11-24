@@ -5,6 +5,7 @@ Simple tree farming logic.
 
 local movement = require("lib_movement")
 local inventory = require("lib_inventory")
+local fuelLib = require("lib_fuel")
 local logger = require("lib_logger")
 
 local function TREEFARM(ctx)
@@ -12,9 +13,12 @@ local function TREEFARM(ctx)
 
     -- 1. Check Fuel
     if turtle.getFuelLevel() < 100 then
-        logger.log(ctx, "warn", "Fuel low; switching to REFUEL")
-        ctx.resumeState = "TREEFARM"
-        return "REFUEL"
+        fuelLib.refuel(ctx, { target = 1000 })
+        if turtle.getFuelLevel() < 100 then
+            logger.log(ctx, "warn", "Fuel low; switching to REFUEL")
+            ctx.resumeState = "TREEFARM"
+            return "REFUEL"
+        end
     end
 
     -- 2. Check Saplings

@@ -16,7 +16,11 @@ const IGNORE_DIRS = new Set([
 const IGNORE_FILES = new Set([
     OUTPUT_NAME,
     'package-lock.json',
-    'package.json'
+    'package.json',
+    'README_ARTILLERY.md',
+    'projectile.lua',
+    'tank.lua',
+    'arcadeos.lua' // Exclude old installer/OS file
 ]);
 
 function normalizePath(p) {
@@ -39,8 +43,19 @@ function shouldSkip(relativePath, stat) {
     })) {
         return true;
     }
-    if (stat.isFile() && IGNORE_FILES.has(path.basename(relativePath))) {
-        return true;
+    if (stat.isFile()) {
+        const filename = path.basename(relativePath);
+        if (IGNORE_FILES.has(filename)) {
+            return true;
+        }
+        // Exclude harness/test files
+        if (filename.startsWith('harness_') || filename.startsWith('test_') || filename.startsWith('spec_')) {
+            return true;
+        }
+        // Exclude games from bundle (download separately)
+        if (relativePath.startsWith('arcade/games/')) {
+            return true;
+        }
     }
     return false;
 }
@@ -67,6 +82,19 @@ function collectLuaFiles(dir, base = '') {
     return files;
 }
 
+function minifyLua(content) {
+    // Remove block comments --[[ ... ]]
+    content = content.replace(/--\[\[[\s\S]*?\]\]/g, '');
+    
+    // Remove full line comments (lines starting with optional whitespace and --)
+    content = content.replace(/^\s*--.*$/gm, '');
+    
+    // Remove empty lines
+    content = content.replace(/^\s*[\r\n]/gm, '');
+    
+    return content.trim();
+}
+
 function buildInstaller() {
     console.log('📦 Building Arcadesys installer...');
     const files = collectLuaFiles(PROJECT_ROOT)
@@ -84,7 +112,8 @@ function buildInstaller() {
         `local files = {}\n\n`;
 
     files.forEach(file => {
-        const content = fs.readFileSync(file.absPath, 'utf8');
+        let content = fs.readFileSync(file.absPath, 'utf8');
+        content = minifyLua(content);
         console.log(`   • ${file.relPath}`);
         lua += `files["${file.relPath}"] = ${toLuaString(content)}\n`;
     });

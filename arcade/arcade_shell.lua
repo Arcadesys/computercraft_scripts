@@ -316,6 +316,65 @@ end
 -- Package Manager
 -- ==========================
 
+local REPO_BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
+
+local function downloadFile(url, path)
+    if not http then
+        return false, "HTTP API disabled"
+    end
+    
+    local response = http.get(url)
+    if not response then
+        return false, "Failed to connect"
+    end
+    
+    local content = response.readAll()
+    response.close()
+    
+    local dir = fs.getDir(path)
+    if dir ~= "" and not fs.exists(dir) then
+        fs.makeDir(dir)
+    end
+    
+    local file = fs.open(path, "w")
+    if file then
+        file.write(content)
+        file.close()
+        return true
+    else
+        return false, "Write failed"
+    end
+end
+
+local function installProgram(program)
+    term.setBackgroundColor(colors.blue)
+    term.clear()
+    local w, h = term.getSize()
+    
+    local function center(y, text)
+        term.setCursorPos(math.floor((w - #text) / 2), y)
+        term.write(text)
+    end
+    
+    UI.drawWindow(math.floor((w-30)/2), math.floor((h-10)/2), 30, 10, "Installing...")
+    center(math.floor((h-10)/2) + 3, "Downloading " .. program.name)
+    
+    local url = REPO_BASE_URL .. "arcade/" .. program.path
+    local targetPath = resolvePath(program.path)
+    
+    local ok, err = downloadFile(url, targetPath)
+    
+    if ok then
+        center(math.floor((h-10)/2) + 5, "Success!")
+        os.sleep(1)
+        return true
+    else
+        center(math.floor((h-10)/2) + 5, "Error: " .. (err or "Unknown"))
+        os.sleep(2)
+        return false
+    end
+end
+
 local function downloadPackage(code, filename)
     if not http then
         print("Error: HTTP API not enabled.")
@@ -367,6 +426,14 @@ end
 -- ==========================
 
 local function launchProgram(program)
+  local fullPath = resolvePath(program.path)
+  
+  if not fs.exists(fullPath) then
+      if not installProgram(program) then
+          return
+      end
+  end
+
   if not ensureLicense(program) then
     return
   end
@@ -377,7 +444,7 @@ local function launchProgram(program)
   print("Launching " .. program.name .. "...")
   
   local ok, err = pcall(function()
-    shell.run(resolvePath(program.path))
+    shell.run(fullPath)
   end)
   
   if not ok then
@@ -430,8 +497,14 @@ local function main()
         
         for i, p in ipairs(list) do
             if i > 5 then break end
+            local fullPath = resolvePath(p.path)
+            local label = p.name
+            if not fs.exists(fullPath) then
+                label = "[DL] " .. label
+            end
+            
             table.insert(buttons, {
-                text = p.name, 
+                text = label, 
                 y = startY + (i-1)*2, 
                 action = function() launchProgram(p) end
             })

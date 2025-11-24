@@ -275,8 +275,8 @@ function world.rotateLocalOffset(localOffset, facing)
     local right = vectors.right
     local forward = vectors.forward
     return {
-        x = (right.x * dx) + (forward.x * (-dz)),
-        z = (right.z * dx) + (forward.z * (-dz)),
+        x = (right.x * dx) + (forward.x * dz),
+        z = (right.z * dx) + (forward.z * dz),
     }
 end
 

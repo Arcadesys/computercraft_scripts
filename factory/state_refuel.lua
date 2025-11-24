@@ -25,22 +25,15 @@ local function REFUEL(ctx)
     -- Checking lib_fuel... I don't have its content in mind, but let's assume it has 'ensure' or similar.
     -- If not, we'll do a simple loop.
     
-    ---@diagnostic disable: undefined-global
-    local needed = turtle.getFuelLimit() - turtle.getFuelLevel()
-    if needed <= 0 then
-        local resume = ctx.resumeState or "BUILD"
-        ctx.resumeState = nil
-        return resume
-    end
+    -- Attempt to refuel using library (inventory + sources)
+    -- Target a high amount since we returned home specifically to refuel
+    ---@diagnostic disable-next-line: undefined-global
+    local limit = turtle.getFuelLimit()
+    local target = (type(limit) == "number" and limit < 20000) and limit or 20000
     
-    -- Try to refuel from inventory first
-    for i=1,16 do
-        turtle.select(i)
-        if turtle.refuel(0) then -- Check if fuel
-            turtle.refuel()
-        end
-    end
+    fuelLib.refuel(ctx, { target = target })
     
+    ---@diagnostic disable-next-line: undefined-global
     if turtle.getFuelLevel() > 1000 then
         local resume = ctx.resumeState or "BUILD"
         ctx.resumeState = nil

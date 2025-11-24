@@ -10,55 +10,10 @@ local fuelLib = require("lib_fuel")
 local logger = require("lib_logger")
 local orientation = require("lib_orientation")
 local diagnostics = require("lib_diagnostics")
+local world = require("lib_world")
 
 local function localToWorld(localPos, facing)
-    -- Transform local (x=right, z=forward) to world based on facing
-    -- This assumes the turtle started at (0,0,0) facing 'facing'
-    -- and 'localPos' is relative to that start.
-    -- Actually, ctx.origin has the start pos/facing.
-    -- But the buildOrder computed localPos relative to start.
-    
-    -- Simple rotation:
-    -- North: x=East, z=South (Wait, standard MC: x+ East, z+ South)
-    -- Turtle local: x+ Right, z+ Forward, y+ Up
-    
-    -- If facing North (z-): Right is East (x+), Forward is North (z-)
-    -- If facing East (x+): Right is South (z+), Forward is East (x+)
-    -- If facing South (z+): Right is West (x-), Forward is South (z+)
-    -- If facing West (x-): Right is North (z-), Forward is West (x-)
-    
-    local x, y, z = localPos.x, localPos.y, localPos.z
-    local wx, wz
-    
-    if facing == "north" then
-        wx, wz = x, -z -- Right(x) -> East(+x), Forward(z) -> North(-z)
-        -- Wait, if local z is forward (positive), and we face north (-z), then world z change is -localZ.
-        -- If local x is right (positive), and we face north, right is East (+x).
-        -- So: wx = x, wz = -z.
-        -- BUT: computeLocalXZ in state_initialize used a specific logic.
-        -- Let's stick to what 3dprinter.lua likely did or standard turtle logic.
-        -- 3dprinter.lua used `localToWorld`. Let's check its implementation if possible.
-        -- But for now, I'll implement standard turtle relative coords.
-        
-        -- Re-reading 3dprinter.lua logic:
-        -- "All offsets are specified in turtle-local coordinates (x = right/left, y = up/down, z = forward/back)."
-        
-        wx = x
-        wz = -z -- Forward is -z (North)
-    elseif facing == "east" then
-        wx = z  -- Forward is +x (East)
-        wz = x  -- Right is +z (South)
-    elseif facing == "south" then
-        wx = -x -- Right is -x (West)
-        wz = z  -- Forward is +z (South)
-    elseif facing == "west" then
-        wx = -z -- Forward is -x (West)
-        wz = -x -- Right is -z (North)
-    else
-        wx, wz = x, z -- Fallback
-    end
-    
-    return { x = wx, y = y, z = wz }
+    return world.localToWorld(localPos, facing)
 end
 
 local function addPos(p1, p2)
@@ -83,8 +38,14 @@ local function BUILD(ctx)
     -- Real logic should be in REFUEL state or a robust check here.
     ---@diagnostic disable-next-line: undefined-global
     if turtle.getFuelLevel() < 100 and turtle.getFuelLevel() ~= "unlimited" then
-        ctx.resumeState = "BUILD"
-        return "REFUEL"
+        -- Try to refuel from inventory first
+        fuelLib.refuel(ctx, { target = 1000 })
+        
+        ---@diagnostic disable-next-line: undefined-global
+        if turtle.getFuelLevel() < 100 then
+            ctx.resumeState = "BUILD"
+            return "REFUEL"
+        end
     end
 
     -- 2. Check Inventory

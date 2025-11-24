@@ -8,36 +8,18 @@ Executes the mining strategy step by step.
 local movement = require("lib_movement")
 local inventory = require("lib_inventory")
 local mining = require("lib_mining")
+local fuelLib = require("lib_fuel")
 local logger = require("lib_logger")
 local diagnostics = require("lib_diagnostics")
+local world = require("lib_world")
 
 local function localToWorld(ctx, localPos)
-    local ox, oy, oz = ctx.origin.x, ctx.origin.y, ctx.origin.z
-    local facing = ctx.origin.facing
-    
-    local lx, ly, lz = localPos.x, localPos.y, localPos.z
-    
-    -- Turtle local: x+ Right, z+ Forward, y+ Up
-    -- World: x, y, z (standard MC)
-    
-    local wx, wy, wz
-    wy = oy + ly
-    
-    if facing == "north" then -- -z
-        wx = ox + lx
-        wz = oz - lz
-    elseif facing == "south" then -- +z
-        wx = ox - lx
-        wz = oz + lz
-    elseif facing == "east" then -- +x
-        wx = ox + lz
-        wz = oz + lx
-    elseif facing == "west" then -- -x
-        wx = ox - lz
-        wz = oz - lx
-    end
-    
-    return { x = wx, y = wy, z = wz }
+    local rotated = world.localToWorld(localPos, ctx.origin.facing)
+    return {
+        x = ctx.origin.x + rotated.x,
+        y = ctx.origin.y + rotated.y,
+        z = ctx.origin.z + rotated.z
+    }
 end
 
 local function selectTorch(ctx)
@@ -54,9 +36,14 @@ local function MINE(ctx)
     logger.log(ctx, "info", "State: MINE")
 
     if turtle.getFuelLevel and turtle.getFuelLevel() < 100 then
-        logger.log(ctx, "warn", "Fuel low; switching to REFUEL")
-        ctx.resumeState = "MINE"
-        return "REFUEL"
+        -- Attempt refuel from inventory
+        fuelLib.refuel(ctx, { target = 1000 })
+        
+        if turtle.getFuelLevel() < 100 then
+            logger.log(ctx, "warn", "Fuel low; switching to REFUEL")
+            ctx.resumeState = "MINE"
+            return "REFUEL"
+        end
     end
 
     -- Get current step

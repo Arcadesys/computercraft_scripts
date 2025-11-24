@@ -108,6 +108,16 @@ local function CHECK_REQUIREMENTS(ctx)
 
     -- Check fuel
     if currentFuel < reqs.fuel then
+        -- Attempt to refuel from inventory or nearby sources
+        print("Attempting to refuel to meet requirements...")
+        logger.log(ctx, "info", "Attempting to refuel to meet requirements...")
+        fuel.refuel(ctx, { target = reqs.fuel })
+        
+        currentFuel = turtle.getFuelLevel()
+        if currentFuel == "unlimited" then currentFuel = 999999 end
+    end
+
+    if currentFuel < reqs.fuel then
         missing.fuel = reqs.fuel - currentFuel
         hasMissing = true
     end

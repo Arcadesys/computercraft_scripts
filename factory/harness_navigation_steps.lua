@@ -1,3 +1,4 @@
+---@diagnostic disable: undefined-global
 local navigation_steps = {}
 
 local movement = require("lib_movement")
@@ -12,6 +13,18 @@ function navigation_steps.checkTurtle()
         return false, "turtle fuel API unavailable"
     end
     local fuel = turtle.getFuelLevel()
+    if fuel ~= "unlimited" and fuel < 20 then
+        -- Attempt simple refuel from inventory
+        for i=1,16 do
+            turtle.select(i)
+            if turtle.refuel(0) then
+                turtle.refuel(1)
+                if turtle.getFuelLevel() >= 20 then break end
+            end
+        end
+        fuel = turtle.getFuelLevel()
+    end
+
     if fuel ~= "unlimited" and fuel < 20 then
         return false, "not enough fuel (need >= 20)"
     end

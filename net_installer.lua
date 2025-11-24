@@ -1,5 +1,5 @@
 -- Arcadesys Network Installer
--- Auto-generated at 2025-11-24T18:26:05.158Z
+-- Auto-generated at 2025-11-24T19:02:43.437Z
 -- Downloads files from GitHub to bypass file size limits
 
 local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
@@ -10,15 +10,12 @@ local files = {
     "arcade/data/valhelsia_blocks.lua",
     "arcade/factory_planner.lua",
     "arcade/games/arcade.lua",
-    "arcade/games/artillery.lua",
     "arcade/games/blackjack.lua",
     "arcade/games/cantstop.lua",
     "arcade/games/idlecraft.lua",
     "arcade/games/poker.lua",
     "arcade/games/slots.lua",
     "arcade/license_store.lua",
-    "arcade/models/projectile.lua",
-    "arcade/models/tank.lua",
     "arcade/ui/renderer.lua",
     "factory/factory.lua",
     "factory/harness_common.lua",

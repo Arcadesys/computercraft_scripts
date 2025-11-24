@@ -8,17 +8,23 @@ local logger = require("lib_logger")
 local diagnostics = require("lib_diagnostics")
 local debug = debug
 
+-- Force reload of state modules to ensure updates are applied
+local function requireForce(name)
+    package.loaded[name] = nil
+    return require(name)
+end
+
 local states = {
-    INITIALIZE = require("state_initialize"),
-    CHECK_REQUIREMENTS = require("state_check_requirements"),
-    BUILD = require("state_build"),
-    MINE = require("state_mine"),
-    TREEFARM = require("state_treefarm"),
-    RESTOCK = require("state_restock"),
-    REFUEL = require("state_refuel"),
-    BLOCKED = require("state_blocked"),
-    ERROR = require("state_error"),
-    DONE = require("state_done"),
+    INITIALIZE = requireForce("state_initialize"),
+    CHECK_REQUIREMENTS = requireForce("state_check_requirements"),
+    BUILD = requireForce("state_build"),
+    MINE = requireForce("state_mine"),
+    TREEFARM = requireForce("state_treefarm"),
+    RESTOCK = requireForce("state_restock"),
+    REFUEL = requireForce("state_refuel"),
+    BLOCKED = requireForce("state_blocked"),
+    ERROR = requireForce("state_error"),
+    DONE = requireForce("state_done"),
 }
 
 local function mergeTables(base, extra)
@@ -122,6 +128,9 @@ local function run(args)
         ctx.logger:info(string.format("Fuel: %s / %s", tostring(level), tostring(limit)))
         if level ~= "unlimited" and type(level) == "number" and level < 100 then
              ctx.logger:warn("Fuel is very low on startup!")
+             -- Attempt emergency refuel
+             local fuelLib = require("lib_fuel")
+             fuelLib.refuel(ctx, { target = 2000 })
         end
     end
 

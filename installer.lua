@@ -50,7 +50,7 @@ local function install()
     
     local startupTargets = {
         turtle = "/factory/turtle_os.lua",
-        computer = "/arcade/arcadeos.lua",
+        computer = "/arcade/arcade_shell.lua",
     }
 
     print("Validating startup targets...")
@@ -80,7 +80,7 @@ package.path = package.path .. ";/lib/?.lua;/arcade/?.lua;/factory/?.lua"
 if platform == "turtle" then
     shell.run("/factory/turtle_os.lua")
 else
-    shell.run("/arcade/arcadeos.lua")
+    shell.run("/arcade/arcade_shell.lua")
 end
 ]]
 
