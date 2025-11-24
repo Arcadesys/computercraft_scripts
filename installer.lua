@@ -75,7 +75,7 @@ local function install()
 local platform = turtle and "turtle" or "computer"
 
 -- Add lib and arcade to package path
-package.path = package.path .. ";/lib/?.lua;/arcade/?.lua;/factory/?.lua"
+package.path = package.path .. ";/?.lua;/lib/?.lua;/arcade/?.lua;/factory/?.lua"
 
 if platform == "turtle" then
     shell.run("/factory/turtle_os.lua")

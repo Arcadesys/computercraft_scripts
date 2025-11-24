@@ -1,5 +1,5 @@
 -- Arcadesys Network Installer
--- Auto-generated at 2025-11-24T19:02:43.437Z
+-- Auto-generated at 2025-11-24T22:42:35.323Z
 -- Downloads files from GitHub to bypass file size limits
 
 local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
@@ -7,11 +7,14 @@ local files = {
     "arcade/arcade_shell.lua",
     "arcade/arcade.lua",
     "arcade/arcadeos.lua",
-    "arcade/data/valhelsia_blocks.lua",
     "arcade/data/programs.lua",
-    "arcade/games/store.lua",
+    "arcade/data/valhelsia_blocks.lua",
+    "arcade/games/cantstop.lua",
+    "arcade/games/idlecraft.lua",
+    "arcade/games/slots.lua",
     "arcade/games/themes.lua",
     "arcade/license_store.lua",
+    "arcade/store.lua",
     "arcade/ui/renderer.lua",
     "factory/factory.lua",
     "factory/harness_common.lua",
@@ -39,6 +42,7 @@ local files = {
     "factory/state_restock.lua",
     "factory/state_treefarm.lua",
     "factory/turtle_os.lua",
+    "games/arcade.lua",
     "installer.lua",
     "lib/lib_designer.lua",
     "lib/lib_diagnostics.lua",
@@ -72,6 +76,7 @@ local files = {
     "lib/lib_worldstate.lua",
     "lib/log.lua",
     "startup.lua",
+    "ui/renderer.lua",
 }
 
 print("Starting Network Install...")

@@ -4,7 +4,7 @@
 local platform = turtle and "turtle" or "computer"
 
 -- Add lib and arcade to package path
-package.path = package.path .. ";/lib/?.lua;/arcade/?.lua;/factory/?.lua"
+package.path = package.path .. ";/?.lua;/lib/?.lua;/arcade/?.lua;/factory/?.lua"
 
 if platform == "turtle" then
     local turtle_os = "/factory/turtle_os.lua"

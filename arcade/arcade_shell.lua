@@ -28,6 +28,7 @@ local function setupPaths()
     add("lib")
     add("arcade")
     add("factory")
+    add("") -- Add root for games.arcade shim
 end
 
 setupPaths()
