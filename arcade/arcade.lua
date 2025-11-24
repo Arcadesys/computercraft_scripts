@@ -257,6 +257,14 @@ end
 -- Quit control
 -- ==========================
 
+function M:getRenderer()
+    return state.renderer
+end
+
+function M:getMonitor()
+    return state.monitor
+end
+
 function M:requestQuit()
         log("info", "Quit requested")
         state.quitRequested = true

@@ -41,6 +41,8 @@ local function setupPaths()
     
     add("lib")
     add("arcade")
+    -- Explicitly add ui folder just in case
+    add("arcade/ui")
 end
 
 setupPaths()
@@ -331,24 +333,40 @@ local function modeStatusLine()
 end
 
 local function drawGame(a)
-    a:clearPlayfield(colors.black, colors.white)
-    -- Header
-    a:centerPrint(1, string.format("IdleCraft — %s", getStageName()), colors.cyan)
-    -- Resources
-    a:centerPrint(2, string.format("Cobble %s  Steves %s  Mods %s  OPS %s", 
-        formatNumber(state.cobble), formatNumber(state.steves), formatNumber(state.mods), formatRate(state.ops)), colors.white)
-    -- Mode line
-    a:centerPrint(3, modeStatusLine(), colors.lightGray)
+    local r = a:getRenderer()
+    if not r then return end
+    
+    a:clearPlayfield(colors.black)
+    local w, h = r:getSize()
+    
+    -- Header Bar
+    r:fillRect(1, 1, w, 1, colors.blue, colors.white, " ")
+    r:drawLabelCentered(1, 1, w, "IdleCraft - " .. getStageName(), colors.white)
+    
+    -- Stats Panel
+    r:fillRect(1, 2, w, 3, colors.gray, colors.white, " ")
+    r:drawLabelCentered(1, 2, math.floor(w/2), "Cobble: " .. formatNumber(state.cobble), colors.white)
+    r:drawLabelCentered(math.floor(w/2)+1, 2, math.floor(w/2), "OPS: " .. formatRate(state.ops), colors.white)
+    r:drawLabelCentered(1, 3, math.floor(w/2), "Steves: " .. formatNumber(state.steves), colors.lightGray)
+    r:drawLabelCentered(math.floor(w/2)+1, 3, math.floor(w/2), "Mods: " .. formatNumber(state.mods), colors.lightGray)
+    
+    -- Mode Status
+    local modeColor = colors.lightBlue
+    if state.mode == "upgrade" then modeColor = colors.orange end
+    if state.mode == "hire" then modeColor = colors.lime end
+    if state.mode == "mod" then modeColor = colors.purple end
+    
+    r:fillRect(1, 5, w, 1, modeColor, colors.black, " ")
+    r:drawLabelCentered(1, 5, w, modeStatusLine(), colors.black)
+    
     -- Messages
-    local baseY = 5
+    local msgY = 7
     local msgs = state.messages
-    local start = math.max(1, #msgs - (config.maxMessages) + 1)
-    local line = 0
+    local start = math.max(1, #msgs - 5)
     for i = start, #msgs do
-        line = line + 1
-        a:centerPrint(baseY + line - 1, msgs[i], colors.white)
+        r:drawLabelCentered(1, msgY, w, msgs[i], colors.white)
+        msgY = msgY + 1
     end
-    if #msgs == 0 then a:centerPrint(baseY, "(No messages yet. Mine something!)", colors.lightGray) end
 end
 
 -- ==========================

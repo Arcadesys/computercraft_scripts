@@ -31,6 +31,32 @@ setupPaths()
 
 local arcade = require("arcade")
 
+-- Helper to create simple block textures
+local function toBlit(color)
+    if colors.toBlit then return colors.toBlit(color) end
+    local idx = math.floor(math.log(color, 2))
+    return ("0123456789abcdef"):sub(idx + 1, idx + 1)
+end
+
+local function solidTex(char, fg, bg, w, h)
+    local f = string.rep(toBlit(fg), w)
+    local b = string.rep(toBlit(bg), w)
+    local t = string.rep(char, w)
+    local rows = {}
+    for i=1,h do table.insert(rows, {text=t, fg=f, bg=b}) end
+    return { rows = rows }
+end
+
+local SYMBOLS = {
+    ["Cherry"] = solidTex("@", colors.red, colors.white, 4, 3),
+    ["Lemon"] = solidTex("O", colors.yellow, colors.white, 4, 3),
+    ["Orange"] = solidTex("O", colors.orange, colors.white, 4, 3),
+    ["Plum"] = solidTex("%", colors.purple, colors.white, 4, 3),
+    ["Bell"] = solidTex("A", colors.gold or colors.yellow, colors.white, 4, 3),
+    ["Bar"] = solidTex("=", colors.black, colors.white, 4, 3),
+    ["7"] = solidTex("7", colors.red, colors.white, 4, 3)
+}
+
 local REELS = {
     {"Cherry", "Lemon", "Orange", "Plum", "Bell", "Bar", "7"},
     {"Cherry", "Lemon", "Orange", "Plum", "Bell", "Bar", "7"},
@@ -60,19 +86,52 @@ local game = {
     end,
 
     draw = function(self, a)
-        a:clearPlayfield()
-        a:centerPrint(2, "--- SLOTS ---", colors.yellow)
+        a:clearPlayfield(colors.green)
+        local r = a:getRenderer()
+        if not r then return end
         
-        local s = string.format("[%s] [%s] [%s]", result[1], result[2], result[3])
-        a:centerPrint(5, s, colors.white)
+        local w, h = r:getSize()
+        local cx = math.floor(w / 2)
+        local cy = math.floor(h / 2)
         
-        if winAmount > 0 then
-            a:centerPrint(7, "WINNER! " .. winAmount, colors.lime)
-        else
-            a:centerPrint(7, message, colors.lightGray)
+        -- Draw Title
+        a:centerPrint(2, "--- SLOTS ---", colors.yellow, colors.green)
+        
+        -- Draw Reels
+        local reelW = 6
+        local reelH = 5
+        local spacing = 2
+        local totalW = (reelW * 3) + (spacing * 2)
+        local startX = cx - math.floor(totalW / 2)
+        local startY = 4
+        
+        for i=1,3 do
+            local symName = result[i]
+            local tex = SYMBOLS[symName]
+            local x = startX + (i-1)*(reelW+spacing)
+            
+            -- Draw reel background/frame
+            r:fillRect(x, startY, reelW, reelH, colors.white, colors.black, " ")
+            
+            if tex then
+                -- Center texture in reel
+                local tx = x + 1
+                local ty = startY + 1
+                r:drawTextureRect(tex, tx, ty, 4, 3)
+            else
+                -- Draw placeholder
+                r:drawLabelCentered(x, startY + 2, reelW, "?", colors.black)
+            end
         end
         
-        a:centerPrint(9, "Credits: " .. a:getCredits(), colors.orange)
+        -- Draw Info
+        if winAmount > 0 then
+            a:centerPrint(startY + reelH + 2, "WINNER! " .. winAmount, colors.lime, colors.green)
+        else
+            a:centerPrint(startY + reelH + 2, message, colors.white, colors.green)
+        end
+        
+        a:centerPrint(startY + reelH + 4, "Credits: " .. a:getCredits(), colors.orange, colors.green)
     end,
 
     onButton = function(self, a, button)

@@ -47,6 +47,8 @@ local function setupPaths()
     
     add("lib")
     add("arcade")
+    -- Explicitly add ui folder just in case
+    add("arcade/ui")
 end
 
 setupPaths()
