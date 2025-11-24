@@ -88,6 +88,13 @@ local programs = {
     price = 6,
     description = "AFK-friendly cobble empire.",
   },
+  {
+    id = "artillery",
+    name = "Artillery",
+    path = "artillery.lua",
+    price = 5,
+    description = "2-player tank battle.",
+  },
 }
 
 -- ==========================

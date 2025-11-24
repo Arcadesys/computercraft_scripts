@@ -10,6 +10,29 @@ end
 
 local Pine3D = require("Pine3D")
 
+-- Debug: Try to load the model manually to check for syntax errors
+local function testLoad(path)
+    if not fs.exists(path) then
+        print("File not found: " .. path)
+        return false
+    end
+    local ok, err = loadfile(path)
+    if not ok then
+        printError("Syntax error in " .. path .. ": " .. tostring(err))
+        return false
+    end
+    local ok2, res = pcall(ok)
+    if not ok2 then
+        printError("Runtime error loading " .. path .. ": " .. tostring(res))
+        return false
+    end
+    -- print("Successfully loaded " .. path) -- Commented out to reduce noise if working
+    return true
+end
+
+testLoad("models/tank.lua")
+testLoad("models/projectile.lua")
+
 -- Initialize Frame
 local frame = Pine3D.newFrame()
 frame:setFoV(60)
@@ -50,10 +73,10 @@ local projectile = {
 }
 
 -- Load Models
--- We use the modelId "models/tank" assuming the file exists at models/tank.lua
-players[1].model = frame:newObject("models/tank", players[1].x, players[1].y, players[1].z)
-players[2].model = frame:newObject("models/tank", players[2].x, players[2].y, players[2].z)
-projectile.model = frame:newObject("models/projectile", 0, -10, 0) -- Hide initially
+-- Using "tank" instead of "models/tank" assuming Pine3D searches in "models/" by default
+players[1].model = frame:newObject("tank", players[1].x, players[1].y, players[1].z)
+players[2].model = frame:newObject("tank", players[2].x, players[2].y, players[2].z)
+projectile.model = frame:newObject("projectile", 0, -10, 0) -- Hide initially
 
 -- Helper to draw text on top of 3D view
 local function drawUI(text, line)

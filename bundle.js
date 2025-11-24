@@ -81,6 +81,13 @@ print("Unpacking ${filesToBundle.length} files...")
 
 for path, content in pairs(files) do
     print("  Installing: " .. path)
+    
+    -- Ensure directory exists
+    local dir = fs.getDir(path)
+    if dir ~= "" and dir ~= ".." and not fs.exists(dir) then
+        fs.makeDir(dir)
+    end
+
     local file = fs.open(path, "w")
     if file then
         file.write(content)
@@ -91,6 +98,15 @@ for path, content in pairs(files) do
 end
 
 print("Installation Complete!")
+
+-- Install Pine3D
+print("Installing Pine3D...")
+if http then
+    shell.run("pastebin run qpJYiYs2")
+else
+    printError("HTTP API not enabled! Cannot install Pine3D.")
+end
+
 print("Rebooting in 3 seconds...")
 sleep(3)
 os.reboot()
