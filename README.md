@@ -18,3 +18,7 @@ The system automatically detects if it is running on a Turtle or a Computer.
 
 * **Computers**: Launches ArcadeOS automatically.
 * **Turtles**: Launches the Factory Agent automatically.
+
+## Bundler
+
+Run `node build/bundle.js` from the repo root to generate `arcadesys_installer.lua`. Copy that single Lua file onto a ComputerCraft computer or turtle and run it to unpack the entire suite.

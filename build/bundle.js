@@ -1,121 +1,112 @@
 const fs = require('fs');
 const path = require('path');
 
-// Configuration
-const OUTPUT_FILENAME = 'arcadeos.lua';
-// Files to exclude from the bundle to prevent recursion or clutter
-const IGNORE_FILES = ['bundle.js', 'package.json', 'package-lock.json', OUTPUT_FILENAME];
-const SOURCE_DIR = __dirname;
+const PROJECT_ROOT = path.resolve(__dirname, '..');
+const OUTPUT_NAME = 'arcadesys_installer.lua';
+const OUTPUT_PATH = path.join(PROJECT_ROOT, OUTPUT_NAME);
+const LUA_EXTENSION = '.lua';
+const IGNORE_DIRS = new Set([
+    '.git',
+    '.vscode',
+    'build',
+    'docs',
+    'factory/dist',
+    'node_modules'
+]);
+const IGNORE_FILES = new Set([
+    OUTPUT_NAME,
+    'package-lock.json',
+    'package.json'
+]);
 
-/**
- * Helper: Escapes a string for use in Lua using long brackets.
- * It dynamically adds equals signs (e.g., [=[ ... ]=]) to ensure the delimiter
- * doesn't appear inside the content itself, preventing syntax errors.
- */
+function normalizePath(p) {
+    return p.replace(/\\/g, '/');
+}
+
 function toLuaString(str) {
     let equals = '';
-    // Keep adding '=' until the delimiter [=*[ is unique and doesn't exist in the string
     while (str.includes(`[${equals}[`) || str.includes(`]${equals}]`)) {
         equals += '=';
     }
     return `[${equals}[${str}]${equals}]`;
 }
 
-function createInstaller() {
-    console.log('📦 Packaging ArcadeOS...');
-
-    // 1. Recursively find all Lua files
-    function getAllLuaFiles(dir, baseDir = '') {
-        const files = [];
-        const items = fs.readdirSync(dir);
-        
-        items.forEach(item => {
-            const fullPath = path.join(dir, item);
-            const relativePath = (baseDir ? path.join(baseDir, item) : item).replace(/\\/g, '/');
-            const stat = fs.statSync(fullPath);
-            
-            if (stat.isDirectory() && !item.startsWith('.')) {
-                // Recursively scan subdirectories
-                files.push(...getAllLuaFiles(fullPath, relativePath));
-            } else if (stat.isFile() && item.endsWith('.lua') && !IGNORE_FILES.includes(item)) {
-                files.push({ path: fullPath, relative: relativePath });
-            }
-        });
-        
-        return files;
+function shouldSkip(relativePath, stat) {
+    const segments = normalizePath(relativePath).split('/');
+    if (segments.some((segment, idx) => {
+        const needle = segments.slice(0, idx + 1).join('/');
+        return IGNORE_DIRS.has(segment) || IGNORE_DIRS.has(needle);
+    })) {
+        return true;
     }
-    
-    // 2. Get all Lua files recursively
-    const filesToBundle = getAllLuaFiles(SOURCE_DIR);
+    if (stat.isFile() && IGNORE_FILES.has(path.basename(relativePath))) {
+        return true;
+    }
+    return false;
+}
 
-    if (filesToBundle.length === 0) {
-        console.log('❌ No Lua files found to bundle.');
+function collectLuaFiles(dir, base = '') {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    const files = [];
+
+    entries.forEach(entry => {
+        const absPath = path.join(dir, entry.name);
+        const relPath = normalizePath(path.join(base, entry.name));
+
+        if (shouldSkip(relPath, entry)) {
+            return;
+        }
+
+        if (entry.isDirectory()) {
+            files.push(...collectLuaFiles(absPath, relPath));
+        } else if (entry.isFile() && path.extname(entry.name) === LUA_EXTENSION) {
+            files.push({ absPath, relPath });
+        }
+    });
+
+    return files;
+}
+
+function buildInstaller() {
+    console.log('📦 Building Arcadesys installer...');
+    const files = collectLuaFiles(PROJECT_ROOT)
+        .sort((a, b) => a.relPath.localeCompare(b.relPath));
+
+    if (files.length === 0) {
+        console.error('❌ No Lua files found to bundle.');
+        process.exitCode = 1;
         return;
     }
 
-    // 3. Start building the Lua installer script
-    // This string will become the content of arcadeos.lua
-    let luaScript = `-- ArcadeOS Installer
--- Auto-generated installer script
--- Run this file on a ComputerCraft computer to install the OS.
+    let lua = `-- Arcadesys Unified Installer\n` +
+        `-- Auto-generated at ${new Date().toISOString()}\n` +
+        `print("Starting Arcadesys install...")\n` +
+        `local files = {}\n\n`;
 
-print("Initializing ArcadeOS Installer...")
-local files = {}
-
-`;
-
-    // 4. Append each file's content to the Lua table
-    filesToBundle.forEach(file => {
-        const content = fs.readFileSync(file.path, 'utf8');
-        
-        console.log(`   - Adding ${file.relative}`);
-        
-        // We use the relative path as the key and the content as the value
-        luaScript += `files["${file.relative}"] = ${toLuaString(content)}\n`;
+    files.forEach(file => {
+        const content = fs.readFileSync(file.absPath, 'utf8');
+        console.log(`   • ${file.relPath}`);
+        lua += `files["${file.relPath}"] = ${toLuaString(content)}\n`;
     });
 
-    // 5. Add the installation logic (Lua code)
-    // This Lua code iterates over the 'files' table and writes them to disk
-    luaScript += `
-print("Unpacking ${filesToBundle.length} files...")
+    lua += `\nprint("Unpacking ${files.length} files...")\n` +
+        `for path, content in pairs(files) do\n` +
+        `    local dir = fs.getDir(path)\n` +
+        `    if dir ~= "" and not fs.exists(dir) then\n` +
+        `        fs.makeDir(dir)\n` +
+        `    end\n` +
+        `    local handle = fs.open(path, "w")\n` +
+        `    if not handle then\n` +
+        `        printError("Failed to write " .. path)\n` +
+        `    else\n` +
+        `        handle.write(content)\n` +
+        `        handle.close()\n` +
+        `    end\n` +
+        `end\n` +
+        `print("Arcadesys install complete. Reboot or run startup to launch.")\n`;
 
-for path, content in pairs(files) do
-    print("  Installing: " .. path)
-    
-    -- Ensure directory exists
-    local dir = fs.getDir(path)
-    if dir ~= "" and dir ~= ".." and not fs.exists(dir) then
-        fs.makeDir(dir)
-    end
-
-    local file = fs.open(path, "w")
-    if file then
-        file.write(content)
-        file.close()
-    else
-        printError("  Failed to write: " .. path)
-    end
-end
-
-print("Installation Complete!")
-
--- Install Pine3D
-print("Installing Pine3D...")
-if http then
-    shell.run("pastebin run qpJYiYs2")
-else
-    printError("HTTP API not enabled! Cannot install Pine3D.")
-end
-
-print("Rebooting in 3 seconds...")
-sleep(3)
-os.reboot()
-`;
-
-    // 6. Write the final installer file
-    fs.writeFileSync(path.join(SOURCE_DIR, OUTPUT_FILENAME), luaScript);
-    console.log(`✅ Successfully created installer: ${OUTPUT_FILENAME}`);
+    fs.writeFileSync(OUTPUT_PATH, lua, 'utf8');
+    console.log(`✅ Wrote installer to ${OUTPUT_PATH}`);
 }
 
-// Run the builder
-createInstaller();
+buildInstaller();
