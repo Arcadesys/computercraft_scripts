@@ -66,6 +66,21 @@ local searchScroll = 1
 local selectedSearchIndex = 1
 local paletteScroll = 1
 
+-- File Menu State
+local isFileMenuOpen = false
+local showSaveAs = false
+local showOpen = false
+local saveAsFilename = ""
+local openFileList = {}
+local openFileScroll = 1
+local openFileIndex = 1
+
+local currentFilename = nil
+local plansDir = "/plans"
+if not fs.exists(plansDir) then
+    fs.makeDir(plansDir)
+end
+
 -- Mouse State for Tools
 local mouseState = {
     isDown = false,
@@ -249,13 +264,14 @@ local function draw()
 
     -- Draw Menu Bar
     drawRect(1, 1, 51, 1, colors.gray)
-    drawText(2, 1, "Save", colors.white, colors.gray)
+    drawText(2, 1, "File", colors.white, colors.gray)
     drawText(8, 1, "Edit", colors.white, colors.gray)
     local drawerText = isDrawerOpen and "Hide >>" or "Show <<"
     drawText(40, 1, drawerText, colors.white, colors.gray)
     
     -- Draw Layer Info
-    drawText(20, 1, "Layer: " .. currentLayer .. "/" .. gridDepth, colors.yellow, colors.gray)
+    local filenameDisplay = currentFilename or "Untitled"
+    drawText(15, 1, filenameDisplay .. " - L:" .. currentLayer .. "/" .. gridDepth, colors.yellow, colors.gray)
 
     -- Draw Grid
     local startX = 2
@@ -409,6 +425,46 @@ local function draw()
         drawText(sx + 2, sy + sh - 1, "Enter to Add, Esc to Close", colors.gray, colors.black)
     end
 
+    -- Draw File Menu
+    if isFileMenuOpen then
+        drawRect(2, 2, 10, 5, colors.lightGray)
+        drawText(3, 2, "New", colors.black, colors.lightGray)
+        drawText(3, 3, "Open", colors.black, colors.lightGray)
+        drawText(3, 4, "Save", colors.black, colors.lightGray)
+        drawText(3, 5, "Save As", colors.black, colors.lightGray)
+        drawText(3, 6, "Exit", colors.black, colors.lightGray)
+    end
+
+    -- Draw Save As Dialog
+    if showSaveAs then
+        local rx, ry, rw, rh = 10, 5, 30, 6
+        drawRect(rx, ry, rw, rh, colors.blue)
+        drawRect(rx + 1, ry + 1, rw - 2, rh - 2, colors.black)
+        drawText(rx + 2, ry + 2, "Save As:", colors.white, colors.black)
+        drawText(rx + 2, ry + 3, saveAsFilename .. "_", colors.white, colors.black)
+        drawText(rx + 2, ry + 5, "Enter to Save", colors.gray, colors.black)
+    end
+
+    -- Draw Open Dialog
+    if showOpen then
+        local sx, sy = 5, 4
+        local sw, sh = 40, 12
+        drawRect(sx, sy, sw, sh, colors.blue)
+        drawRect(sx + 1, sy + 1, sw - 2, sh - 2, colors.black)
+        drawText(sx + 2, sy + 2, "Open Plan:", colors.white, colors.black)
+        
+        for i = 1, sh - 5 do
+            local idx = openFileScroll + i - 1
+            if idx <= #openFileList then
+                local file = openFileList[idx]
+                local prefix = (idx == openFileIndex) and "> " or "  "
+                local color = (idx == openFileIndex) and colors.white or colors.lightGray
+                drawText(sx + 2, sy + 3 + i, prefix .. file, color, colors.black)
+            end
+        end
+        drawText(sx + 2, sy + sh - 1, "Enter to Open, Esc to Close", colors.gray, colors.black)
+    end
+
     -- Draw Message
     if messageTimer > 0 then
         drawText(2, gridHeight + 4 + menuHeight, message, colors.yellow, colors.black)
@@ -416,7 +472,7 @@ local function draw()
 end
 
 -- Logic
-local function saveSchema()
+local function saveSchema(path)
     local data = {
         width = gridWidth,
         height = gridHeight,
@@ -425,22 +481,86 @@ local function saveSchema()
         layers = layers
     }
     
-    -- Try to save to disk first
-    local path = filename
-    if fs.exists("disk") then
-        path = diskPath
+    local targetPath = path or currentFilename
+    if not targetPath then
+        message = "No filename specified"
+        messageTimer = 30
+        return false
     end
 
-    local file = fs.open(path, "w")
+    -- Ensure extension
+    if not string.find(targetPath, "%.lua$") then
+        targetPath = targetPath .. ".lua"
+    end
+    
+    -- If path doesn't start with /plans, add it (unless it's absolute or disk)
+    if not fs.exists("disk") and not string.find(targetPath, "^/plans/") and not string.find(targetPath, "^disk/") then
+        targetPath = fs.combine(plansDir, targetPath)
+    end
+
+    -- Handle disk override if path is just filename
+    if fs.exists("disk") and not string.find(targetPath, "/") then
+        targetPath = fs.combine("disk", targetPath)
+    end
+
+    local file = fs.open(targetPath, "w")
     if file then
         file.write(textutils.serialize(data))
         file.close()
-        message = "Saved to " .. path
+        currentFilename = fs.getName(targetPath)
+        message = "Saved to " .. currentFilename
+        messageTimer = 50
+        return true
     else
-        message = "Error saving to " .. path
+        message = "Error saving to " .. targetPath
+        messageTimer = 50
+        return false
     end
-    messageTimer = 50
 end
+
+local function loadSchema(path)
+    if not fs.exists(path) then
+        message = "File not found"
+        messageTimer = 30
+        return
+    end
+    
+    local file = fs.open(path, "r")
+    if file then
+        local content = file.readAll()
+        file.close()
+        local data = textutils.unserialize(content)
+        
+        if data and data.layers then
+            gridWidth = data.width or gridWidth
+            gridHeight = data.height or gridHeight
+            gridDepth = data.depth or gridDepth
+            palette = data.palette or palette
+            layers = data.layers
+            
+            -- Reset view
+            currentLayer = 1
+            grid = layers[currentLayer]
+            currentFilename = fs.getName(path)
+            
+            message = "Loaded " .. currentFilename
+            messageTimer = 30
+        else
+            message = "Invalid file format"
+            messageTimer = 30
+        end
+    else
+        message = "Error opening file"
+        messageTimer = 30
+    end
+end
+
+local function updateFileList()
+    openFileList = fs.list(plansDir)
+    openFileScroll = 1
+    openFileIndex = 1
+end
+
 
 local function copyGrid()
     clipboard = textutils.unserialize(textutils.serialize(grid)) -- Deep copy
@@ -498,20 +618,90 @@ local function handleMouse(event, button, x, y)
         return 
     end
     if showResize then return end -- Modal blocks clicks
+    if showSaveAs then return end -- Modal blocks clicks
+    
+    if showOpen then
+        local sx, sy = 5, 4
+        local sw, sh = 40, 12
+        
+        if event == "mouse_click" then
+            if x >= sx and x < sx + sw and y >= sy + 4 and y <= sy + sh - 2 then
+                local i = y - (sy + 3)
+                local idx = openFileScroll + i - 1
+                if idx <= #openFileList then
+                    openFileIndex = idx
+                    loadSchema(fs.combine(plansDir, openFileList[idx]))
+                    showOpen = false
+                end
+            elseif not (x >= sx and x < sx + sw and y >= sy and y < sy + sh) then
+                showOpen = false
+            end
+        end
+        return
+    end
 
     -- Menu Bar Click
     if y == 1 and event == "mouse_click" then
-        if x >= 2 and x <= 6 then -- Save
-            saveSchema()
+        if x >= 2 and x <= 6 then -- File
+            isFileMenuOpen = not isFileMenuOpen
             isEditMenuOpen = false
         elseif x >= 8 and x <= 12 then -- Edit
             isEditMenuOpen = not isEditMenuOpen
+            isFileMenuOpen = false
         elseif x >= 40 and x <= 50 then -- Drawer
             isDrawerOpen = not isDrawerOpen
             isEditMenuOpen = false
+            isFileMenuOpen = false
         else
             isEditMenuOpen = false
+            isFileMenuOpen = false
         end
+        return
+    end
+
+    -- File Menu Click
+    if isFileMenuOpen and event == "mouse_click" then
+        if x >= 2 and x <= 12 then
+            if y == 2 then -- New
+                -- Reset grid
+                for z = 1, gridDepth do
+                    for y = 1, gridHeight do
+                        for x = 1, gridWidth do
+                            layers[z][y][x] = 1
+                        end
+                    end
+                end
+                grid = layers[currentLayer]
+                currentFilename = nil
+                message = "New Plan Created"
+                messageTimer = 30
+                isFileMenuOpen = false
+                return
+            elseif y == 3 then -- Open
+                updateFileList()
+                showOpen = true
+                isFileMenuOpen = false
+                return
+            elseif y == 4 then -- Save
+                if currentFilename then
+                    saveSchema()
+                else
+                    showSaveAs = true
+                    saveAsFilename = ""
+                end
+                isFileMenuOpen = false
+                return
+            elseif y == 5 then -- Save As
+                showSaveAs = true
+                saveAsFilename = ""
+                isFileMenuOpen = false
+                return
+            elseif y == 6 then -- Exit
+                isRunning = false
+                return
+            end
+        end
+        isFileMenuOpen = false -- Clicked outside menu
         return
     end
 
@@ -523,6 +713,7 @@ local function handleMouse(event, button, x, y)
                 searchQuery = ""
                 updateSearchResults()
                 isEditMenuOpen = false
+                isFileMenuOpen = false
                 return
             elseif y == 3 then -- Size
                 showResize = true
@@ -530,12 +721,14 @@ local function handleMouse(event, button, x, y)
                 resizeHeightInput = tostring(gridHeight)
                 activeResizeInput = 1
                 isEditMenuOpen = false
+                isFileMenuOpen = false
                 return
             end
         end
         isEditMenuOpen = false -- Clicked outside menu
         return 
     end
+
 
     -- Grid Coordinates
     local startX = 2
@@ -639,6 +832,53 @@ local function handleMouse(event, button, x, y)
 end
 
 local function handleKey(key, char)
+    if showSaveAs then
+        if key and key == keys.enter then
+            if saveAsFilename ~= "" then
+                if saveSchema(saveAsFilename) then
+                    showSaveAs = false
+                end
+            end
+        elseif key and key == keys.backspace then
+            saveAsFilename = string.sub(saveAsFilename, 1, -2)
+        elseif key and key == keys.escape then
+            showSaveAs = false
+        elseif char then
+            -- Filter control characters
+            if string.byte(char) >= 32 then
+                saveAsFilename = saveAsFilename .. char
+            end
+        end
+        return
+    end
+
+    if showOpen then
+        if key and key == keys.enter then
+            if #openFileList > 0 and openFileIndex <= #openFileList then
+                loadSchema(fs.combine(plansDir, openFileList[openFileIndex]))
+                showOpen = false
+            end
+        elseif key and key == keys.up then
+            if openFileIndex > 1 then
+                openFileIndex = openFileIndex - 1
+                if openFileIndex < openFileScroll then
+                    openFileScroll = openFileIndex
+                end
+            end
+        elseif key and key == keys.down then
+            if openFileIndex < #openFileList then
+                openFileIndex = openFileIndex + 1
+                local sh = 12
+                if openFileIndex >= openFileScroll + (sh - 5) then
+                    openFileScroll = openFileIndex - (sh - 5) + 1
+                end
+            end
+        elseif key and key == keys.escape then
+            showOpen = false
+        end
+        return
+    end
+
     if showSearch then
         if key and key == keys.enter then
             if #searchResults > 0 and selectedSearchIndex <= #searchResults then
@@ -688,7 +928,7 @@ local function handleKey(key, char)
     end
 
     if showResize then
-        if key == keys.enter then
+        if key and key == keys.enter then
             local w = tonumber(resizeWidthInput)
             local h = tonumber(resizeHeightInput)
             if w and h and w > 0 and h > 0 then
@@ -715,15 +955,15 @@ local function handleKey(key, char)
                 messageTimer = 30
             end
             showResize = false
-        elseif key == keys.tab then
+        elseif key and key == keys.tab then
             activeResizeInput = (activeResizeInput % 2) + 1
-        elseif key == keys.backspace then
+        elseif key and key == keys.backspace then
             if activeResizeInput == 1 then
                 resizeWidthInput = string.sub(resizeWidthInput, 1, -2)
             else
                 resizeHeightInput = string.sub(resizeHeightInput, 1, -2)
             end
-        elseif key == keys.escape then
+        elseif key and key == keys.escape then
             showResize = false
         elseif char and tonumber(char) then
             if activeResizeInput == 1 then
