@@ -285,7 +285,8 @@ end
 -- ==========================
 
 function M.start(gameTable, configOverride)
-	state.game = gameTable
+        state.quitRequested = false -- Reset so multiple sessions can run back-to-back.
+        state.game = gameTable
 	state.config = {}
 	for k,v in pairs(DEFAULT) do state.config[k] = v end
 	if configOverride then for k,v in pairs(configOverride) do state.config[k]=v end end
