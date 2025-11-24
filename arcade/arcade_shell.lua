@@ -28,6 +28,12 @@ end
 local CREDIT_FILE = "credits.txt"
 local DEFAULT_LICENSE_DIR = "licenses"
 local SECRET_SALT = "arcade-license-v1"
+local ENVIRONMENT_FILE = "environment.settings"
+
+local DEFAULT_ENVIRONMENT = {
+  -- Accepts "development" (show everything) or "production" (hide unfinished entries)
+  mode = "development",
+}
 
 local function detectDiskMount()
   local drive = peripheral.find and peripheral.find("drive") or nil
@@ -132,6 +138,7 @@ local programs = {
     price = 0,
     description = "Manage inventory (Coming Soon).",
     category = "actions",
+    prodReady = false,
   },
 }
 
@@ -147,7 +154,8 @@ local state = {
     bg = colors.black,
     header = colors.blue,
     highlight = colors.yellow
-  }
+  },
+  environment = DEFAULT_ENVIRONMENT.mode,
 }
 
 local THEME_FILE = "theme.settings"
@@ -160,6 +168,20 @@ local function loadTheme()
       handle.close()
       if data then
         for k, v in pairs(data) do state.theme[k] = v end
+      end
+    end
+  end
+end
+
+local function loadEnvironment()
+  state.environment = DEFAULT_ENVIRONMENT.mode
+  if fs.exists(ENVIRONMENT_FILE) then
+    local handle = fs.open(ENVIRONMENT_FILE, "r")
+    if handle then
+      local data = textutils.unserialize(handle.readAll())
+      handle.close()
+      if data and type(data.mode) == "string" then
+        state.environment = data.mode
       end
     end
   end
@@ -178,6 +200,7 @@ local function initState()
   local base = combinePath(detectDiskMount(), DEFAULT_LICENSE_DIR)
   state.licenseStore = LicenseStore.new(base, SECRET_SALT)
   loadTheme()
+  loadEnvironment()
 end
 
 -- ==========================
@@ -270,6 +293,18 @@ local function ensureLicense(program)
           return true
       end
   end
+end
+
+local function shouldShowProgram(program, currentMenu)
+  if program.category ~= currentMenu then
+    return false
+  end
+
+  if state.environment == "production" and program.prodReady == false then
+    return false
+  end
+
+  return true
 end
 
 -- ==========================
@@ -382,11 +417,11 @@ local function main()
         table.insert(buttons, {text = "Actions", y = startY + 2, action = function() currentMenu = "actions" end})
         table.insert(buttons, {text = "Utilities", y = startY + 4, action = function() currentMenu = "utils" end})
         table.insert(buttons, {text = "Exit", y = startY + 8, action = function() running = false end})
-    elseif currentMenu == "games" or currentMenu == "actions" then
-        local list = {}
-        for _, p in ipairs(programs) do
-            if p.category == currentMenu then table.insert(list, p) end
-        end
+  elseif currentMenu == "games" or currentMenu == "actions" then
+      local list = {}
+      for _, p in ipairs(programs) do
+            if shouldShowProgram(p, currentMenu) then table.insert(list, p) end
+      end
         
         for i, p in ipairs(list) do
             if i > 5 then break end
