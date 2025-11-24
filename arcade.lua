@@ -25,16 +25,18 @@
 ---@diagnostic disable: undefined-global, undefined-field
 
 local M = {}
+local Renderer = require("ui.renderer")
 
 -- ==========================
 -- Configuration defaults
 -- ==========================
 
 local DEFAULT = {
-	textScale = 0.5,         -- Monitor text scale for readability
-	buttonBarHeight = 3,     -- Height in rows of bottom bar
-	creditsFile = "credits.txt", -- File stored on disk drive media
-	tickSeconds = 0.25,      -- Passive tick interval (can drive animations)
+        textScale = 0.5,         -- Monitor text scale for readability
+        buttonBarHeight = 3,     -- Height in rows of bottom bar
+        creditsFile = "credits.txt", -- File stored on disk drive media
+        tickSeconds = 0.25,      -- Passive tick interval (can drive animations)
+        skin = Renderer.defaultSkin(), -- Shared skin/theme for buttons and backgrounds
 }
 
 -- ==========================
@@ -42,9 +44,9 @@ local DEFAULT = {
 -- ==========================
 
 local state = {
-	monitor = nil,
-	termNative = term and term.current(),
-	screenW = 0, screenH = 0,
+        monitor = nil,
+        termNative = term and term.current(),
+        screenW = 0, screenH = 0,
 	buttons = {"", "", ""},
 	buttonEnabled = {true, true, true},
 	quitRequested = false,
@@ -56,9 +58,11 @@ local state = {
 			{x=1,y=1,w=1,h=1}, {x=1,y=1,w=1,h=1}, {x=1,y=1,w=1,h=1}
 		}
 	},
-	credits = 0,
-	drive = nil,             -- peripheral for disk drive
-	config = DEFAULT,
+        credits = 0,
+        drive = nil,             -- peripheral for disk drive
+        config = DEFAULT,
+        renderer = nil,
+        skin = Renderer.defaultSkin(),
 }
 
 -- ==========================
@@ -113,55 +117,50 @@ end
 -- Layout & rendering
 -- ==========================
 
-local function computeLayout()
-	state.screenW, state.screenH = term.getSize()
-	local barH = state.config.buttonBarHeight
-	local pfH = math.max(1, state.screenH - barH)
-	state.layout.playfield.x = 1
-	state.layout.playfield.y = 1
-	state.layout.playfield.w = state.screenW
-	state.layout.playfield.h = pfH
-	-- buttons horizontally divided
-	local btnW = math.floor(state.screenW / 3)
-	local leftover = state.screenW - btnW * 3
-	local startY = state.screenH - barH + 1
-	for i=1,3 do
-		local extra = (i <= leftover) and 1 or 0
-		local x = 1 + (i-1)*btnW + math.min(i-1, leftover)
-		local r = state.layout.buttonRects[i]
-		r.x, r.y, r.w, r.h = x, startY, btnW+extra, barH
-	end
+local function applySkin(skinOverride)
+        state.skin = Renderer.mergeSkin(Renderer.defaultSkin(), skinOverride or {})
+        if state.renderer then state.renderer:setSkin(state.skin) end
 end
 
-local function clearArea(x,y,w,h,bg,fg)
-	term.setBackgroundColor(bg or colors.black)
-	term.setTextColor(fg or colors.white)
-	for yy=y,y+h-1 do
-		term.setCursorPos(x,yy)
-		term.write(string.rep(" ", w))
-	end
+local function computeLayout()
+        state.screenW, state.screenH = state.renderer:getSize()
+        local barH = state.config.buttonBarHeight
+        local pfH = math.max(1, state.screenH - barH)
+        state.layout.playfield.x = 1
+        state.layout.playfield.y = 1
+        state.layout.playfield.w = state.screenW
+        state.layout.playfield.h = pfH
+        -- buttons horizontally divided
+        local btnW = math.floor(state.screenW / 3)
+        local leftover = state.screenW - btnW * 3
+        local startY = state.screenH - barH + 1
+        for i=1,3 do
+                local extra = (i <= leftover) and 1 or 0
+                local x = 1 + (i-1)*btnW + math.min(i-1, leftover)
+                local r = state.layout.buttonRects[i]
+                r.x, r.y, r.w, r.h = x, startY, btnW+extra, barH
+                state.renderer:registerHotspot("button"..i, r)
+        end
+end
+
+local function drawButtonBar()
+        local barRect = { x = 1, y = state.screenH - state.config.buttonBarHeight + 1, w = state.screenW, h = state.config.buttonBarHeight }
+        state.renderer:paintSurface(barRect, state.skin.buttonBar.background or colors.black)
 end
 
 local function drawButtons()
-	for i=1,3 do
-		local r = state.layout.buttonRects[i]
-		local enabled = state.buttonEnabled[i]
-		local bg = enabled and colors.gray or colors.black
-		local fg = enabled and colors.white or colors.lightGray
-		clearArea(r.x,r.y,r.w,r.h,bg,fg)
-		local label = state.buttons[i]
-		if label and label ~= "" then
-			local cx = r.x + math.floor((r.w - #label)/2)
-			local cy = r.y + math.floor(r.h/2)
-			term.setCursorPos(cx, cy)
-			term.write(label:sub(1,r.w))
-		end
-	end
+        drawButtonBar()
+        for i=1,3 do
+                local r = state.layout.buttonRects[i]
+                local enabled = state.buttonEnabled[i]
+                local label = state.buttons[i]
+                state.renderer:drawButton(r, label, enabled)
+        end
 end
 
-function M:clearPlayfield(bg, fg)
-	local pf = state.layout.playfield
-	clearArea(pf.x,pf.y,pf.w,pf.h,bg,fg)
+function M:clearPlayfield(surface)
+        local pf = state.layout.playfield
+        state.renderer:paintSurface(pf, surface or state.skin.playfield)
 end
 
 function M:centerPrint(relY, text, fg, bg)
@@ -218,11 +217,12 @@ end
 -- ==========================
 
 local function detectMonitor()
-	state.monitor = peripheral.find and peripheral.find("monitor") or nil
-	if state.monitor then
-		state.monitor.setTextScale(state.config.textScale)
-		term.redirect(state.monitor)
-	end
+        state.monitor = peripheral.find and peripheral.find("monitor") or nil
+        if state.monitor then
+                state.renderer:attachToMonitor(state.monitor, state.config.textScale)
+        else
+                state.renderer:attachToMonitor(nil)
+        end
 end
 
 local function detectDiskDrive()
@@ -231,10 +231,10 @@ local function detectDiskDrive()
 end
 
 local function redrawAll()
-	computeLayout()
-	M:clearPlayfield()
-	drawButtons()
-	if state.game and state.game.draw then state.game.draw(M) end
+        computeLayout()
+        M:clearPlayfield()
+        drawButtons()
+        if state.game and state.game.draw then state.game.draw(M) end
 end
 
 local function handleButtonPress(idx)
@@ -250,18 +250,18 @@ local function waitEvent()
 end
 
 local function processEvent(e)
-	local ev = e[1]
-	if ev == "term_resize" or ev == "monitor_resize" then
-		redrawAll(); return
-	elseif ev == "monitor_touch" then
-		local x,y = e[3], e[4]
-		for i=1,3 do if pointInRect(x,y,state.layout.buttonRects[i]) then handleButtonPress(i); return end end
-	elseif ev == "mouse_click" then
-		local x,y = e[3], e[4]
-		for i=1,3 do if pointInRect(x,y,state.layout.buttonRects[i]) then handleButtonPress(i); return end end
-	elseif ev == "timer" then
-		local id = e[2]
-		if id == state._tickTimer then
+        local ev = e[1]
+        if ev == "term_resize" or ev == "monitor_resize" then
+                redrawAll(); return
+        elseif ev == "monitor_touch" then
+                local x,y = e[3], e[4]
+                for i=1,3 do if state.renderer:hitTest("button"..i, x, y) then handleButtonPress(i); return end end
+        elseif ev == "mouse_click" then
+                local x,y = e[3], e[4]
+                for i=1,3 do if state.renderer:hitTest("button"..i, x, y) then handleButtonPress(i); return end end
+        elseif ev == "timer" then
+                local id = e[2]
+                if id == state._tickTimer then
 			if state.game and state.game.onTick then
 				state.game.onTick(M, state.config.tickSeconds)
 			end
@@ -285,27 +285,27 @@ end
 -- ==========================
 
 function M.start(gameTable, configOverride)
-	state.game = gameTable
-	state.config = {}
-	for k,v in pairs(DEFAULT) do state.config[k] = v end
-	if configOverride then for k,v in pairs(configOverride) do state.config[k]=v end end
-	detectMonitor()
-	detectDiskDrive()
-	loadCredits()
+        state.game = gameTable
+        state.config = {}
+        for k,v in pairs(DEFAULT) do state.config[k] = v end
+        if configOverride then for k,v in pairs(configOverride) do state.config[k]=v end end
+        applySkin(state.config.skin)
+        state.renderer = Renderer.new({ skin = state.skin })
+        detectMonitor()
+        detectDiskDrive()
+        loadCredits()
 	computeLayout()
 	if state.game and state.game.init then state.game.init(M) end
 	redrawAll()
 	state._tickTimer = os.startTimer(state.config.tickSeconds)
-	while not state.quitRequested do
-		local e = waitEvent()
-		processEvent(e)
-	end
-	-- Clean up terminal redirection
-	if state.monitor and state.termNative then
-		term.redirect(state.termNative)
-	end
-	-- Persist credits one last time
-	saveCredits()
+        while not state.quitRequested do
+                local e = waitEvent()
+                processEvent(e)
+        end
+        -- Clean up terminal redirection
+        if state.renderer then state.renderer:restore() end
+        -- Persist credits one last time
+        saveCredits()
 end
 
 -- Return module table for require()

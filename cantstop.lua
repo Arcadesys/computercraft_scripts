@@ -23,6 +23,12 @@
 -- Arcade wrapper note: we require the wrapper for consistency with other games,
 -- but Can't Stop currently uses its own bespoke UI/event loop.
 local _arcade_ok, _arcade = pcall(require, "games.arcade")
+local Renderer = require("ui.renderer")
+
+local function toBlit(color)
+        if colors.toBlit then return colors.toBlit(color) end
+        return string.format("%x", math.floor(math.log(color, 2)))
+end
 
 ---@diagnostic disable: undefined-global, undefined-field
 -- Above directive silences static analysis complaints about ComputerCraft globals
@@ -88,15 +94,40 @@ end
 local monitor = nil
 local termNative = term.current()
 local screenW, screenH = term.getSize()
+local rendererSkin = Renderer.mergeSkin(Renderer.defaultSkin(), {
+        playfield = colors.black,
+        buttonBar = { background = colors.black },
+        buttons = {
+                enabled = {
+                        texture = { rows = {
+                                { text = "::::", fg = string.rep(toBlit(colors.white), 4), bg = string.rep(toBlit(colors.orange), 4) },
+                                { text = "++++", fg = string.rep(toBlit(colors.white), 4), bg = string.rep(toBlit(colors.red), 4) },
+                                { text = "....", fg = string.rep(toBlit(colors.white), 4), bg = string.rep(toBlit(colors.brown), 4) },
+                        }},
+                        labelColor = colors.white,
+                        shadowColor = colors.black,
+                },
+                disabled = {
+                        texture = { rows = {
+                                { text = "    ", fg = string.rep(toBlit(colors.gray), 4), bg = string.rep(toBlit(colors.black), 4) },
+                                { text = "    ", fg = string.rep(toBlit(colors.gray), 4), bg = string.rep(toBlit(colors.black), 4) },
+                        }},
+                        labelColor = colors.lightGray,
+                        shadowColor = colors.black,
+                }
+        },
+})
+local renderer = Renderer.new({ skin = rendererSkin })
 
 local function initMonitor()
-	-- Try to find an attached monitor; if none, we use the normal terminal.
-	monitor = peripheral.find and peripheral.find("monitor") or nil
-	if monitor then
-		monitor.setTextScale(0.5) -- smaller text for more info
-		term.redirect(monitor)
-	end
-	screenW, screenH = term.getSize()
+        -- Try to find an attached monitor; if none, we use the normal terminal.
+        monitor = peripheral.find and peripheral.find("monitor") or nil
+        if monitor then
+                renderer:attachToMonitor(monitor, 0.5) -- smaller text for more info
+        else
+                renderer:attachToMonitor(nil)
+        end
+        screenW, screenH = renderer:getSize()
 end
 
 -- ==========================
@@ -115,10 +146,10 @@ local layout = {
 }
 
 local function computeLayout()
-	screenW, screenH = term.getSize()
-	-- Board takes everything above the bottom bar, minus top 2 lines (status & dice)
-	local boardTop = 3
-	local boardBottom = screenH - BUTTON_BAR_HEIGHT
+        screenW, screenH = renderer:getSize()
+        -- Board takes everything above the bottom bar, minus top 2 lines (status & dice)
+        local boardTop = 3
+        local boardBottom = screenH - BUTTON_BAR_HEIGHT
 	if boardBottom < boardTop + 4 then
 		-- If monitor is tiny, collapse dice into status and shrink board
 		layout.statusY = 1
@@ -136,16 +167,17 @@ local function computeLayout()
 
 	-- Buttons split width into 3 equal parts at the bottom
 	local btnW = math.floor(screenW / 3)
-	local leftover = screenW - (btnW * 3)
-	local startY = screenH - BUTTON_BAR_HEIGHT + 1
-	for i = 1, 3 do
-		local extra = (i <= leftover) and 1 or 0 -- distribute leftover pixels
-		local x = 1 + (i - 1) * btnW + math.min(i - 1, leftover)
-		layout.buttons[i].x = x
-		layout.buttons[i].y = startY
-		layout.buttons[i].w = btnW + extra
-		layout.buttons[i].h = BUTTON_BAR_HEIGHT
-	end
+        local leftover = screenW - (btnW * 3)
+        local startY = screenH - BUTTON_BAR_HEIGHT + 1
+        for i = 1, 3 do
+                local extra = (i <= leftover) and 1 or 0 -- distribute leftover pixels
+                local x = 1 + (i - 1) * btnW + math.min(i - 1, leftover)
+                layout.buttons[i].x = x
+                layout.buttons[i].y = startY
+                layout.buttons[i].w = btnW + extra
+                layout.buttons[i].h = BUTTON_BAR_HEIGHT
+                renderer:registerHotspot("button" .. i, layout.buttons[i])
+        end
 end
 
 -- ==========================
@@ -169,14 +201,9 @@ local state = {
 -- ==========================
 
 local function clearArea(x, y, w, h, bg, fg)
-	bg = bg or colors.black
-	fg = fg or colors.white
-	term.setBackgroundColor(bg)
-	term.setTextColor(fg)
-	for yy = y, y + h - 1 do
-		term.setCursorPos(x, yy)
-		term.write(string.rep(" ", w))
-	end
+        -- The shared renderer tiles textures for us; fallback to color fill when no texture is provided.
+        renderer:paintSurface({ x = x, y = y, w = w, h = h }, bg or rendererSkin.playfield)
+        if fg then term.setTextColor(fg) end
 end
 
 local function centerText(x, y, w, text)
@@ -206,14 +233,13 @@ local function drawDice()
 end
 
 local function drawButtons(labels, enabled)
-	enabled = enabled or { true, true, true }
-	for i = 1, 3 do
-		local r = layout.buttons[i]
-		local bg = enabled[i] and colors.gray or colors.black
-		local fg = enabled[i] and colors.white or colors.lightGray
-		clearArea(r.x, r.y, r.w, r.h, bg, fg)
-		centerText(r.x, r.y + math.floor(r.h / 2), r.w, labels[i] or "")
-	end
+        enabled = enabled or { true, true, true }
+        -- Paint a bar backdrop before stamping the individual buttons.
+        renderer:paintSurface({ x = 1, y = layout.buttons[1].y, w = screenW, h = BUTTON_BAR_HEIGHT }, rendererSkin.buttonBar.background)
+        for i = 1, 3 do
+                local r = layout.buttons[i]
+                renderer:drawButton(r, labels[i] or "", enabled[i] ~= false)
+        end
 end
 
 -- Count how many columns a player has claimed (helper for progress UI)
@@ -373,13 +399,12 @@ local function drawBoard()
 end
 
 local function drawAll(labels, enabled)
-	term.setBackgroundColor(colors.black)
-	term.clear()
-	computeLayout()
-	drawStatus()
-	drawDice()
-	drawPlayersSummary()
-	drawBoard()
+        computeLayout()
+        renderer:paintSurface({ x = 1, y = 1, w = screenW, h = screenH }, rendererSkin.playfield)
+        drawStatus()
+        drawDice()
+        drawPlayersSummary()
+        drawBoard()
 	drawButtons(labels, enabled)
 end
 
@@ -578,34 +603,20 @@ end
 -- Input handling
 -- ==========================
 
-local function pointInRect(px, py, rx, ry, rw, rh)
-	return px >= rx and px <= rx + rw - 1 and py >= ry and py <= ry + rh - 1
-end
-
 local function waitForButtonPress()
 	while true do
 		local e = { os.pullEvent() }
 		local ev = e[1]
-		if ev == "monitor_touch" then
-			local _side, x, y = e[2], e[3], e[4]
-			for i = 1, 3 do
-				local r = layout.buttons[i]
-				if pointInRect(x, y, r.x, r.y, r.w, r.h) then
-					return i -- BTN.LEFT/CENTER/RIGHT
-				end
-			end
-		elseif ev == "mouse_click" then
-			-- If running on terminal, allow mouse clicks as well
-			local _btn, x, y = e[2], e[3], e[4]
-			for i = 1, 3 do
-				local r = layout.buttons[i]
-				if pointInRect(x, y, r.x, r.y, r.w, r.h) then
-					return i
-				end
-			end
-		elseif ev == "term_resize" or ev == "monitor_resize" then
-			drawAll({"","",""}, {false,false,false})
-		end
+                if ev == "monitor_touch" then
+                        local _side, x, y = e[2], e[3], e[4]
+                        for i = 1, 3 do if renderer:hitTest("button" .. i, x, y) then return i end end
+                elseif ev == "mouse_click" then
+                        -- If running on terminal, allow mouse clicks as well
+                        local _btn, x, y = e[2], e[3], e[4]
+                        for i = 1, 3 do if renderer:hitTest("button" .. i, x, y) then return i end end
+                elseif ev == "term_resize" or ev == "monitor_resize" then
+                        drawAll({"","",""}, {false,false,false})
+                end
 	end
 end
 
@@ -781,9 +792,9 @@ end
 -- Lua Tip: wrap main in pcall to catch runtime errors and show them on-screen.
 local ok, err = pcall(main)
 if not ok then
-	if monitor then term.redirect(termNative) end
-	print("Can't Stop crashed:\n" .. tostring(err))
-	print("Press any key to exit...")
-	os.pullEvent("key")
+        if renderer then renderer:restore() end
+        print("Can't Stop crashed:\n" .. tostring(err))
+        print("Press any key to exit...")
+        os.pullEvent("key")
 end
 
