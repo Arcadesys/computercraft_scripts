@@ -1,11 +1,25 @@
 local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/arcade/"
 
+-- Pricing Configuration
+-- Adjust prices here. Set to 0 for free downloads.
+local PRICING = {
+    blackjack = 0,
+    slots = 0,
+    cantstop = 0,
+    idlecraft = 0,
+    artillery = 0,
+    factory_planner = 0,
+    inv_manager = 0,
+    store = 0,
+    themes = 0
+}
+
 local programs = {
   {
     id = "blackjack",
     name = "Blackjack",
     path = "games/blackjack.lua",
-    price = 5,
+    price = PRICING.blackjack,
     description = "Beat the dealer in a race to 21.",
     category = "games",
     url = BASE_URL .. "games/blackjack.lua"
@@ -14,7 +28,7 @@ local programs = {
     id = "slots",
     name = "Slots",
     path = "games/slots.lua",
-    price = 3,
+    price = PRICING.slots,
     description = "Spin reels for quick wins.",
     category = "games",
     url = BASE_URL .. "games/slots.lua"
@@ -23,7 +37,7 @@ local programs = {
     id = "cantstop",
     name = "Can't Stop",
     path = "games/cantstop.lua",
-    price = 4,
+    price = PRICING.cantstop,
     description = "Push your luck dice classic.",
     category = "games",
     url = BASE_URL .. "games/cantstop.lua"
@@ -32,7 +46,7 @@ local programs = {
     id = "idlecraft",
     name = "IdleCraft",
     path = "games/idlecraft.lua",
-    price = 6,
+    price = PRICING.idlecraft,
     description = "AFK-friendly cobble empire.",
     category = "games",
     url = BASE_URL .. "games/idlecraft.lua"
@@ -41,7 +55,7 @@ local programs = {
     id = "artillery",
     name = "Artillery",
     path = "games/artillery.lua",
-    price = 5,
+    price = PRICING.artillery,
     description = "2-player tank battle.",
     category = "games",
     url = BASE_URL .. "games/artillery.lua"
@@ -50,7 +64,7 @@ local programs = {
     id = "factory_planner",
     name = "Factory Planner",
     path = "factory_planner.lua",
-    price = 0,
+    price = PRICING.factory_planner,
     description = "Design factory layouts for turtles.",
     category = "actions",
     url = BASE_URL .. "factory_planner.lua"
@@ -59,7 +73,7 @@ local programs = {
     id = "inv_manager",
     name = "Inventory Manager",
     path = "inv_manager.lua",
-    price = 0,
+    price = PRICING.inv_manager,
     description = "Manage inventory (Coming Soon).",
     category = "actions",
     prodReady = false,
@@ -68,17 +82,17 @@ local programs = {
   {
     id = "store",
     name = "App Store",
-    path = "games/store.lua",
-    price = 0,
+    path = "store.lua",
+    price = PRICING.store,
     description = "Download new games.",
     category = "system",
-    url = BASE_URL .. "games/store.lua"
+    url = BASE_URL .. "store.lua"
   },
   {
     id = "themes",
     name = "Themes",
     path = "games/themes.lua",
-    price = 0,
+    price = PRICING.themes,
     description = "Change system theme.",
     category = "system",
     url = BASE_URL .. "games/themes.lua"

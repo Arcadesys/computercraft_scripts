@@ -209,6 +209,11 @@ end
 function Renderer:drawLabelCentered(x, y, w, text, color, shadowColor)
     if not text or text == "" then return end
     local tx = x + math.floor((w - #text) / 2)
+    
+    -- Use transparent background if possible, or match the button background
+    -- Since we don't know the button background easily here without sampling,
+    -- we will just write. If it's not showing up, it might be color collision.
+    
     if shadowColor then
         term.setTextColor(shadowColor)
         term.setCursorPos(tx + 1, y + 1)

@@ -1,4 +1,32 @@
-local arcade = require("arcade")
+-- Clear potentially failed loads
+package.loaded["arcade"] = nil
+package.loaded["log"] = nil
+
+local function setupPaths()
+    local program = shell.getRunningProgram()
+    -- themes is in arcade/games/themes.lua
+    -- dir is arcade/games
+    -- root is arcade
+    -- parent of root is installation root
+    local gamesDir = fs.getDir(program)
+    local arcadeDir = fs.getDir(gamesDir)
+    local root = fs.getDir(arcadeDir)
+    
+    local function add(path)
+        local part = fs.combine(root, path)
+        -- fs.combine strips leading slashes, so we force absolute path
+        local pattern = "/" .. fs.combine(part, "?.lua")
+        
+        if not string.find(package.path, pattern, 1, true) then
+            package.path = package.path .. ";" .. pattern
+        end
+    end
+    
+    add("lib")
+    add("arcade")
+end
+
+setupPaths()
 
 local themes = {
     {
@@ -56,38 +84,100 @@ local themes = {
 }
 
 local currentIndex = 1
+local SKIN_FILE = "arcade_skin.settings"
 
-local game = {
-    name = "Theme Switcher",
-    
-    init = function(a)
-        a:setButtons({"Prev", "Apply", "Next"})
-    end,
+local function saveSkin(skin)
+    local f = fs.open(SKIN_FILE, "w")
+    if f then
+        f.write(textutils.serialize(skin))
+        f.close()
+    end
+end
 
-    draw = function(a)
-        a:clearPlayfield()
-        a:centerPrint(2, "Select Theme", colors.white)
-        
-        local theme = themes[currentIndex]
-        a:centerPrint(5, theme.name, theme.skin.titleColor)
-        
-        a:centerPrint(8, "Press Apply to set", colors.lightGray)
-        a:centerPrint(10, "Right click to Quit", colors.gray)
-    end,
-
-    onButton = function(a, button)
-        if button == "left" then
-            currentIndex = currentIndex - 1
-            if currentIndex < 1 then currentIndex = #themes end
-        elseif button == "center" then
-            local theme = themes[currentIndex]
-            a:setSkin(theme.skin)
-        elseif button == "right" then
-            currentIndex = currentIndex + 1
-            if currentIndex > #themes then currentIndex = 1 end
+local function loadSkin()
+    if fs.exists(SKIN_FILE) then
+        local f = fs.open(SKIN_FILE, "r")
+        if f then
+            local content = f.readAll()
+            f.close()
+            return textutils.unserialize(content)
         end
     end
-}
+    return nil
+end
 
-arcade.start(game)
+-- UI
+local w, h = term.getSize()
+local currentSkin = loadSkin()
+
+local function draw()
+    -- Header
+    term.setCursorPos(1, 1)
+    term.setBackgroundColor(colors.blue)
+    term.setTextColor(colors.white)
+    term.clearLine()
+    term.write(" Theme Switcher")
+    
+    -- Footer
+    term.setCursorPos(1, h)
+    term.setBackgroundColor(colors.gray)
+    term.setTextColor(colors.white)
+    term.clearLine()
+    term.write(" Enter: Apply  Q: Quit")
+    
+    -- List
+    for i, theme in ipairs(themes) do
+        local y = i + 2
+        term.setCursorPos(1, y)
+        term.clearLine()
+        
+        if i == currentIndex then
+            term.setBackgroundColor(colors.lightGray)
+            term.setTextColor(colors.black)
+        else
+            term.setBackgroundColor(colors.black)
+            term.setTextColor(colors.white)
+        end
+        
+        term.write(" " .. theme.name)
+        
+        -- Indicate active
+        if currentSkin and currentSkin.background == theme.skin.background and currentSkin.titleColor == theme.skin.titleColor then
+            term.setCursorPos(w - 8, y)
+            term.setTextColor(colors.green)
+            term.write("(Active)")
+        end
+    end
+end
+
+while true do
+    draw()
+    local ev, p1 = os.pullEvent()
+    if ev == "key" then
+        if p1 == keys.up then
+            currentIndex = currentIndex - 1
+            if currentIndex < 1 then currentIndex = #themes end
+        elseif p1 == keys.down then
+            currentIndex = currentIndex + 1
+            if currentIndex > #themes then currentIndex = 1 end
+        elseif p1 == keys.enter then
+            local theme = themes[currentIndex]
+            saveSkin(theme.skin)
+            currentSkin = theme.skin
+            
+            term.setCursorPos(1, h-1)
+            term.setBackgroundColor(colors.green)
+            term.setTextColor(colors.white)
+            term.clearLine()
+            term.write(" Theme Applied! ")
+            os.sleep(1)
+        elseif p1 == keys.q then
+            break
+        end
+    end
+end
+
+term.setBackgroundColor(colors.black)
+term.clear()
+term.setCursorPos(1, 1)
 

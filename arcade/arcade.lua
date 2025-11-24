@@ -85,6 +85,12 @@ local function safeCall(label, fn, ...)
         local ok, err = pcall(fn, ...)
         if not ok then
                 log("warn", label .. " failed: " .. tostring(err))
+                -- Emergency print to screen
+                local w,h = term.getSize()
+                term.setCursorPos(1, h)
+                term.setBackgroundColor(colors.black)
+                term.setTextColor(colors.red)
+                term.write("ERR: " .. label .. " " .. tostring(err))
         end
 end
 
@@ -203,6 +209,8 @@ function M:centerPrint(relY, text, fg, bg)
 	local x = pf.x + math.floor((pf.w - #text)/2)
 	term.setCursorPos(x, y)
 	term.write(text)
+    -- Debug: ensure text is written
+    -- term.setCursorPos(1,1); term.write("CP: " .. text)
 end
 
 function M:setButtons(labels, enabled)
@@ -335,14 +343,33 @@ end
 -- Public start API
 -- ==========================
 
+local SKIN_FILE = "arcade_skin.settings"
+
+local function loadSkin()
+    if fs.exists(SKIN_FILE) then
+        local f = fs.open(SKIN_FILE, "r")
+        if f then
+            local data = textutils.unserialize(f.readAll())
+            f.close()
+            if data then
+                state.config.skin = Renderer.mergeSkin(Renderer.defaultSkin(), data)
+            end
+        end
+    end
+end
+
 function M.start(gameTable, configOverride)
         state.game = gameTable
+        state.quitRequested = false
         state.config = {}
         for k,v in pairs(DEFAULT) do state.config[k] = v end
         if configOverride then for k,v in pairs(configOverride) do state.config[k]=v end end
         state.logger = Log.new({ logFile = state.config.logFile, level = state.config.logLevel })
         log("info", "Starting arcade wrapper" .. (state.game and (" for " .. (state.game.name or "game")) or ""))
+        
+        loadSkin()
         applySkin(state.config.skin)
+        
         local okRenderer, rendererOrErr = pcall(Renderer.new, { skin = state.skin })
         if not okRenderer or not rendererOrErr then
                 log("error", "Renderer initialization failed: " .. tostring(rendererOrErr))

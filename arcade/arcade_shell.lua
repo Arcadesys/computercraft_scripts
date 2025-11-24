@@ -3,10 +3,34 @@
 -- Simple shell UI that lists arcade programs, lets players buy licenses,
 -- and launches games once unlocked.
 
--- Ensure package path includes lib and arcade
-if not string.find(package.path, "/lib/?.lua") then
-    package.path = package.path .. ";/lib/?.lua;/arcade/?.lua;/factory/?.lua"
+-- Clear potentially failed loads from previous runs
+package.loaded["arcade"] = nil
+package.loaded["log"] = nil
+package.loaded["data.programs"] = nil
+
+local function setupPaths()
+    local program = shell.getRunningProgram()
+    local dir = fs.getDir(program)
+    -- We expect to be in /arcade or /disk/arcade
+    -- So parent of dir is the root.
+    local root = fs.getDir(dir)
+    
+    local function add(path)
+        local part = fs.combine(root, path)
+        -- fs.combine strips leading slashes, so we force absolute path
+        local pattern = "/" .. fs.combine(part, "?.lua")
+        
+        if not string.find(package.path, pattern, 1, true) then
+            package.path = package.path .. ";" .. pattern
+        end
+    end
+    
+    add("lib")
+    add("arcade")
+    add("factory")
 end
+
+setupPaths()
 
 local LicenseStore = require("license_store")
 
@@ -86,6 +110,7 @@ end
 -- Program catalog
 -- ==========================
 
+package.loaded["data.programs"] = nil -- Force reload
 local programs = require("data.programs")
 
 -- ==========================
@@ -420,6 +445,9 @@ local function launchProgram(program)
     print("Program error: " .. tostring(err))
     print("Press Enter to return...")
     read()
+  else
+    print("Program finished cleanly.")
+    os.sleep(2)
   end
 end
 
@@ -439,6 +467,7 @@ local function main()
     local winW, winH = 26, 14
     local winX = math.floor((w - winW) / 2) + 1
     local winY = math.floor((h - winH) / 2) + 1
+    if winY < 1 then winY = 1 end
     
     local title = "ArcadeOS"
     if currentMenu == "library" then title = "My Apps" end
@@ -464,11 +493,8 @@ local function main()
     elseif currentMenu == "library" then
         local list = {}
         for _, p in ipairs(programs) do
-            -- Show installed games/actions, exclude system apps like store/themes from this list if desired
-            -- But user might want to launch themes from here?
-            -- Let's show everything installed except "store" which is on main menu
-            local fullPath = resolvePath(p.path)
-            if p.id ~= "store" and fs.exists(fullPath) then
+            -- Show purchased games/actions
+            if p.id ~= "store" and state.licenseStore:has(p.id) then
                 table.insert(list, p)
             end
         end
@@ -488,8 +514,18 @@ local function main()
         table.insert(buttons, {text = "Back", y = winY + winH - 2, action = function() currentMenu = "main" end})
     elseif currentMenu == "system" then
         table.insert(buttons, {text = "Themes", y = startY, action = function() 
+             local found = false
              for _, p in ipairs(programs) do
-                if p.id == "themes" then launchProgram(p) return end
+                if p.id == "themes" then 
+                    launchProgram(p) 
+                    found = true
+                    return 
+                end
+            end
+            if not found then
+                term.setCursorPos(1,1)
+                print("Theme app not found")
+                os.sleep(1)
             end
         end})
         table.insert(buttons, {text = "Disk Info", y = startY + 2, action = function() 
@@ -499,7 +535,7 @@ local function main()
             print("Free Space: " .. fs.getFreeSpace(detectDiskMount() or "/"))
             os.sleep(2)
         end})
-        table.insert(buttons, {text = "Back", y = winY + winH - 2, action = function() currentMenu = "main" end})
+        table.insert(buttons, {text = "Back", y = startY + 4, action = function() currentMenu = "main" end})
     end
     
     -- Draw Buttons

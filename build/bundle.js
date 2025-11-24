@@ -52,9 +52,12 @@ function shouldSkip(relativePath, stat) {
         if (filename.startsWith('harness_') || filename.startsWith('test_') || filename.startsWith('spec_')) {
             return true;
         }
-        // Exclude games from bundle (download separately)
+        // Exclude games from bundle (download separately), but keep system apps
         if (relativePath.startsWith('arcade/games/')) {
-            return true;
+            const filename = path.basename(relativePath);
+            if (filename !== 'store.lua' && filename !== 'themes.lua' && filename !== 'slots.lua') {
+                return true;
+            }
         }
     }
     return false;
@@ -118,7 +121,11 @@ function buildInstaller() {
         lua += `files["${file.relPath}"] = ${toLuaString(content)}\n`;
     });
 
-    lua += `\nprint("Unpacking ${files.length} files...")\n` +
+    lua += `\nprint("Cleaning old installation...")\n` +
+        `if fs.exists("arcade") then fs.delete("arcade") end\n` +
+        `if fs.exists("lib") then fs.delete("lib") end\n` +
+        `if fs.exists("factory") then fs.delete("factory") end\n` +
+        `\nprint("Unpacking ${files.length} files...")\n` +
         `for path, content in pairs(files) do\n` +
         `    local dir = fs.getDir(path)\n` +
         `    if dir ~= "" and not fs.exists(dir) then\n` +
