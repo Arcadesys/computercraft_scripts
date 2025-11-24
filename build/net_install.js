@@ -122,9 +122,10 @@ function buildNetInstaller() {
         `    else\n` +
         `        failCount = failCount + 1\n` +
         `    end\n` +
-        `    sleep(0.1) -- Be nice to the server\n` +
+        `    sleep(0.1)\n` +
         `end\n\n` +
-        `print("\nInstall Complete!")\n` +
+        `print("")\n` +
+        `print("Install Complete!")\n` +
         `print("Downloaded: " .. successCount)\n` +
         `print("Failed: " .. failCount)\n` +
         `if failCount == 0 then\n` +

@@ -1,5 +1,5 @@
 -- Arcadesys Network Installer
--- Auto-generated at 2025-11-24T18:24:15.270Z
+-- Auto-generated at 2025-11-24T18:26:05.158Z
 -- Downloads files from GitHub to bypass file size limits
 
 local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
@@ -121,11 +121,11 @@ for _, file in ipairs(files) do
     else
         failCount = failCount + 1
     end
-    sleep(0.1) -- Be nice to the server
+    sleep(0.1)
 end
 
-print("
-Install Complete!")
+print("")
+print("Install Complete!")
 print("Downloaded: " .. successCount)
 print("Failed: " .. failCount)
 if failCount == 0 then
