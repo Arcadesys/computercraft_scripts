@@ -97,8 +97,11 @@ local function updateSearchResults()
     searchResults = {}
     if searchQuery == "" then return end
     for _, block in ipairs(blockList) do
-        if string.find(string.lower(block.label), string.lower(searchQuery)) or 
-           string.find(string.lower(block.id), string.lower(searchQuery)) then
+        -- Use plain search (4th arg = true) to avoid pattern matching errors with special chars
+        local labelMatch = block.label and string.find(string.lower(block.label), string.lower(searchQuery), 1, true)
+        local idMatch = block.id and string.find(string.lower(block.id), string.lower(searchQuery), 1, true)
+        
+        if labelMatch or idMatch then
             table.insert(searchResults, block)
         end
     end
