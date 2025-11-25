@@ -756,4 +756,8 @@ function movement.describePosition(ctx)
     return string.format("(x=%d, y=%d, z=%d, facing=%s)", pos.x, pos.y, pos.z, tostring(facing))
 end
 
+function movement.face(ctx, targetFacing)
+    return movement.faceDirection(ctx, targetFacing)
+end
+
 return movement

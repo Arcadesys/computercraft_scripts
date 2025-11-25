@@ -10,6 +10,63 @@ end
 
 local logger = require("lib_logger")
 local movement = require("lib_movement")
+local ui = require("lib_ui")
+
+local function interactiveSetup(ctx)
+    local width = 9
+    local height = 9
+    local selected = 1 -- 1: Width, 2: Height, 3: FARM
+    
+    while true do
+        ui.clear()
+        ui.drawFrame(2, 2, 26, 12, "Tree Farm Setup")
+        
+        -- Width
+        ui.label(4, 5, "Width: ")
+        if selected == 1 then
+            if term.isColor() then term.setTextColor(colors.yellow) end
+            term.write("< " .. width .. " >")
+        else
+            if term.isColor() then term.setTextColor(colors.white) end
+            term.write("  " .. width .. "  ")
+        end
+        
+        -- Height
+        ui.label(4, 7, "Height:")
+        if selected == 2 then
+            if term.isColor() then term.setTextColor(colors.yellow) end
+            term.write("< " .. height .. " >")
+        else
+            if term.isColor() then term.setTextColor(colors.white) end
+            term.write("  " .. height .. "  ")
+        end
+        
+        -- Button
+        ui.button(8, 10, "FARM", selected == 3)
+        
+        local event, key = os.pullEvent("key")
+        if key == keys.up then
+            selected = selected - 1
+            if selected < 1 then selected = 3 end
+        elseif key == keys.down then
+            selected = selected + 1
+            if selected > 3 then selected = 1 end
+        elseif key == keys.left then
+            if selected == 1 then width = math.max(1, width - 1) end
+            if selected == 2 then height = math.max(1, height - 1) end
+        elseif key == keys.right then
+            if selected == 1 then width = width + 1 end
+            if selected == 2 then height = height + 1 end
+        elseif key == keys.enter then
+            if selected == 3 then
+                ctx.config.mode = "treefarm"
+                ctx.config.width = width
+                ctx.config.height = height
+                return
+            end
+        end
+    end
+end
 
 -- Load states
 local states = {
@@ -21,6 +78,7 @@ local states = {
     BLOCKED = require("state_blocked"),
     ERROR = require("state_error"),
     DONE = require("state_done"),
+    CHECK_REQUIREMENTS = require("state_check_requirements"),
     TREEFARM = require("state_treefarm"),
     POTATOFARM = require("state_potatofarm")
 }
@@ -78,6 +136,11 @@ local function main(args)
         i = i + 1
     end
     
+    -- If no args provided, run interactive setup
+    if #args == 0 then
+        interactiveSetup(ctx)
+    end
+    
     if not ctx.config.schemaPath and ctx.config.mode ~= "mine" then
         ctx.config.schemaPath = "schema.json"
     end
@@ -110,6 +173,12 @@ local function main(args)
     end
 
     logger.info("Agent finished.")
+    
+    if ctx.lastError then
+        print("Agent finished: " .. tostring(ctx.lastError))
+    else
+        print("Agent finished: success!")
+    end
 end
 
 local args = { ... }

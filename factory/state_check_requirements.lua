@@ -9,6 +9,7 @@ local inventory = require("lib_inventory")
 local logger = require("lib_logger")
 local fuel = require("lib_fuel")
 local diagnostics = require("lib_diagnostics")
+local movement = require("lib_movement")
 
 local function calculateRequirements(ctx, strategy)
     local reqs = {
@@ -57,6 +58,79 @@ local function getInventoryCounts(ctx)
         end
     end
     return counts
+end
+
+local function retrieveFromNearby(ctx, missing)
+    local sides = {"front", "top", "bottom", "left", "right", "back"}
+    local pulledAny = false
+    
+    for _, side in ipairs(sides) do
+        if peripheral.isPresent(side) then
+            local types = { peripheral.getType(side) }
+            local isInventory = false
+            for _, t in ipairs(types) do
+                if t == "inventory" then isInventory = true break end
+            end
+            
+            if isInventory then
+                local p = peripheral.wrap(side)
+                if p and p.list then
+                    local list = p.list()
+                    local neededFromChest = {}
+                    for slot, item in pairs(list) do
+                        if item and missing[item.name] and missing[item.name] > 0 then
+                            neededFromChest[item.name] = true
+                        end
+                    end
+                    
+                    for mat, _ in pairs(neededFromChest) do
+                        local amount = missing[mat]
+                        local pullSide = "forward"
+                        local turned = false
+                        
+                        if side == "top" then pullSide = "up"
+                        elseif side == "bottom" then pullSide = "down"
+                        elseif side == "front" then pullSide = "forward"
+                        elseif side == "left" then
+                            movement.turnLeft(ctx)
+                            turned = true
+                            pullSide = "forward"
+                        elseif side == "right" then
+                            movement.turnRight(ctx)
+                            turned = true
+                            pullSide = "forward"
+                        elseif side == "back" then
+                            movement.turnRight(ctx)
+                            movement.turnRight(ctx)
+                            turned = true
+                            pullSide = "forward"
+                        end
+                        
+                        print(string.format("Attempting to pull %s from %s...", mat, side))
+                        local success, err = inventory.pullMaterial(ctx, mat, amount, { side = pullSide })
+                        if success then
+                            pulledAny = true
+                            -- Update missing count locally to avoid over-pulling
+                            missing[mat] = math.max(0, missing[mat] - amount)
+                        else
+                             logger.log(ctx, "warn", "Failed to pull " .. mat .. ": " .. tostring(err))
+                        end
+                        
+                        if turned then
+                            -- Restore facing
+                            if side == "left" then movement.turnRight(ctx)
+                            elseif side == "right" then movement.turnLeft(ctx)
+                            elseif side == "back" then 
+                                movement.turnRight(ctx)
+                                movement.turnRight(ctx)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return pulledAny
 end
 
 local function checkNearbyChests(ctx, missing)
@@ -111,7 +185,7 @@ local function CHECK_REQUIREMENTS(ctx)
         -- Attempt to refuel from inventory or nearby sources
         print("Attempting to refuel to meet requirements...")
         logger.log(ctx, "info", "Attempting to refuel to meet requirements...")
-        fuel.refuel(ctx, { target = reqs.fuel })
+        fuel.refuel(ctx, { target = reqs.fuel, excludeItems = { "minecraft:torch" } })
         
         currentFuel = turtle.getFuelLevel()
         if currentFuel == "unlimited" then currentFuel = 999999 end
@@ -128,6 +202,23 @@ local function CHECK_REQUIREMENTS(ctx)
         if have < count then
             missing.materials[mat] = count - have
             hasMissing = true
+        end
+    end
+
+    if hasMissing then
+        print("Checking nearby chests for missing items...")
+        if retrieveFromNearby(ctx, missing.materials) then
+             -- Re-check inventory
+             invCounts = getInventoryCounts(ctx)
+             hasMissing = false
+             missing.materials = {}
+             for mat, count in pairs(reqs.materials) do
+                local have = invCounts[mat] or 0
+                if have < count then
+                    missing.materials[mat] = count - have
+                    hasMissing = true
+                end
+            end
         end
     end
 

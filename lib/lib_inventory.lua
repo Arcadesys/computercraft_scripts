@@ -88,7 +88,6 @@ inventory.DEFAULT_TRASH = {
     ["minecraft:bedrock"] = true,
     ["minecraft:lava"] = true,
     ["minecraft:water"] = true,
-    ["minecraft:torch"] = true,
 }
 
 local function noop()

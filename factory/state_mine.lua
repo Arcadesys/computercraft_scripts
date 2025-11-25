@@ -37,7 +37,7 @@ local function MINE(ctx)
 
     if turtle.getFuelLevel and turtle.getFuelLevel() < 100 then
         -- Attempt refuel from inventory
-        fuelLib.refuel(ctx, { target = 1000 })
+        fuelLib.refuel(ctx, { target = 1000, excludeItems = { "minecraft:torch" } })
         
         if turtle.getFuelLevel() < 100 then
             logger.log(ctx, "warn", "Fuel low; switching to REFUEL")
@@ -85,8 +85,27 @@ local function MINE(ctx)
             ctx.resumeState = "MINE"
             return "RESTOCK"
         end
-        if not turtle.placeDown() then
-            turtle.placeUp()
+        
+        -- Try standard placement (works if there is space)
+        if turtle.placeDown() then
+            -- Success
+        elseif turtle.placeUp() then
+            -- Success
+        else
+            -- Try placing behind (turn 180)
+            movement.turnRight(ctx)
+            movement.turnRight(ctx)
+            if turtle.place() then
+                -- Success
+            else
+                -- Last resort: Dig down and place in hole
+                if turtle.digDown() then
+                    turtle.placeDown()
+                end
+            end
+            -- Restore facing
+            movement.turnRight(ctx)
+            movement.turnRight(ctx)
         end
         
     elseif step.type == "dump_trash" then

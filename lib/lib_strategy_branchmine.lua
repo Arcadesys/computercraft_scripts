@@ -62,7 +62,8 @@ function strategy.generate(length, branchInterval, branchLength, torchInterval)
     local facing = 0 -- 0: forward, 1: right, 2: back, 3: left
 
     pushStep(steps, x, y, z, facing, "place_chest")
-    pushStep(steps, x, y, z, facing, "mine_neighbors")
+    -- Removed initial mine_neighbors to avoid mining the chest we just placed
+    -- pushStep(steps, x, y, z, facing, "mine_neighbors")
 
     for i = 1, length do
         x, z = forward(x, z, facing)

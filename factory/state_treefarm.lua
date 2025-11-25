@@ -9,29 +9,44 @@ local fuelLib = require("lib_fuel")
 local logger = require("lib_logger")
 local wizard = require("lib_wizard")
 
+local function selectSapling(ctx)
+    inventory.scan(ctx)
+    local state = ctx.inventory
+    if not state or not state.slots then return false end
+    
+    for slot, info in pairs(state.slots) do
+        if info.name and info.name:find("sapling") then
+            if turtle.select(slot) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 local function TREEFARM(ctx)
     local tf = ctx.treefarm
     if not tf then return "INITIALIZE" end
 
     -- 1. Fuel Check
     if turtle.getFuelLevel() < 200 then
-        logger.log(ctx, "warn", "Fuel low (" .. turtle.getFuelLevel() .. "). Attempting refuel...")
+        logger.log(ctx, "warn", "Running low on fuel (Level: " .. turtle.getFuelLevel() .. "). Time for a pit stop!")
         -- Try to refuel from inventory first
-        fuelLib.refuel(ctx, { target = 1000 })
+        fuelLib.refuel(ctx, { target = 1000, excludeItems = { "sapling", "log" } })
         
         if turtle.getFuelLevel() < 200 then
             -- Go to fuel chest if defined
             if tf.chests and tf.chests.fuel then
-                logger.log(ctx, "info", "Going to fuel chest...")
+                logger.log(ctx, "info", "Heading to the fuel depot.")
                 movement.goTo(ctx, { x=0, y=0, z=0 })
                 movement.face(ctx, tf.chests.fuel)
                 turtle.suck()
-                fuelLib.refuel(ctx, { target = 1000 })
+                fuelLib.refuel(ctx, { target = 1000, excludeItems = { "sapling", "log" } })
             end
         end
         
         if turtle.getFuelLevel() < 200 then
-             logger.log(ctx, "error", "Critical fuel shortage. Waiting.")
+             logger.log(ctx, "error", "Out of gas! I need manual refueling. Waiting...")
              sleep(10)
              return "TREEFARM"
         end
@@ -39,7 +54,7 @@ local function TREEFARM(ctx)
 
     -- 2. State Machine
     if tf.state == "SETUP" then
-        logger.log(ctx, "info", "Setting up Tree Farm " .. tf.width .. "x" .. tf.height)
+        logger.log(ctx, "info", "Initializing Tree Farm protocol. Grid size: " .. tf.width .. "x" .. tf.height)
         
         -- Define chest locations relative to origin (0,0,0)
         tf.chests = {
@@ -61,9 +76,48 @@ local function TREEFARM(ctx)
         return "TREEFARM"
 
     elseif tf.state == "SCAN" then
-        local w, h = tf.width, tf.height
+        -- Interpret width/height as number of trees
+        local treeW, treeH = tf.width, tf.height
+        local limitX = (treeW * 2) - 1
+        local limitZ = (treeH * 2) - 1
         
-        if tf.nextZ >= h then
+        if tf.nextX == 0 and tf.nextZ == 0 then
+            logger.log(ctx, "info", "Starting patrol run. Grid: " .. treeW .. "x" .. treeH .. " trees.")
+
+            -- Pre-run fuel check
+            local totalSpots = (limitX + 1) * (limitZ + 1)
+            local fuelPerSpot = 16 -- Descent/Ascent + Travel
+            local needed = (totalSpots * fuelPerSpot) + 200
+            local current = turtle.getFuelLevel()
+            
+            if current ~= "unlimited" and type(current) == "number" and current < needed then
+                logger.log(ctx, "warn", string.format("Pre-run fuel check: Have %d, Need %d", current, needed))
+                
+                -- 1. Try inventory
+                fuelLib.refuel(ctx, { target = needed, excludeItems = { "sapling", "log" } })
+                current = turtle.getFuelLevel()
+                
+                -- 2. Try fuel chest
+                if current < needed and tf.chests and tf.chests.fuel then
+                    logger.log(ctx, "info", "Insufficient fuel. Visiting fuel depot.")
+                    movement.goTo(ctx, { x=0, y=0, z=0 })
+                    movement.face(ctx, tf.chests.fuel)
+                    
+                    local attempts = 0
+                    while current < needed and attempts < 16 do
+                        if not turtle.suck() then
+                            logger.log(ctx, "warn", "Fuel chest empty or inventory full!")
+                            break
+                        end
+                        fuelLib.refuel(ctx, { target = needed, excludeItems = { "sapling", "log" } })
+                        current = turtle.getFuelLevel()
+                        attempts = attempts + 1
+                    end
+                end
+            end
+        end
+
+        if tf.nextZ > limitZ then
             tf.state = "DEPOSIT"
             return "TREEFARM"
         end
@@ -71,42 +125,53 @@ local function TREEFARM(ctx)
         local x = tf.nextX
         local z = tf.nextZ
         
+        logger.log(ctx, "debug", "Checking sector " .. x .. "," .. z)
+
         -- Fly over to avoid obstacles
         local hoverHeight = 6
-        local target = { x = x, y = hoverHeight, z = -z }
+        -- Offset by 2 to avoid home base and provide a return path
+        local xOffset = 2
+        local zOffset = 2
+        local target = { x = x + xOffset, y = hoverHeight, z = -(z + zOffset) }
         
         -- Move to target
-        if not movement.goTo(ctx, target) then
+        if not movement.goTo(ctx, target, { axisOrder = { "y", "x", "z" } }) then
             logger.log(ctx, "warn", "Path blocked to " .. x .. "," .. z)
             -- Try to clear path?
             -- For now, skip or retry
         else
             -- Descend and harvest
             -- We are at (x, hoverHeight, -z)
-            while ctx.curr.y > 1 do
+            while movement.getPosition(ctx).y > 1 do
                 local hasDown, dataDown = turtle.inspectDown()
                 if hasDown and (dataDown.name:find("log") or dataDown.name:find("leaves")) then
                     turtle.digDown()
+                    turtle.suckDown()
                 elseif hasDown and not dataDown.name:find("air") then
                     turtle.digDown()
+                    turtle.suckDown()
                 end
                 if not movement.down(ctx) then
                     turtle.digDown() -- Try again
+                    turtle.suckDown()
                 end
             end
             
             -- Now at y=1. Check base (y=0).
             local hasDown, dataDown = turtle.inspectDown()
             if hasDown and dataDown.name:find("log") then
-                logger.log(ctx, "info", "Harvesting tree at " .. x .. "," .. z)
+                logger.log(ctx, "info", "Timber! Found a tree at " .. x .. "," .. z .. ". Chopping it down.")
                 turtle.digDown()
+                turtle.suckDown()
                 hasDown = false
             end
             
             -- Replant
-            if not hasDown or dataDown.name:find("air") or dataDown.name:find("sapling") then
+            local isGridSpot = (x % 2 == 0) and (z % 2 == 0)
+            if isGridSpot and (not hasDown or dataDown.name:find("air") or dataDown.name:find("sapling")) then
                 -- Try to find any sapling
-                if inventory.selectMaterial(ctx, "sapling") then
+                if selectSapling(ctx) then
+                    logger.log(ctx, "info", "Replanting sapling at " .. x .. "," .. z .. ".")
                     turtle.placeDown()
                 end
             end
@@ -114,7 +179,7 @@ local function TREEFARM(ctx)
         
         -- Next
         tf.nextX = tf.nextX + 1
-        if tf.nextX >= w then
+        if tf.nextX > limitX then
             tf.nextX = 0
             tf.nextZ = tf.nextZ + 1
         end
@@ -122,13 +187,13 @@ local function TREEFARM(ctx)
         return "TREEFARM"
 
     elseif tf.state == "DEPOSIT" then
-        logger.log(ctx, "info", "Depositing items...")
+        logger.log(ctx, "info", "Inventory full (or scan done). Heading home to unload.")
         
         -- Go to above home to avoid obstacles
         movement.goTo(ctx, { x=0, y=6, z=0 })
         
         -- Descend to 0, digging if needed (in case tree grew at 0,0)
-        while ctx.curr.y > 0 do
+        while movement.getPosition(ctx).y > 0 do
              local hasDown, dataDown = turtle.inspectDown()
              if hasDown and not dataDown.name:find("air") and not dataDown.name:find("chest") then
                  -- Don't dig chests if we somehow are above them (unlikely at 0,0)
@@ -139,7 +204,8 @@ local function TREEFARM(ctx)
              end
         end
         
-        -- Output (South)
+        -- 1. Output Logs (South)
+        logger.log(ctx, "info", "Dropping off logs.")
         movement.face(ctx, tf.chests.output)
         for i=1, 16 do
             local item = turtle.getItemDetail(i)
@@ -151,23 +217,37 @@ local function TREEFARM(ctx)
                 end
             end
         end
+
+        -- 2. Fuel Maintenance (West)
+        logger.log(ctx, "info", "Checking fuel reserves.")
+        movement.face(ctx, tf.chests.fuel)
+        turtle.suck() -- Grab some fuel
+        fuelLib.refuel(ctx, { target = 1000, excludeItems = { "sapling", "log" } })
         
-        -- Trash (East)
+        -- 3. Trash (East)
+        logger.log(ctx, "info", "Taking out the trash.")
         movement.face(ctx, tf.chests.trash)
         for i=1, 16 do
             local item = turtle.getItemDetail(i)
             if item then
-                local isTrash = item.name:find("apple") or item.name:find("stick")
+                local isLog = item.name:find("log")
                 local isSapling = item.name:find("sapling")
                 
-                if isTrash then
-                    turtle.select(i)
-                    turtle.drop()
+                turtle.select(i)
+                if isLog then
+                    -- Skip logs (should be gone)
                 elseif isSapling then
                     -- Keep 16 saplings, dump rest
                     if turtle.getItemCount(i) > 16 then
-                        turtle.select(i)
                         turtle.drop(turtle.getItemCount(i) - 16)
+                    end
+                else
+                    -- Check if it is fuel
+                    if turtle.refuel(0) then
+                        -- Keep fuel
+                    else
+                        -- Not fuel, not log, not sapling. Trash.
+                        turtle.drop()
                     end
                 end
             end
@@ -177,7 +257,7 @@ local function TREEFARM(ctx)
         return "TREEFARM"
 
     elseif tf.state == "WAIT" then
-        logger.log(ctx, "info", "Waiting for growth...")
+        logger.log(ctx, "info", "All done for now. Taking a nap while trees grow.")
         sleep(30)
         
         tf.state = "SCAN"

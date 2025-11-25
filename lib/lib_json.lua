@@ -7,6 +7,13 @@ Provides helpers for encoding and decoding JSON.
 
 local json_utils = {}
 
+function json_utils.encode(data)
+    if textutils and textutils.serializeJSON then
+        return textutils.serializeJSON(data)
+    end
+    return nil, "json_encoder_unavailable"
+end
+
 function json_utils.decodeJson(text)
     if type(text) ~= "string" then
         return nil, "invalid_json"

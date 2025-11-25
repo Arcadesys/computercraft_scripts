@@ -48,7 +48,10 @@ local function RESTOCK(ctx)
 
     if not pulled then
         logger.log(ctx, "error", "Could not find " .. material .. " in nearby inventories.")
-        return "ERROR"
+        print("Please supply " .. material .. " in the chest and press Enter to retry...")
+        ---@diagnostic disable-next-line: undefined-global
+        read()
+        return "RESTOCK"
     end
 
     ctx.missingMaterial = nil

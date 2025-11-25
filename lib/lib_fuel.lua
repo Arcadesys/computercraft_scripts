@@ -115,7 +115,7 @@ local function recordHistory(state, entry)
     end
 end
 
-local function consumeFromInventory(ctx, target)
+local function consumeFromInventory(ctx, target, opts)
     if not turtle or type(turtle.refuel) ~= "function" then
         return false, { error = "turtle API unavailable" }
     end
@@ -140,18 +140,31 @@ local function consumeFromInventory(ctx, target)
             break
         end
 
-        turtle.select(slot)
-        local count = turtle.getItemCount(slot)
-        local canRefuel = count and count > 0 and turtle.refuel(0)
-        if canRefuel then
-            while (target <= 0 or level < target) and turtle.getItemCount(slot) > 0 do
-                if not turtle.refuel(1) then
+        local item = turtle.getItemDetail(slot)
+        local shouldSkip = false
+        if item and opts and opts.excludeItems then
+            for _, pattern in ipairs(opts.excludeItems) do
+                if item.name:find(pattern) then
+                    shouldSkip = true
                     break
                 end
-                consumed[slot] = (consumed[slot] or 0) + 1
-                level = select(1, readFuel()) or level
-                if target > 0 and level >= target then
-                    break
+            end
+        end
+
+        if not shouldSkip then
+            turtle.select(slot)
+            local count = turtle.getItemCount(slot)
+            local canRefuel = count and count > 0 and turtle.refuel(0)
+            if canRefuel then
+                while (target <= 0 or level < target) and turtle.getItemCount(slot) > 0 do
+                    if not turtle.refuel(1) then
+                        break
+                    end
+                    consumed[slot] = (consumed[slot] or 0) + 1
+                    level = select(1, readFuel()) or level
+                    if target > 0 and level >= target then
+                        break
+                    end
                 end
             end
         end
@@ -212,7 +225,7 @@ local function pullFromSources(ctx, state, opts)
 end
 
 local function refuelRound(ctx, state, opts, target, report)
-    local consumed, info = consumeFromInventory(ctx, target)
+    local consumed, info = consumeFromInventory(ctx, target, opts)
     report.steps[#report.steps + 1] = {
         type = "inventory",
         round = report.round,
@@ -238,7 +251,7 @@ local function refuelRound(ctx, state, opts, target, report)
     }
 
     if pulled then
-        local consumedAfterPull, postInfo = consumeFromInventory(ctx, target)
+        local consumedAfterPull, postInfo = consumeFromInventory(ctx, target, opts)
         report.steps[#report.steps + 1] = {
             type = "inventory",
             stage = "post_pull",
@@ -386,7 +399,7 @@ local function bootstrapFuel(ctx, state, opts, report)
     if minimumMove <= 0 then
         minimumMove = 10
     end
-    local consumed, info = consumeFromInventory(ctx, minimumMove)
+    local consumed, info = consumeFromInventory(ctx, minimumMove, opts)
     report.steps[#report.steps + 1] = {
         type = "inventory",
         stage = "bootstrap",

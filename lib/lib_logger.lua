@@ -437,15 +437,15 @@ function logger.log(ctx, level, message)
     if type(ctx) ~= "table" then
         return
     end
-    local logger = ctx.logger
-    if type(logger) == "table" then
-        local fn = logger[level]
+    local logInst = ctx.logger
+    if type(logInst) == "table" then
+        local fn = logInst[level]
         if type(fn) == "function" then
-            fn(message)
+            fn(logInst, message)
             return
         end
-        if type(logger.log) == "function" then
-            logger.log(level, message)
+        if type(logInst.log) == "function" then
+            logInst.log(logInst, level, message)
             return
         end
     end

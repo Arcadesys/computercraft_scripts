@@ -9,7 +9,8 @@ local diagnostics = require("lib_diagnostics")
 local function ERROR(ctx)
     local message = tostring(ctx.lastError or "Unknown fatal error")
     if ctx.logger then
-        ctx.logger:error("Fatal Error: " .. message, { context = diagnostics.snapshot(ctx) })
+        -- Avoid dumping the full context snapshot to console as it is too large
+        ctx.logger:error("Fatal Error: " .. message)
     else
         logger.log(ctx, "error", "Fatal Error: " .. message)
     end

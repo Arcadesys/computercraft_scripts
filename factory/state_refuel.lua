@@ -31,7 +31,7 @@ local function REFUEL(ctx)
     local limit = turtle.getFuelLimit()
     local target = (type(limit) == "number" and limit < 20000) and limit or 20000
     
-    fuelLib.refuel(ctx, { target = target })
+    fuelLib.refuel(ctx, { target = target, excludeItems = { "minecraft:torch" } })
     
     ---@diagnostic disable-next-line: undefined-global
     if turtle.getFuelLevel() > 1000 then

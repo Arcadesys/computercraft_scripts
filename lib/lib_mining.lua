@@ -13,6 +13,10 @@ local logger = require("lib_logger")
 -- Blocks that are considered "trash" and should be ignored during ore scanning.
 -- Also used to determine what blocks can be used to fill holes.
 mining.TRASH_BLOCKS = inventory.DEFAULT_TRASH
+mining.TRASH_BLOCKS["minecraft:chest"] = true
+mining.TRASH_BLOCKS["minecraft:barrel"] = true
+mining.TRASH_BLOCKS["minecraft:trapped_chest"] = true
+mining.TRASH_BLOCKS["minecraft:torch"] = true
 
 -- Blocks that should NEVER be placed to fill holes (liquids, gravity blocks, etc)
 mining.FILL_BLACKLIST = {
@@ -23,6 +27,9 @@ mining.FILL_BLACKLIST = {
     ["minecraft:gravel"] = true,
     ["minecraft:torch"] = true,
     ["minecraft:bedrock"] = true,
+    ["minecraft:chest"] = true,
+    ["minecraft:barrel"] = true,
+    ["minecraft:trapped_chest"] = true,
 }
 
 --- Check if a block is considered "ore" (valuable)
