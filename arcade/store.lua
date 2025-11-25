@@ -28,6 +28,7 @@ setupPaths()
 
 local programs = require("data.programs")
 local LicenseStore = require("license_store")
+local httpUtils = require("lib.lib_http")
 
 -- Configuration
 local CREDITS_FILE = "credits.txt"
@@ -83,26 +84,9 @@ local function isInstalled(item)
 end
 
 local function downloadItem(item)
-    if not http then return false, "HTTP API disabled" end
     if not item.url then return false, "No URL" end
-    
-    local response = http.get(item.url)
-    if not response then return false, "Connection failed" end
-    
-    local content = response.readAll()
-    response.close()
-    
     local path = fs.combine("arcade", item.path)
-    local dir = fs.getDir(path)
-    if not fs.exists(dir) then fs.makeDir(dir) end
-    
-    local f = fs.open(path, "w")
-    if f then
-        f.write(content)
-        f.close()
-        return true
-    end
-    return false, "Write failed"
+    return httpUtils.downloadFile(item.url, path)
 end
 
 -- UI
