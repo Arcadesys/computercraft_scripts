@@ -118,34 +118,6 @@ local programs = require("data.programs")
 -- Package Manager
 -- ==========================
 
-local function downloadFile(url, path)
-    if not http then
-        return false, "HTTP API disabled"
-    end
-    
-    local response = http.get(url)
-    if not response then
-        return false, "Failed to connect"
-    end
-    
-    local content = response.readAll()
-    response.close()
-    
-    local dir = fs.getDir(path)
-    if dir ~= "" and not fs.exists(dir) then
-        fs.makeDir(dir)
-    end
-    
-    local file = fs.open(path, "w")
-    if file then
-        file.write(content)
-        file.close()
-        return true
-    else
-        return false, "Write failed"
-    end
-end
-
 local function installProgram(program)
     term.setBackgroundColor(colors.blue)
     term.clear()
