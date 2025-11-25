@@ -15,15 +15,26 @@ local ui = require("lib_ui")
 local function interactiveSetup(ctx)
     local width = 9
     local height = 9
-    local selected = 1 -- 1: Width, 2: Height, 3: FARM
+    local mode = "treefarm"
+    local selected = 1 -- 1: Mode, 2: Width, 3: Height, 4: START
     
     while true do
         ui.clear()
-        ui.drawFrame(2, 2, 26, 12, "Tree Farm Setup")
+        ui.drawFrame(2, 2, 26, 12, "Factory Setup")
         
-        -- Width
-        ui.label(4, 5, "Width: ")
+        -- Mode
+        ui.label(4, 4, "Mode: ")
         if selected == 1 then
+            if term.isColor() then term.setTextColor(colors.yellow) end
+            term.write("< " .. (mode == "treefarm" and "Tree" or "Potato") .. " >")
+        else
+            if term.isColor() then term.setTextColor(colors.white) end
+            term.write("  " .. (mode == "treefarm" and "Tree" or "Potato") .. "  ")
+        end
+
+        -- Width
+        ui.label(4, 6, "Width: ")
+        if selected == 2 then
             if term.isColor() then term.setTextColor(colors.yellow) end
             term.write("< " .. width .. " >")
         else
@@ -32,8 +43,8 @@ local function interactiveSetup(ctx)
         end
         
         -- Height
-        ui.label(4, 7, "Height:")
-        if selected == 2 then
+        ui.label(4, 8, "Height:")
+        if selected == 3 then
             if term.isColor() then term.setTextColor(colors.yellow) end
             term.write("< " .. height .. " >")
         else
@@ -42,24 +53,26 @@ local function interactiveSetup(ctx)
         end
         
         -- Button
-        ui.button(8, 10, "FARM", selected == 3)
+        ui.button(8, 11, "START", selected == 4)
         
         local event, key = os.pullEvent("key")
         if key == keys.up then
             selected = selected - 1
-            if selected < 1 then selected = 3 end
+            if selected < 1 then selected = 4 end
         elseif key == keys.down then
             selected = selected + 1
-            if selected > 3 then selected = 1 end
+            if selected > 4 then selected = 1 end
         elseif key == keys.left then
-            if selected == 1 then width = math.max(1, width - 1) end
-            if selected == 2 then height = math.max(1, height - 1) end
+            if selected == 1 then mode = (mode == "treefarm" and "potatofarm" or "treefarm") end
+            if selected == 2 then width = math.max(1, width - 1) end
+            if selected == 3 then height = math.max(1, height - 1) end
         elseif key == keys.right then
-            if selected == 1 then width = width + 1 end
-            if selected == 2 then height = height + 1 end
+            if selected == 1 then mode = (mode == "treefarm" and "potatofarm" or "treefarm") end
+            if selected == 2 then width = width + 1 end
+            if selected == 3 then height = height + 1 end
         elseif key == keys.enter then
-            if selected == 3 then
-                ctx.config.mode = "treefarm"
+            if selected == 4 then
+                ctx.config.mode = mode
                 ctx.config.width = width
                 ctx.config.height = height
                 return

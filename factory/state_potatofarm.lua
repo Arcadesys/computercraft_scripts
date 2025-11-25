@@ -87,13 +87,13 @@ local function POTATOFARM(ctx)
                     logger.log(ctx, "info", "Harvesting potato at " .. x .. "," .. z)
                     turtle.digDown()
                     -- Replant
-                    if inventory.selectMaterial(ctx, "potato") then
+                    if inventory.selectMaterial(ctx, "minecraft:potato") then
                         turtle.placeDown()
                     end
                 end
             elseif not hasDown or dataDown.name == "minecraft:air" then
                  -- Empty spot, plant
-                 if inventory.selectMaterial(ctx, "potato") then
+                 if inventory.selectMaterial(ctx, "minecraft:potato") then
                     turtle.placeDown()
                 end
             end

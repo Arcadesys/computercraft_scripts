@@ -1,5 +1,5 @@
 -- Arcadesys Unified Installer
--- Auto-generated at 2025-11-25T19:33:47.746Z
+-- Auto-generated at 2025-11-25T19:38:15.635Z
 print("Starting Arcadesys install...")
 local files = {}
 
@@ -2977,43 +2977,54 @@ local ui = require("lib_ui")
 local function interactiveSetup(ctx)
 local width = 9
 local height = 9
-local selected = 1 -- 1: Width, 2: Height, 3: FARM
+local mode = "treefarm"
+local selected = 1 -- 1: Mode, 2: Width, 3: Height, 4: START
 while true do
 ui.clear()
-ui.drawFrame(2, 2, 26, 12, "Tree Farm Setup")
-ui.label(4, 5, "Width: ")
+ui.drawFrame(2, 2, 26, 12, "Factory Setup")
+ui.label(4, 4, "Mode: ")
 if selected == 1 then
+if term.isColor() then term.setTextColor(colors.yellow) end
+term.write("< " .. (mode == "treefarm" and "Tree" or "Potato") .. " >")
+else
+if term.isColor() then term.setTextColor(colors.white) end
+term.write("  " .. (mode == "treefarm" and "Tree" or "Potato") .. "  ")
+end
+ui.label(4, 6, "Width: ")
+if selected == 2 then
 if term.isColor() then term.setTextColor(colors.yellow) end
 term.write("< " .. width .. " >")
 else
 if term.isColor() then term.setTextColor(colors.white) end
 term.write("  " .. width .. "  ")
 end
-ui.label(4, 7, "Height:")
-if selected == 2 then
+ui.label(4, 8, "Height:")
+if selected == 3 then
 if term.isColor() then term.setTextColor(colors.yellow) end
 term.write("< " .. height .. " >")
 else
 if term.isColor() then term.setTextColor(colors.white) end
 term.write("  " .. height .. "  ")
 end
-ui.button(8, 10, "FARM", selected == 3)
+ui.button(8, 11, "START", selected == 4)
 local event, key = os.pullEvent("key")
 if key == keys.up then
 selected = selected - 1
-if selected < 1 then selected = 3 end
+if selected < 1 then selected = 4 end
 elseif key == keys.down then
 selected = selected + 1
-if selected > 3 then selected = 1 end
+if selected > 4 then selected = 1 end
 elseif key == keys.left then
-if selected == 1 then width = math.max(1, width - 1) end
-if selected == 2 then height = math.max(1, height - 1) end
+if selected == 1 then mode = (mode == "treefarm" and "potatofarm" or "treefarm") end
+if selected == 2 then width = math.max(1, width - 1) end
+if selected == 3 then height = math.max(1, height - 1) end
 elseif key == keys.right then
-if selected == 1 then width = width + 1 end
-if selected == 2 then height = height + 1 end
+if selected == 1 then mode = (mode == "treefarm" and "potatofarm" or "treefarm") end
+if selected == 2 then width = width + 1 end
+if selected == 3 then height = height + 1 end
 elseif key == keys.enter then
-if selected == 3 then
-ctx.config.mode = "treefarm"
+if selected == 4 then
+ctx.config.mode = mode
 ctx.config.width = width
 ctx.config.height = height
 return
@@ -3837,12 +3848,12 @@ local age = dataDown.state and dataDown.state.age or 0
 if age >= 7 then
 logger.log(ctx, "info", "Harvesting potato at " .. x .. "," .. z)
 turtle.digDown()
-if inventory.selectMaterial(ctx, "potato") then
+if inventory.selectMaterial(ctx, "minecraft:potato") then
 turtle.placeDown()
 end
 end
 elseif not hasDown or dataDown.name == "minecraft:air" then
-if inventory.selectMaterial(ctx, "potato") then
+if inventory.selectMaterial(ctx, "minecraft:potato") then
 turtle.placeDown()
 end
 end
