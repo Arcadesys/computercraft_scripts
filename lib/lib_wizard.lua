@@ -54,12 +54,13 @@ function wizard.runChestSetup(ctx, requirements)
             if not movement.faceDirection(ctx, dir) then
                 table.insert(missing, "Could not face " .. dir)
             else
+                sleep(0.25)
                 -- Inspect
                 local hasBlock, data = turtle.inspect()
                 if not hasBlock then
                     table.insert(missing, "Missing " .. req.name .. " at " .. dir)
                 elseif req.type == "chest" and not data.name:find("chest") and not data.name:find("barrel") then
-                    table.insert(missing, "Incorrect block at " .. dir .. " (Found " .. data.name .. ")")
+                    table.insert(missing, "Incorrect block at " .. dir .. " (Found " .. data.name .. ") [Facing: " .. movement.getFacing(ctx) .. "]")
                 end
             end
         end
@@ -73,8 +74,9 @@ function wizard.runChestSetup(ctx, requirements)
             for _, m in ipairs(missing) do
                 print("- " .. m)
             end
-            print("\nPress [Enter] to try again.")
-            read()
+            print("\nPress [Enter] to try again, or type 'skip' to ignore.")
+            local input = read()
+            if input == "skip" then return true end
         end
     end
 end

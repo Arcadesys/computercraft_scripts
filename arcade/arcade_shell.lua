@@ -486,9 +486,16 @@ local function main()
   local w, h = term.getSize()
   local running = true
   local currentMenu = "main" -- main, library, system
+  local lastMenu = currentMenu
+  local selectedButtonIndex = 1
   local mouseX, mouseY = 0, 0
   
   while running do
+    if currentMenu ~= lastMenu then
+        selectedButtonIndex = 1
+        lastMenu = currentMenu
+    end
+
     -- Draw Desktop
     UI.clear(state.theme.bg)
     
@@ -568,9 +575,13 @@ local function main()
     end
     
     -- Draw Buttons
-    for _, btn in ipairs(buttons) do
+    if selectedButtonIndex > #buttons then selectedButtonIndex = #buttons end
+    if selectedButtonIndex < 1 and #buttons > 0 then selectedButtonIndex = 1 end
+
+    for i, btn in ipairs(buttons) do
         local isHovered = (mouseX >= btnX and mouseX <= btnX + btnW - 1 and mouseY == btn.y)
-        UI.drawButton(btnX, btn.y, btnW, btn.text, false, isHovered)
+        local isSelected = (i == selectedButtonIndex)
+        UI.drawButton(btnX, btn.y, btnW, btn.text, false, isHovered or isSelected)
     end
     
     -- Event Handling
@@ -589,7 +600,21 @@ local function main()
              end
         end
     elseif event == "key" then
-        -- Basic keyboard nav could go here
+        local key = p1
+        if key == keys.up then
+            selectedButtonIndex = selectedButtonIndex - 1
+            if selectedButtonIndex < 1 then selectedButtonIndex = #buttons end
+        elseif key == keys.down then
+            selectedButtonIndex = selectedButtonIndex + 1
+            if selectedButtonIndex > #buttons then selectedButtonIndex = 1 end
+        elseif key == keys.enter then
+            local btn = buttons[selectedButtonIndex]
+            if btn then
+                UI.drawButton(btnX, btn.y, btnW, btn.text, true, true)
+                os.sleep(0.1)
+                btn.action()
+            end
+        end
     end
   end
   

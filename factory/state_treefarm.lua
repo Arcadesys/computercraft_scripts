@@ -1,3 +1,4 @@
+---@diagnostic disable: undefined-global
 --[[
 State: TREEFARM
 Grid-based tree farming logic.
@@ -8,6 +9,7 @@ local inventory = require("lib_inventory")
 local fuelLib = require("lib_fuel")
 local logger = require("lib_logger")
 local wizard = require("lib_wizard")
+local startup = require("lib_startup")
 
 local function selectSapling(ctx)
     inventory.scan(ctx)
@@ -29,53 +31,12 @@ local function TREEFARM(ctx)
     if not tf then return "INITIALIZE" end
 
     -- 1. Fuel Check
-    if turtle.getFuelLevel() < 200 then
-        logger.log(ctx, "warn", "Running low on fuel (Level: " .. turtle.getFuelLevel() .. "). Time for a pit stop!")
-        -- Try to refuel from inventory first
-        fuelLib.refuel(ctx, { target = 1000, excludeItems = { "sapling", "log" } })
-        
-        if turtle.getFuelLevel() < 200 then
-            -- Go to fuel chest if defined
-            if tf.chests and tf.chests.fuel then
-                logger.log(ctx, "info", "Heading to the fuel depot.")
-                movement.goTo(ctx, { x=0, y=0, z=0 })
-                movement.face(ctx, tf.chests.fuel)
-                turtle.suck()
-                fuelLib.refuel(ctx, { target = 1000, excludeItems = { "sapling", "log" } })
-            end
-        end
-        
-        if turtle.getFuelLevel() < 200 then
-             logger.log(ctx, "error", "Out of gas! I need manual refueling. Waiting...")
-             sleep(10)
-             return "TREEFARM"
-        end
+    if not startup.runFuelCheck(ctx, tf.chests) then
+        return "TREEFARM"
     end
 
     -- 2. State Machine
-    if tf.state == "SETUP" then
-        logger.log(ctx, "info", "Initializing Tree Farm protocol. Grid size: " .. tf.width .. "x" .. tf.height)
-        
-        -- Define chest locations relative to origin (0,0,0)
-        tf.chests = {
-            output = "south", -- Behind
-            trash = "east",   -- Right
-            fuel = "west"     -- Left
-        }
-        
-        -- Run Wizard
-        wizard.runChestSetup(ctx, {
-            south = { type = "chest", name = "Output Chest" },
-            east = { type = "chest", name = "Trash Chest" },
-            west = { type = "chest", name = "Fuel Chest" }
-        })
-        
-        tf.state = "SCAN"
-        tf.nextX = 0
-        tf.nextZ = 0
-        return "TREEFARM"
-
-    elseif tf.state == "SCAN" then
+    if tf.state == "SCAN" then
         -- Interpret width/height as number of trees
         local treeW, treeH = tf.width, tf.height
         local limitX = (treeW * 2) - 1
@@ -146,14 +107,17 @@ local function TREEFARM(ctx)
                 local hasDown, dataDown = turtle.inspectDown()
                 if hasDown and (dataDown.name:find("log") or dataDown.name:find("leaves")) then
                     turtle.digDown()
-                    turtle.suckDown()
+                    sleep(0.2)
+                    while turtle.suckDown() do sleep(0.1) end
                 elseif hasDown and not dataDown.name:find("air") then
                     turtle.digDown()
-                    turtle.suckDown()
+                    sleep(0.2)
+                    while turtle.suckDown() do sleep(0.1) end
                 end
                 if not movement.down(ctx) then
                     turtle.digDown() -- Try again
-                    turtle.suckDown()
+                    sleep(0.2)
+                    while turtle.suckDown() do sleep(0.1) end
                 end
             end
             
@@ -162,7 +126,8 @@ local function TREEFARM(ctx)
             if hasDown and dataDown.name:find("log") then
                 logger.log(ctx, "info", "Timber! Found a tree at " .. x .. "," .. z .. ". Chopping it down.")
                 turtle.digDown()
-                turtle.suckDown()
+                sleep(0.2)
+                while turtle.suckDown() do sleep(0.1) end
                 hasDown = false
             end
             

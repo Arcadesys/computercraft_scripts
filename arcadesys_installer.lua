@@ -1,5 +1,5 @@
 -- Arcadesys Unified Installer
--- Auto-generated at 2025-11-25T19:39:59.773Z
+-- Auto-generated at 2025-11-25T22:01:39.660Z
 print("Starting Arcadesys install...")
 local files = {}
 
@@ -375,8 +375,14 @@ end
 local w, h = term.getSize()
 local running = true
 local currentMenu = "main" -- main, library, system
+local lastMenu = currentMenu
+local selectedButtonIndex = 1
 local mouseX, mouseY = 0, 0
 while running do
+if currentMenu ~= lastMenu then
+selectedButtonIndex = 1
+lastMenu = currentMenu
+end
 UI.clear(state.theme.bg)
 local winW, winH = 26, 14
 local winX = math.floor((w - winW) / 2) + 1
@@ -444,9 +450,12 @@ os.sleep(2)
 end})
 table.insert(buttons, {text = "Back", y = startY + 4, action = function() currentMenu = "main" end})
 end
-for _, btn in ipairs(buttons) do
+if selectedButtonIndex > #buttons then selectedButtonIndex = #buttons end
+if selectedButtonIndex < 1 and #buttons > 0 then selectedButtonIndex = 1 end
+for i, btn in ipairs(buttons) do
 local isHovered = (mouseX >= btnX and mouseX <= btnX + btnW - 1 and mouseY == btn.y)
-UI.drawButton(btnX, btn.y, btnW, btn.text, false, isHovered)
+local isSelected = (i == selectedButtonIndex)
+UI.drawButton(btnX, btn.y, btnW, btn.text, false, isHovered or isSelected)
 end
 local event, p1, p2, p3 = os.pullEvent()
 if event == "mouse_click" or event == "mouse_drag" or event == "mouse_move" then
@@ -462,6 +471,21 @@ end
 end
 end
 elseif event == "key" then
+local key = p1
+if key == keys.up then
+selectedButtonIndex = selectedButtonIndex - 1
+if selectedButtonIndex < 1 then selectedButtonIndex = #buttons end
+elseif key == keys.down then
+selectedButtonIndex = selectedButtonIndex + 1
+if selectedButtonIndex > #buttons then selectedButtonIndex = 1 end
+elseif key == keys.enter then
+local btn = buttons[selectedButtonIndex]
+if btn then
+UI.drawButton(btnX, btn.y, btnW, btn.text, true, true)
+os.sleep(0.1)
+btn.action()
+end
+end
 end
 end
 term.setBackgroundColor(colors.black)
@@ -2975,21 +2999,31 @@ local logger = require("lib_logger")
 local movement = require("lib_movement")
 local ui = require("lib_ui")
 local function interactiveSetup(ctx)
+local mode = "treefarm"
 local width = 9
 local height = 9
-local mode = "treefarm"
-local selected = 1 -- 1: Mode, 2: Width, 3: Height, 4: START
+local length = 60
+local branchInterval = 3
+local branchLength = 16
+local torchInterval = 6
+local selected = 1
 while true do
 ui.clear()
-ui.drawFrame(2, 2, 26, 12, "Factory Setup")
+ui.drawFrame(2, 2, 30, 16, "Factory Setup")
 ui.label(4, 4, "Mode: ")
+local modeLabel = "Tree"
+if mode == "potatofarm" then modeLabel = "Potato" end
+if mode == "mine" then modeLabel = "Mine" end
 if selected == 1 then
 if term.isColor() then term.setTextColor(colors.yellow) end
-term.write("< " .. (mode == "treefarm" and "Tree" or "Potato") .. " >")
+term.write("< " .. modeLabel .. " >")
 else
 if term.isColor() then term.setTextColor(colors.white) end
-term.write("  " .. (mode == "treefarm" and "Tree" or "Potato") .. "  ")
+term.write("  " .. modeLabel .. "  ")
 end
+local startIdx = 4
+if mode == "treefarm" or mode == "potatofarm" then
+startIdx = 4
 ui.label(4, 6, "Width: ")
 if selected == 2 then
 if term.isColor() then term.setTextColor(colors.yellow) end
@@ -3006,27 +3040,93 @@ else
 if term.isColor() then term.setTextColor(colors.white) end
 term.write("  " .. height .. "  ")
 end
-ui.button(8, 11, "START", selected == 4)
+elseif mode == "mine" then
+startIdx = 6
+ui.label(4, 6, "Length: ")
+if selected == 2 then
+if term.isColor() then term.setTextColor(colors.yellow) end
+term.write("< " .. length .. " >")
+else
+if term.isColor() then term.setTextColor(colors.white) end
+term.write("  " .. length .. "  ")
+end
+ui.label(4, 7, "Br. Int:")
+if selected == 3 then
+if term.isColor() then term.setTextColor(colors.yellow) end
+term.write("< " .. branchInterval .. " >")
+else
+if term.isColor() then term.setTextColor(colors.white) end
+term.write("  " .. branchInterval .. "  ")
+end
+ui.label(4, 8, "Br. Len:")
+if selected == 4 then
+if term.isColor() then term.setTextColor(colors.yellow) end
+term.write("< " .. branchLength .. " >")
+else
+if term.isColor() then term.setTextColor(colors.white) end
+term.write("  " .. branchLength .. "  ")
+end
+ui.label(4, 9, "Torch Int:")
+if selected == 5 then
+if term.isColor() then term.setTextColor(colors.yellow) end
+term.write("< " .. torchInterval .. " >")
+else
+if term.isColor() then term.setTextColor(colors.white) end
+term.write("  " .. torchInterval .. "  ")
+end
+end
+ui.button(8, 12, "START", selected == startIdx)
 local event, key = os.pullEvent("key")
 if key == keys.up then
 selected = selected - 1
-if selected < 1 then selected = 4 end
+if selected < 1 then selected = startIdx end
 elseif key == keys.down then
 selected = selected + 1
-if selected > 4 then selected = 1 end
+if selected > startIdx then selected = 1 end
 elseif key == keys.left then
-if selected == 1 then mode = (mode == "treefarm" and "potatofarm" or "treefarm") end
+if selected == 1 then
+if mode == "treefarm" then mode = "potatofarm"
+elseif mode == "potatofarm" then mode = "mine"
+else mode = "treefarm" end
+selected = 1
+end
+if mode == "treefarm" or mode == "potatofarm" then
 if selected == 2 then width = math.max(1, width - 1) end
 if selected == 3 then height = math.max(1, height - 1) end
+elseif mode == "mine" then
+if selected == 2 then length = math.max(10, length - 10) end
+if selected == 3 then branchInterval = math.max(1, branchInterval - 1) end
+if selected == 4 then branchLength = math.max(1, branchLength - 1) end
+if selected == 5 then torchInterval = math.max(1, torchInterval - 1) end
+end
 elseif key == keys.right then
-if selected == 1 then mode = (mode == "treefarm" and "potatofarm" or "treefarm") end
+if selected == 1 then
+if mode == "treefarm" then mode = "mine"
+elseif mode == "mine" then mode = "potatofarm"
+else mode = "treefarm" end
+selected = 1
+end
+if mode == "treefarm" or mode == "potatofarm" then
 if selected == 2 then width = width + 1 end
 if selected == 3 then height = height + 1 end
+elseif mode == "mine" then
+if selected == 2 then length = length + 10 end
+if selected == 3 then branchInterval = branchInterval + 1 end
+if selected == 4 then branchLength = branchLength + 1 end
+if selected == 5 then torchInterval = torchInterval + 1 end
+end
 elseif key == keys.enter then
-if selected == 4 then
+if selected == startIdx then
 ctx.config.mode = mode
+if mode == "mine" then
+ctx.config.length = length
+ctx.config.branchInterval = branchInterval
+ctx.config.branchLength = branchLength
+ctx.config.torchInterval = torchInterval
+else
 ctx.config.width = width
 ctx.config.height = height
+end
 return
 end
 end
@@ -3043,7 +3143,8 @@ ERROR = require("state_error"),
 DONE = require("state_done"),
 CHECK_REQUIREMENTS = require("state_check_requirements"),
 TREEFARM = require("state_treefarm"),
-POTATOFARM = require("state_potatofarm")
+POTATOFARM = require("state_potatofarm"),
+BRANCHMINE = require("state_branchmine")
 }
 local function main(args)
 local ctx = {
@@ -3144,6 +3245,214 @@ ctx.retries = 0
 return resume
 end
 return BLOCKED]]
+files["factory/state_branchmine.lua"] = [[local movement = require("lib_movement")
+local inventory = require("lib_inventory")
+local mining = require("lib_mining")
+local fuelLib = require("lib_fuel")
+local logger = require("lib_logger")
+local startup = require("lib_startup")
+local function selectTorch(ctx)
+local torchItem = ctx.config.torchItem or "minecraft:torch"
+local ok = inventory.selectMaterial(ctx, torchItem)
+if ok then
+return true, torchItem
+end
+ctx.missingMaterial = torchItem
+return false, torchItem
+end
+local function placeTorch(ctx)
+local ok = selectTorch(ctx)
+if not ok then
+logger.log(ctx, "warn", "No torches to place.")
+return false
+end
+if turtle.placeDown() then return true end
+if turtle.placeUp() then return true end
+movement.turnRight(ctx)
+movement.turnRight(ctx)
+if turtle.detect() then
+turtle.dig()
+end
+local placed = false
+if turtle.place() then
+placed = true
+else
+movement.turnLeft(ctx)
+if turtle.detect() then
+turtle.dig()
+end
+if turtle.place() then
+placed = true
+movement.turnRight(ctx) -- Restore to facing behind
+else
+movement.turnRight(ctx) -- Restore to facing behind
+if turtle.digDown() then
+if turtle.placeDown() then
+placed = true
+end
+end
+end
+end
+movement.turnRight(ctx)
+movement.turnRight(ctx)
+return placed
+end
+local function dumpTrash(ctx)
+inventory.scan(ctx)
+local state = ctx.inventory
+if not state or not state.slots then return end
+for slot, item in pairs(state.slots) do
+if mining.TRASH_BLOCKS[item.name] and not item.name:find("torch") and not item.name:find("chest") then
+turtle.select(slot)
+turtle.drop()
+end
+end
+end
+local function BRANCHMINE(ctx)
+local bm = ctx.branchmine
+if not bm then return "INITIALIZE" end
+if not startup.runFuelCheck(ctx, bm.chests, 100, 1000) then
+return "BRANCHMINE"
+end
+if bm.state == "SPINE" then
+if bm.currentDist >= bm.length then
+bm.state = "RETURN"
+return "BRANCHMINE"
+end
+if not movement.forward(ctx, { dig = true }) then
+logger.log(ctx, "warn", "Blocked on spine.")
+return "BRANCHMINE" -- Retry
+end
+bm.currentDist = bm.currentDist + 1
+mining.scanAndMineNeighbors(ctx)
+if bm.currentDist % bm.torchInterval == 0 then
+placeTorch(ctx)
+end
+if bm.currentDist % 5 == 0 then
+dumpTrash(ctx)
+end
+if bm.currentDist % bm.branchInterval == 0 then
+bm.state = "BRANCH_LEFT_INIT"
+end
+return "BRANCHMINE"
+elseif bm.state == "BRANCH_LEFT_INIT" then
+movement.turnLeft(ctx)
+bm.branchDist = 0
+bm.state = "BRANCH_LEFT_OUT"
+return "BRANCHMINE"
+elseif bm.state == "BRANCH_LEFT_OUT" then
+if bm.branchDist >= bm.branchLength then
+bm.state = "BRANCH_LEFT_UP"
+return "BRANCHMINE"
+end
+if not movement.forward(ctx, { dig = true }) then
+logger.log(ctx, "warn", "Branch blocked. Returning.")
+bm.state = "BRANCH_LEFT_RETURN"
+return "BRANCHMINE"
+end
+bm.branchDist = bm.branchDist + 1
+mining.scanAndMineNeighbors(ctx)
+return "BRANCHMINE"
+elseif bm.state == "BRANCH_LEFT_UP" then
+if movement.up(ctx) then
+mining.scanAndMineNeighbors(ctx)
+else
+turtle.digUp()
+if movement.up(ctx) then
+mining.scanAndMineNeighbors(ctx)
+end
+end
+bm.state = "BRANCH_LEFT_RETURN"
+return "BRANCHMINE"
+elseif bm.state == "BRANCH_LEFT_RETURN" then
+if not bm.returning then
+movement.turnAround(ctx)
+bm.returning = true
+bm.returnDist = 0
+end
+if bm.returnDist >= bm.branchDist then
+bm.returning = false
+while movement.getPosition(ctx).y > bm.spineY do
+if not movement.down(ctx) then
+turtle.digDown()
+end
+end
+movement.turnLeft(ctx)
+bm.state = "BRANCH_RIGHT_INIT"
+return "BRANCHMINE"
+end
+if not movement.forward(ctx) then
+turtle.dig()
+movement.forward(ctx)
+end
+if movement.getPosition(ctx).y > bm.spineY then
+mining.scanAndMineNeighbors(ctx)
+end
+bm.returnDist = bm.returnDist + 1
+return "BRANCHMINE"
+elseif bm.state == "BRANCH_RIGHT_INIT" then
+movement.turnRight(ctx)
+bm.branchDist = 0
+bm.state = "BRANCH_RIGHT_OUT"
+return "BRANCHMINE"
+elseif bm.state == "BRANCH_RIGHT_OUT" then
+if bm.branchDist >= bm.branchLength then
+bm.state = "BRANCH_RIGHT_UP"
+return "BRANCHMINE"
+end
+if not movement.forward(ctx, { dig = true }) then
+logger.log(ctx, "warn", "Branch blocked. Returning.")
+bm.state = "BRANCH_RIGHT_RETURN"
+return "BRANCHMINE"
+end
+bm.branchDist = bm.branchDist + 1
+mining.scanAndMineNeighbors(ctx)
+return "BRANCHMINE"
+elseif bm.state == "BRANCH_RIGHT_UP" then
+if movement.up(ctx) then
+mining.scanAndMineNeighbors(ctx)
+else
+turtle.digUp()
+if movement.up(ctx) then
+mining.scanAndMineNeighbors(ctx)
+end
+end
+bm.state = "BRANCH_RIGHT_RETURN"
+return "BRANCHMINE"
+elseif bm.state == "BRANCH_RIGHT_RETURN" then
+if not bm.returning then
+movement.turnAround(ctx)
+bm.returning = true
+bm.returnDist = 0
+end
+if bm.returnDist >= bm.branchDist then
+bm.returning = false
+while movement.getPosition(ctx).y > bm.spineY do
+if not movement.down(ctx) then
+turtle.digDown()
+end
+end
+movement.turnRight(ctx)
+bm.state = "SPINE"
+return "BRANCHMINE"
+end
+if not movement.forward(ctx) then
+turtle.dig()
+movement.forward(ctx)
+end
+if movement.getPosition(ctx).y > bm.spineY then
+mining.scanAndMineNeighbors(ctx)
+end
+bm.returnDist = bm.returnDist + 1
+return "BRANCHMINE"
+elseif bm.state == "RETURN" then
+logger.log(ctx, "info", "Mining done. Returning home.")
+movement.goTo(ctx, {x=0, y=0, z=0})
+return "DONE"
+end
+return "BRANCHMINE"
+end
+return BRANCHMINE]]
 files["factory/state_build.lua"] = [[local movement = require("lib_movement")
 local placement = require("lib_placement")
 local inventory = require("lib_inventory")
@@ -3152,6 +3461,7 @@ local logger = require("lib_logger")
 local orientation = require("lib_orientation")
 local diagnostics = require("lib_diagnostics")
 local world = require("lib_world")
+local startup = require("lib_startup")
 local function localToWorld(localPos, facing)
 return world.localToWorld(localPos, facing)
 end
@@ -3168,12 +3478,8 @@ return "DONE"
 end
 local step = strategy[ctx.pointer]
 local material = step.block.material
-if turtle.getFuelLevel() < 100 and turtle.getFuelLevel() ~= "unlimited" then
-fuelLib.refuel(ctx, { target = 1000 })
-if turtle.getFuelLevel() < 100 then
-ctx.resumeState = "BUILD"
-return "REFUEL"
-end
+if not startup.runFuelCheck(ctx, ctx.chests, 100, 1000) then
+return "BUILD"
 end
 local count = inventory.countMaterial(ctx, material)
 if count == 0 then
@@ -3227,6 +3533,8 @@ if ctx.config.mode == "mine" then
 for _, step in ipairs(strategy) do
 if step.type == "place_torch" then
 reqs.materials["minecraft:torch"] = (reqs.materials["minecraft:torch"] or 0) + 1
+elseif step.type == "place_chest" then
+reqs.materials["minecraft:chest"] = (reqs.materials["minecraft:chest"] or 0) + 1
 end
 end
 else
@@ -3269,8 +3577,9 @@ if item and missing[item.name] and missing[item.name] > 0 then
 neededFromChest[item.name] = true
 end
 end
-for mat, _ in pairs(neededFromChest) do
-local amount = missing[mat]
+local hasNeeds = false
+for k,v in pairs(neededFromChest) do hasNeeds = true break end
+if hasNeeds then
 local pullSide = "forward"
 local turned = false
 if side == "top" then pullSide = "up"
@@ -3290,6 +3599,9 @@ movement.turnRight(ctx)
 turned = true
 pullSide = "forward"
 end
+for mat, _ in pairs(neededFromChest) do
+local amount = missing[mat]
+if amount > 0 then
 print(string.format("Attempting to pull %s from %s...", mat, side))
 local success, err = inventory.pullMaterial(ctx, mat, amount, { side = pullSide })
 if success then
@@ -3297,6 +3609,8 @@ pulledAny = true
 missing[mat] = math.max(0, missing[mat] - amount)
 else
 logger.log(ctx, "warn", "Failed to pull " .. mat .. ": " .. tostring(err))
+end
+end
 end
 if turned then
 if side == "left" then movement.turnRight(ctx)
@@ -3366,6 +3680,17 @@ hasMissing = true
 end
 for mat, count in pairs(reqs.materials) do
 local have = invCounts[mat] or 0
+if mat == "minecraft:chest" and have < count then
+local totalChests = 0
+for invMat, invCount in pairs(invCounts) do
+if invMat:find("chest") or invMat:find("barrel") or invMat:find("shulker") then
+totalChests = totalChests + invCount
+end
+end
+if totalChests >= count then
+have = count -- Satisfied
+end
+end
 if have < count then
 missing.materials[mat] = count - have
 hasMissing = true
@@ -3439,11 +3764,11 @@ return ERROR]]
 files["factory/state_initialize.lua"] = [[local parser = require("lib_parser")
 local orientation = require("lib_orientation")
 local logger = require("lib_logger")
-local strategyBranchMine = require("lib_strategy_branchmine")
 local strategyTunnel = require("lib_strategy_tunnel")
 local strategyExcavate = require("lib_strategy_excavate")
 local strategyFarm = require("lib_strategy_farm")
 local ui = require("lib_ui")
+local startup = require("lib_startup")
 local function getBlock(schema, x, y, z)
 local xLayer = schema[x] or schema[tostring(x)]
 if not xLayer then return nil end
@@ -3543,17 +3868,25 @@ return order, bounds
 end
 local function INITIALIZE(ctx)
 logger.log(ctx, "info", "Initializing...")
+if not ctx.chests then
+ctx.chests = startup.runChestSetup(ctx)
+end
+if not startup.runFuelCheck(ctx, ctx.chests) then
+return "INITIALIZE"
+end
 if ctx.config.mode == "mine" then
-logger.log(ctx, "info", "Generating mining strategy...")
-local length = tonumber(ctx.config.length) or 60
-local branchInterval = tonumber(ctx.config.branchInterval) or 3
-local branchLength = tonumber(ctx.config.branchLength) or 16
-local torchInterval = tonumber(ctx.config.torchInterval) or 6
-ctx.strategy = strategyBranchMine.generate(length, branchInterval, branchLength, torchInterval)
-ctx.pointer = 1
-logger.log(ctx, "info", string.format("Mining Plan: %d steps.", #ctx.strategy))
-ctx.nextState = "MINE"
-return "CHECK_REQUIREMENTS"
+logger.log(ctx, "info", "Starting Branch Mine mode...")
+ctx.branchmine = {
+length = tonumber(ctx.config.length) or 60,
+branchInterval = tonumber(ctx.config.branchInterval) or 3,
+branchLength = tonumber(ctx.config.branchLength) or 16,
+torchInterval = tonumber(ctx.config.torchInterval) or 6,
+currentDist = 0,
+state = "SPINE",
+spineY = 0, -- Assuming we start at 0 relative to start
+chests = ctx.chests
+}
+return "BRANCHMINE"
 end
 if ctx.config.mode == "tunnel" then
 logger.log(ctx, "info", "Generating tunnel strategy...")
@@ -3585,7 +3918,8 @@ width = tonumber(ctx.config.width) or 9,
 height = tonumber(ctx.config.height) or 9,
 currentX = 0,
 currentZ = 0, -- Using Z for the second dimension to match Minecraft coordinates usually
-state = "SETUP"
+state = "SCAN",
+chests = ctx.chests
 }
 return "TREEFARM"
 end
@@ -3596,7 +3930,8 @@ width = tonumber(ctx.config.width) or 9,
 height = tonumber(ctx.config.height) or 9,
 currentX = 0,
 currentZ = 0,
-state = "SETUP"
+state = "SCAN",
+chests = ctx.chests
 }
 return "POTATOFARM"
 end
@@ -3680,6 +4015,7 @@ local fuelLib = require("lib_fuel")
 local logger = require("lib_logger")
 local diagnostics = require("lib_diagnostics")
 local world = require("lib_world")
+local startup = require("lib_startup")
 local function localToWorld(ctx, localPos)
 local rotated = world.localToWorld(localPos, ctx.origin.facing)
 return {
@@ -3699,13 +4035,8 @@ return false, torchItem
 end
 local function MINE(ctx)
 logger.log(ctx, "info", "State: MINE")
-if turtle.getFuelLevel and turtle.getFuelLevel() < 100 then
-fuelLib.refuel(ctx, { target = 1000, excludeItems = { "minecraft:torch" } })
-if turtle.getFuelLevel() < 100 then
-logger.log(ctx, "warn", "Fuel low; switching to REFUEL")
-ctx.resumeState = "MINE"
-return "REFUEL"
-end
+if not startup.runFuelCheck(ctx, ctx.chests, 100, 1000) then
+return "MINE"
 end
 local stepIndex = ctx.pointer or 1
 local strategy, errMsg = diagnostics.requireStrategy(ctx)
@@ -3735,22 +4066,36 @@ mining.scanAndMineNeighbors(ctx)
 elseif step.type == "place_torch" then
 local ok = selectTorch(ctx)
 if not ok then
-ctx.resumeState = "MINE"
-return "RESTOCK"
-end
+logger.log(ctx, "warn", "No torches to place. Skipping.")
+else
 if turtle.placeDown() then
 elseif turtle.placeUp() then
 else
 movement.turnRight(ctx)
 movement.turnRight(ctx)
+if turtle.detect() then
+turtle.dig()
+end
 if turtle.place() then
 else
+movement.turnLeft(ctx)
+if turtle.detect() then
+turtle.dig()
+end
+if turtle.place() then
+movement.turnRight(ctx) -- Restore to facing behind
+else
+movement.turnRight(ctx) -- Restore to facing behind
 if turtle.digDown() then
 turtle.placeDown()
+else
+logger.log(ctx, "warn", "Failed to place torch")
+end
 end
 end
 movement.turnRight(ctx)
 movement.turnRight(ctx)
+end
 end
 elseif step.type == "dump_trash" then
 local dumped = inventory.dumpTrash(ctx)
@@ -3762,6 +4107,17 @@ return "DONE"
 elseif step.type == "place_chest" then
 local chestItem = ctx.config.chestItem or "minecraft:chest"
 local ok = inventory.selectMaterial(ctx, chestItem)
+if not ok then
+inventory.scan(ctx)
+local state = inventory.ensureState(ctx)
+for slot, item in pairs(state.slots) do
+if item.name:find("chest") or item.name:find("barrel") or item.name:find("shulker") then
+turtle.select(slot)
+ok = true
+break
+end
+end
+end
 if not ok then
 logger.log(ctx, "error", "Pre-flight check failed: Missing chest")
 return "ERROR"
@@ -3789,45 +4145,19 @@ local inventory = require("lib_inventory")
 local fuelLib = require("lib_fuel")
 local logger = require("lib_logger")
 local wizard = require("lib_wizard")
+local startup = require("lib_startup")
 local function POTATOFARM(ctx)
 local pf = ctx.potatofarm
 if not pf then return "INITIALIZE" end
-if turtle.getFuelLevel() < 200 then
-logger.log(ctx, "warn", "Fuel low (" .. turtle.getFuelLevel() .. "). Attempting refuel...")
-fuelLib.refuel(ctx, { target = 1000 })
-if turtle.getFuelLevel() < 200 then
-if pf.chests and pf.chests.fuel then
-logger.log(ctx, "info", "Going to fuel chest...")
-movement.goTo(ctx, { x=0, y=0, z=0 })
-movement.face(ctx, pf.chests.fuel)
-turtle.suck()
-fuelLib.refuel(ctx, { target = 1000 })
-end
-end
-if turtle.getFuelLevel() < 200 then
-logger.log(ctx, "error", "Critical fuel shortage. Waiting.")
-sleep(10)
+if not startup.runFuelCheck(ctx, pf.chests) then
 return "POTATOFARM"
 end
-end
-if pf.state == "SETUP" then
-logger.log(ctx, "info", "Setting up Potato Farm " .. pf.width .. "x" .. pf.height)
-pf.chests = {
-output = "south", -- Behind
-trash = "east",   -- Right
-fuel = "west"     -- Left
-}
-wizard.runChestSetup(ctx, {
-south = { type = "chest", name = "Output Chest" },
-east = { type = "chest", name = "Trash Chest" },
-west = { type = "chest", name = "Fuel Chest" }
-})
-pf.state = "SCAN"
-pf.nextX = 0
-pf.nextZ = 0
-return "POTATOFARM"
-elseif pf.state == "SCAN" then
-local w, h = pf.width, pf.height
+if pf.state == "SCAN" then
+local width = tonumber(pf.width) or 9
+local height = tonumber(pf.height) or 9
+local w, h = width - 2, height - 2
+pf.nextX = tonumber(pf.nextX) or 0
+pf.nextZ = tonumber(pf.nextZ) or 0
 if pf.nextZ >= h then
 pf.state = "DEPOSIT"
 return "POTATOFARM"
@@ -3835,9 +4165,9 @@ end
 local x = pf.nextX
 local z = pf.nextZ
 local hoverHeight = 1
-local target = { x = x, y = hoverHeight, z = -z }
+local target = { x = x + 1, y = hoverHeight, z = -(z + 1) }
 if not movement.goTo(ctx, target) then
-logger.log(ctx, "warn", "Path blocked to " .. x .. "," .. z)
+logger.log(ctx, "warn", "Path blocked to " .. target.x .. "," .. target.z)
 if not movement.up(ctx) then
 return "POTATOFARM" -- Stuck
 end
@@ -3846,10 +4176,39 @@ local hasDown, dataDown = turtle.inspectDown()
 if hasDown and dataDown.name == "minecraft:potatoes" then
 local age = dataDown.state and dataDown.state.age or 0
 if age >= 7 then
+inventory.scan(ctx)
+if not inventory.findEmptySlot(ctx) then
+logger.log(ctx, "warn", "Inventory full. Depositing...")
+pf.state = "DEPOSIT"
+return "POTATOFARM"
+end
 logger.log(ctx, "info", "Harvesting potato at " .. x .. "," .. z)
-turtle.digDown()
+local harvested = false
 if inventory.selectMaterial(ctx, "minecraft:potato") then
 turtle.placeDown()
+else
+inventory.findEmptySlot(ctx)
+turtle.placeDown()
+end
+local hCheck, dCheck = turtle.inspectDown()
+if hCheck and dCheck.name == "minecraft:potatoes" then
+local newAge = dCheck.state and dCheck.state.age or 0
+if newAge < 7 then
+harvested = true
+end
+end
+if not harvested then
+turtle.digDown()
+end
+sleep(0.2) -- Wait for drops
+while turtle.suckDown() do
+sleep(0.1)
+end
+local hPost, dPost = turtle.inspectDown()
+if not hPost or dPost.name == "minecraft:air" then
+if inventory.selectMaterial(ctx, "minecraft:potato") then
+turtle.placeDown()
+end
 end
 end
 elseif not hasDown or dataDown.name == "minecraft:air" then
@@ -3866,7 +4225,12 @@ end
 return "POTATOFARM"
 elseif pf.state == "DEPOSIT" then
 logger.log(ctx, "info", "Depositing items...")
-movement.goTo(ctx, { x=0, y=1, z=0 }) -- Return to start, hover height
+movement.goTo(ctx, { x=0, y=2, z=0 }) -- Return to start, safe height
+while movement.getPosition(ctx).y > 0 do
+if not movement.down(ctx) then
+turtle.digDown()
+end
+end
 movement.face(ctx, pf.chests.output)
 local keptPotatoes = 0
 local keepAmount = 64 -- Keep one stack for replanting
@@ -3897,11 +4261,13 @@ end
 elseif item.name == "minecraft:poisonous_potato" then
 turtle.select(i)
 turtle.drop()
-elseif not fuelLib.isFuel(item.name) and not item.name:find("chest") then
-movement.face(ctx, pf.chests.trash)
+else
 turtle.select(i)
+if not turtle.refuel(0) and not item.name:find("chest") then
+movement.face(ctx, pf.chests.trash)
 turtle.drop()
 movement.face(ctx, pf.chests.output)
+end
 end
 end
 end
@@ -3981,6 +4347,7 @@ local inventory = require("lib_inventory")
 local fuelLib = require("lib_fuel")
 local logger = require("lib_logger")
 local wizard = require("lib_wizard")
+local startup = require("lib_startup")
 local function selectSapling(ctx)
 inventory.scan(ctx)
 local state = ctx.inventory
@@ -3997,41 +4364,10 @@ end
 local function TREEFARM(ctx)
 local tf = ctx.treefarm
 if not tf then return "INITIALIZE" end
-if turtle.getFuelLevel() < 200 then
-logger.log(ctx, "warn", "Running low on fuel (Level: " .. turtle.getFuelLevel() .. "). Time for a pit stop!")
-fuelLib.refuel(ctx, { target = 1000, excludeItems = { "sapling", "log" } })
-if turtle.getFuelLevel() < 200 then
-if tf.chests and tf.chests.fuel then
-logger.log(ctx, "info", "Heading to the fuel depot.")
-movement.goTo(ctx, { x=0, y=0, z=0 })
-movement.face(ctx, tf.chests.fuel)
-turtle.suck()
-fuelLib.refuel(ctx, { target = 1000, excludeItems = { "sapling", "log" } })
-end
-end
-if turtle.getFuelLevel() < 200 then
-logger.log(ctx, "error", "Out of gas! I need manual refueling. Waiting...")
-sleep(10)
+if not startup.runFuelCheck(ctx, tf.chests) then
 return "TREEFARM"
 end
-end
-if tf.state == "SETUP" then
-logger.log(ctx, "info", "Initializing Tree Farm protocol. Grid size: " .. tf.width .. "x" .. tf.height)
-tf.chests = {
-output = "south", -- Behind
-trash = "east",   -- Right
-fuel = "west"     -- Left
-}
-wizard.runChestSetup(ctx, {
-south = { type = "chest", name = "Output Chest" },
-east = { type = "chest", name = "Trash Chest" },
-west = { type = "chest", name = "Fuel Chest" }
-})
-tf.state = "SCAN"
-tf.nextX = 0
-tf.nextZ = 0
-return "TREEFARM"
-elseif tf.state == "SCAN" then
+if tf.state == "SCAN" then
 local treeW, treeH = tf.width, tf.height
 local limitX = (treeW * 2) - 1
 local limitZ = (treeH * 2) - 1
@@ -4080,21 +4416,25 @@ while movement.getPosition(ctx).y > 1 do
 local hasDown, dataDown = turtle.inspectDown()
 if hasDown and (dataDown.name:find("log") or dataDown.name:find("leaves")) then
 turtle.digDown()
-turtle.suckDown()
+sleep(0.2)
+while turtle.suckDown() do sleep(0.1) end
 elseif hasDown and not dataDown.name:find("air") then
 turtle.digDown()
-turtle.suckDown()
+sleep(0.2)
+while turtle.suckDown() do sleep(0.1) end
 end
 if not movement.down(ctx) then
 turtle.digDown() -- Try again
-turtle.suckDown()
+sleep(0.2)
+while turtle.suckDown() do sleep(0.1) end
 end
 end
 local hasDown, dataDown = turtle.inspectDown()
 if hasDown and dataDown.name:find("log") then
 logger.log(ctx, "info", "Timber! Found a tree at " .. x .. "," .. z .. ". Chopping it down.")
 turtle.digDown()
-turtle.suckDown()
+sleep(0.2)
+while turtle.suckDown() do sleep(0.1) end
 hasDown = false
 end
 local isGridSpot = (x % 2 == 0) and (z % 2 == 0)
@@ -4194,17 +4534,19 @@ end
 local function runMining(form)
 local length = 64
 local interval = 3
+local branchLength = 16
 local torch = 6
 for _, el in ipairs(form.elements) do
 if el.id == "length" then length = tonumber(el.value) or 64 end
 if el.id == "interval" then interval = tonumber(el.value) or 3 end
+if el.id == "branch_length" then branchLength = tonumber(el.value) or 16 end
 if el.id == "torch" then torch = tonumber(el.value) or 6 end
 end
 ui.clear()
 print("Starting Mining Operation...")
-print(string.format("Length: %d, Interval: %d", length, interval))
+print(string.format("Length: %d, Interval: %d, Branch: %d", length, interval, branchLength))
 sleep(1)
-factory.run({ "mine", "--length", tostring(length), "--branch-interval", tostring(interval), "--torch-interval", tostring(torch) })
+factory.run({ "mine", "--length", tostring(length), "--branch-interval", tostring(interval), "--branch-length", tostring(branchLength), "--torch-interval", tostring(torch) })
 return pauseAndReturn("stay")
 end
 local function runTunnel()
@@ -4507,10 +4849,12 @@ elements = {
 { type = "input", x = 18, y = 2, width = 5, value = "64", id = "length" },
 { type = "label", x = 2, y = 4, text = "Branch Interval:" },
 { type = "input", x = 18, y = 4, width = 5, value = "3", id = "interval" },
-{ type = "label", x = 2, y = 6, text = "Torch Interval:" },
-{ type = "input", x = 18, y = 6, width = 5, value = "6", id = "torch" },
-{ type = "button", x = 2, y = 9, text = "Start Mining", callback = runMining },
-{ type = "button", x = 18, y = 9, text = "Cancel", callback = function() return "back" end }
+{ type = "label", x = 2, y = 6, text = "Branch Length:" },
+{ type = "input", x = 18, y = 6, width = 5, value = "16", id = "branch_length" },
+{ type = "label", x = 2, y = 8, text = "Torch Interval:" },
+{ type = "input", x = 18, y = 8, width = 5, value = "6", id = "torch" },
+{ type = "button", x = 2, y = 11, text = "Start Mining", callback = runMining },
+{ type = "button", x = 18, y = 11, text = "Cancel", callback = function() return "back" end }
 }
 }
 return ui.runForm(form)
@@ -4711,6 +5055,8 @@ offsetX = 4, -- Screen X offset of canvas
 offsetY = 3, -- Screen Y offset of canvas
 scrollX = 0,
 scrollY = 0,
+cursorX = 0,
+cursorY = 0,
 }
 state.menuOpen = false
 state.inventoryOpen = false
@@ -5162,6 +5508,30 @@ term.write(char)
 end
 end
 end
+local cx, cy = state.view.cursorX, state.view.cursorY
+local screenX = ox + cx - sx
+local screenY = oy + cy - sy
+local w, h = term.getSize()
+if screenX >= ox and screenX < w and screenY >= oy and screenY < h - 2 then
+term.setCursorPos(screenX, screenY)
+if os.clock() % 0.8 < 0.4 then
+term.setBackgroundColor(colors.white)
+term.setTextColor(colors.black)
+else
+local matIdx = getBlock(cx, state.view.layer, cy)
+local mat = getMaterial(matIdx)
+if mat then
+term.setBackgroundColor(mat.color == colors.white and colors.black or colors.white)
+term.setTextColor(mat.color)
+else
+term.setBackgroundColor(colors.white)
+term.setTextColor(colors.black)
+end
+end
+local matIdx = getBlock(cx, state.view.layer, cy)
+local mat = getMaterial(matIdx)
+term.write(mat and mat.sym or "+")
+end
 end
 local function applyTool(x, y, btn)
 local color = (btn == 1) and state.primaryColor or state.secondaryColor
@@ -5500,6 +5870,55 @@ elseif key == keys.down then
 state.searchScroll = state.searchScroll + 1
 end
 else
+if key == keys.up then
+state.view.cursorY = math.max(0, state.view.cursorY - 1)
+if state.view.cursorY < state.view.scrollY then state.view.scrollY = state.view.cursorY end
+if state.mouse.drag then state.mouse.currY = state.view.cursorY end
+elseif key == keys.down then
+state.view.cursorY = math.min(state.h - 1, state.view.cursorY + 1)
+local h = term.getSize()
+local viewH = h - 2 - state.view.offsetY
+if state.view.cursorY >= state.view.scrollY + viewH then state.view.scrollY = state.view.cursorY - viewH + 1 end
+if state.mouse.drag then state.mouse.currY = state.view.cursorY end
+elseif key == keys.left then
+state.view.cursorX = math.max(0, state.view.cursorX - 1)
+if state.view.cursorX < state.view.scrollX then state.view.scrollX = state.view.cursorX end
+if state.mouse.drag then state.mouse.currX = state.view.cursorX end
+elseif key == keys.right then
+state.view.cursorX = math.min(state.w - 1, state.view.cursorX + 1)
+local w = term.getSize()
+local viewW = w - state.view.offsetX
+if state.view.cursorX >= state.view.scrollX + viewW then state.view.scrollX = state.view.cursorX - viewW + 1 end
+if state.mouse.drag then state.mouse.currX = state.view.cursorX end
+elseif key == keys.space or key == keys.enter then
+if state.tool == TOOLS.PENCIL or state.tool == TOOLS.BUCKET or state.tool == TOOLS.PICKER then
+applyTool(state.view.cursorX, state.view.cursorY, 1)
+else
+if not state.mouse.drag then
+state.mouse.startX = state.view.cursorX
+state.mouse.startY = state.view.cursorY
+state.mouse.currX = state.view.cursorX
+state.mouse.currY = state.view.cursorY
+state.mouse.drag = true
+state.mouse.down = true
+state.mouse.btn = 1
+else
+state.mouse.currX = state.view.cursorX
+state.mouse.currY = state.view.cursorY
+applyShape(state.mouse.startX, state.mouse.startY, state.mouse.currX, state.mouse.currY, 1)
+state.mouse.drag = false
+state.mouse.down = false
+end
+end
+elseif key == keys.leftBracket then
+state.primaryColor = math.max(1, state.primaryColor - 1)
+elseif key == keys.rightBracket then
+state.primaryColor = math.min(#state.palette, state.primaryColor + 1)
+elseif key >= keys.one and key <= keys.eight then
+local idx = key - keys.one + 1
+local toolsList = { TOOLS.PENCIL, TOOLS.LINE, TOOLS.RECT, TOOLS.RECT_FILL, TOOLS.CIRCLE, TOOLS.CIRCLE_FILL, TOOLS.BUCKET, TOOLS.PICKER }
+if toolsList[idx] then state.tool = toolsList[idx] end
+end
 if key == keys.q then state.running = false end
 if key == keys.f then
 state.searchOpen = not state.searchOpen
@@ -9148,19 +9567,22 @@ end
 return nil
 end
 function mining.mineAndFill(ctx, dir)
-local inspect, dig, place
+local inspect, dig, place, suck
 if dir == "front" then
 inspect = turtle.inspect
 dig = turtle.dig
 place = turtle.place
+suck = turtle.suck
 elseif dir == "up" then
 inspect = turtle.inspectUp
 dig = turtle.digUp
 place = turtle.placeUp
+suck = turtle.suckUp
 elseif dir == "down" then
 inspect = turtle.inspectDown
 dig = turtle.digDown
 place = turtle.placeDown
+suck = turtle.suckDown
 else
 return false, "Invalid direction"
 end
@@ -9168,6 +9590,8 @@ local hasBlock, data = inspect()
 if hasBlock and mining.isOre(data.name) then
 logger.log(ctx, "info", "Mining valuable: " .. data.name)
 if dig() then
+sleep(0.2)
+while suck() do sleep(0.1) end
 local slot = findFillMaterial(ctx)
 if slot then
 turtle.select(slot)
@@ -11517,6 +11941,53 @@ io.print(string.format("Bounds: min(%d,%d,%d) max(%d,%d,%d) dims(%d,%d,%d)",
 minB.x, minB.y, minB.z, maxB.x, maxB.y, maxB.z, dims.x, dims.y, dims.z))
 end
 return schema_utils]]
+files["lib/lib_startup.lua"] = [[local fuelLib = require("lib_fuel")
+local logger = require("lib_logger")
+local movement = require("lib_movement")
+local wizard = require("lib_wizard")
+local startup = {}
+function startup.runFuelCheck(ctx, chests, threshold, target)
+threshold = threshold or 200
+target = target or 1000
+local current = turtle.getFuelLevel()
+if current == "unlimited" then return true end
+if current < threshold then
+logger.log(ctx, "warn", "Fuel low (" .. current .. "). Attempting refuel...")
+fuelLib.refuel(ctx, { target = target })
+current = turtle.getFuelLevel()
+if current < threshold then
+if chests and chests.fuel then
+logger.log(ctx, "info", "Going to fuel chest...")
+movement.goTo(ctx, { x=0, y=0, z=0 })
+movement.face(ctx, chests.fuel)
+turtle.suck()
+fuelLib.refuel(ctx, { target = target })
+end
+end
+current = turtle.getFuelLevel()
+if current < threshold then
+logger.log(ctx, "error", "Critical fuel shortage. Waiting.")
+sleep(10)
+return false
+end
+end
+return true
+end
+function startup.runChestSetup(ctx)
+local requirements = {
+south = { type = "chest", name = "Output Chest" },
+east = { type = "chest", name = "Trash Chest" },
+west = { type = "chest", name = "Fuel Chest" }
+}
+wizard.runChestSetup(ctx, requirements)
+local chests = {
+output = "south",
+trash = "east",
+fuel = "west"
+}
+return chests
+end
+return startup]]
 files["lib/lib_strategy_branchmine.lua"] = [[local strategy = {}
 local function normalizePositiveInt(value, default)
 local numberValue = tonumber(value)
@@ -12499,11 +12970,12 @@ for dir, req in pairs(requirements) do
 if not movement.faceDirection(ctx, dir) then
 table.insert(missing, "Could not face " .. dir)
 else
+sleep(0.25)
 local hasBlock, data = turtle.inspect()
 if not hasBlock then
 table.insert(missing, "Missing " .. req.name .. " at " .. dir)
 elseif req.type == "chest" and not data.name:find("chest") and not data.name:find("barrel") then
-table.insert(missing, "Incorrect block at " .. dir .. " (Found " .. data.name .. ")")
+table.insert(missing, "Incorrect block at " .. dir .. " (Found " .. data.name .. ") [Facing: " .. movement.getFacing(ctx) .. "]")
 end
 end
 end
@@ -12516,8 +12988,9 @@ print("\nIssues found:")
 for _, m in ipairs(missing) do
 print("- " .. m)
 end
-print("\nPress [Enter] to try again.")
-read()
+print("\nPress [Enter] to try again, or type 'skip' to ignore.")
+local input = read()
+if input == "skip" then return true end
 end
 end
 end
@@ -13492,7 +13965,7 @@ if fs.exists("arcade") then fs.delete("arcade") end
 if fs.exists("lib") then fs.delete("lib") end
 if fs.exists("factory") then fs.delete("factory") end
 
-print("Unpacking 62 files...")
+print("Unpacking 64 files...")
 for path, content in pairs(files) do
     local dir = fs.getDir(path)
     if dir ~= "" and not fs.exists(dir) then

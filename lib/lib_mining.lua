@@ -54,19 +54,22 @@ end
 --- Mine a block in a specific direction if it's valuable, then fill the hole
 -- @param dir "front", "up", "down"
 function mining.mineAndFill(ctx, dir)
-    local inspect, dig, place
+    local inspect, dig, place, suck
     if dir == "front" then
         inspect = turtle.inspect
         dig = turtle.dig
         place = turtle.place
+        suck = turtle.suck
     elseif dir == "up" then
         inspect = turtle.inspectUp
         dig = turtle.digUp
         place = turtle.placeUp
+        suck = turtle.suckUp
     elseif dir == "down" then
         inspect = turtle.inspectDown
         dig = turtle.digDown
         place = turtle.placeDown
+        suck = turtle.suckDown
     else
         return false, "Invalid direction"
     end
@@ -75,6 +78,9 @@ function mining.mineAndFill(ctx, dir)
     if hasBlock and mining.isOre(data.name) then
         logger.log(ctx, "info", "Mining valuable: " .. data.name)
         if dig() then
+            sleep(0.2)
+            while suck() do sleep(0.1) end
+
             -- Attempt to fill the hole
             local slot = findFillMaterial(ctx)
             if slot then

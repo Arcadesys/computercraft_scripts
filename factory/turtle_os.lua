@@ -33,20 +33,22 @@ end
 local function runMining(form)
     local length = 64
     local interval = 3
+    local branchLength = 16
     local torch = 6
     
     for _, el in ipairs(form.elements) do
         if el.id == "length" then length = tonumber(el.value) or 64 end
         if el.id == "interval" then interval = tonumber(el.value) or 3 end
+        if el.id == "branch_length" then branchLength = tonumber(el.value) or 16 end
         if el.id == "torch" then torch = tonumber(el.value) or 6 end
     end
     
     ui.clear()
     print("Starting Mining Operation...")
-    print(string.format("Length: %d, Interval: %d", length, interval))
+    print(string.format("Length: %d, Interval: %d, Branch: %d", length, interval, branchLength))
     sleep(1)
     
-    factory.run({ "mine", "--length", tostring(length), "--branch-interval", tostring(interval), "--torch-interval", tostring(torch) })
+    factory.run({ "mine", "--length", tostring(length), "--branch-interval", tostring(interval), "--branch-length", tostring(branchLength), "--torch-interval", tostring(torch) })
     
     return pauseAndReturn("stay")
 end
@@ -423,12 +425,15 @@ local function showMiningWizard()
             
             { type = "label", x = 2, y = 4, text = "Branch Interval:" },
             { type = "input", x = 18, y = 4, width = 5, value = "3", id = "interval" },
+
+            { type = "label", x = 2, y = 6, text = "Branch Length:" },
+            { type = "input", x = 18, y = 6, width = 5, value = "16", id = "branch_length" },
             
-            { type = "label", x = 2, y = 6, text = "Torch Interval:" },
-            { type = "input", x = 18, y = 6, width = 5, value = "6", id = "torch" },
+            { type = "label", x = 2, y = 8, text = "Torch Interval:" },
+            { type = "input", x = 18, y = 8, width = 5, value = "6", id = "torch" },
             
-            { type = "button", x = 2, y = 9, text = "Start Mining", callback = runMining },
-            { type = "button", x = 18, y = 9, text = "Cancel", callback = function() return "back" end }
+            { type = "button", x = 2, y = 11, text = "Start Mining", callback = runMining },
+            { type = "button", x = 18, y = 11, text = "Cancel", callback = function() return "back" end }
         }
     }
     return ui.runForm(form)

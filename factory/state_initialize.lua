@@ -1,3 +1,4 @@
+---@diagnostic disable: undefined-global
 --[[
 State: INITIALIZE
 Loads schema, parses it, and computes the build strategy.
@@ -6,11 +7,11 @@ Loads schema, parses it, and computes the build strategy.
 local parser = require("lib_parser")
 local orientation = require("lib_orientation")
 local logger = require("lib_logger")
-local strategyBranchMine = require("lib_strategy_branchmine")
 local strategyTunnel = require("lib_strategy_tunnel")
 local strategyExcavate = require("lib_strategy_excavate")
 local strategyFarm = require("lib_strategy_farm")
 local ui = require("lib_ui")
+local startup = require("lib_startup")
 
 local function getBlock(schema, x, y, z)
     local xLayer = schema[x] or schema[tostring(x)]
@@ -124,19 +125,28 @@ end
 local function INITIALIZE(ctx)
     logger.log(ctx, "info", "Initializing...")
     
+    -- Startup Logic (Fuel & Chests)
+    if not ctx.chests then
+        ctx.chests = startup.runChestSetup(ctx)
+    end
+    
+    if not startup.runFuelCheck(ctx, ctx.chests) then
+        return "INITIALIZE"
+    end
+    
     if ctx.config.mode == "mine" then
-        logger.log(ctx, "info", "Generating mining strategy...")
-        local length = tonumber(ctx.config.length) or 60
-        local branchInterval = tonumber(ctx.config.branchInterval) or 3
-        local branchLength = tonumber(ctx.config.branchLength) or 16
-        local torchInterval = tonumber(ctx.config.torchInterval) or 6
-        
-        ctx.strategy = strategyBranchMine.generate(length, branchInterval, branchLength, torchInterval)
-        ctx.pointer = 1
-        
-        logger.log(ctx, "info", string.format("Mining Plan: %d steps.", #ctx.strategy))
-        ctx.nextState = "MINE"
-        return "CHECK_REQUIREMENTS"
+        logger.log(ctx, "info", "Starting Branch Mine mode...")
+        ctx.branchmine = {
+            length = tonumber(ctx.config.length) or 60,
+            branchInterval = tonumber(ctx.config.branchInterval) or 3,
+            branchLength = tonumber(ctx.config.branchLength) or 16,
+            torchInterval = tonumber(ctx.config.torchInterval) or 6,
+            currentDist = 0,
+            state = "SPINE",
+            spineY = 0, -- Assuming we start at 0 relative to start
+            chests = ctx.chests
+        }
+        return "BRANCHMINE"
     end
 
     if ctx.config.mode == "tunnel" then
@@ -175,7 +185,8 @@ local function INITIALIZE(ctx)
             height = tonumber(ctx.config.height) or 9,
             currentX = 0,
             currentZ = 0, -- Using Z for the second dimension to match Minecraft coordinates usually
-            state = "SETUP"
+            state = "SCAN",
+            chests = ctx.chests
         }
         return "TREEFARM"
     end
@@ -187,7 +198,8 @@ local function INITIALIZE(ctx)
             height = tonumber(ctx.config.height) or 9,
             currentX = 0,
             currentZ = 0,
-            state = "SETUP"
+            state = "SCAN",
+            chests = ctx.chests
         }
         return "POTATOFARM"
     end

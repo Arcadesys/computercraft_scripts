@@ -12,6 +12,7 @@ local fuelLib = require("lib_fuel")
 local logger = require("lib_logger")
 local diagnostics = require("lib_diagnostics")
 local world = require("lib_world")
+local startup = require("lib_startup")
 
 local function localToWorld(ctx, localPos)
     local rotated = world.localToWorld(localPos, ctx.origin.facing)
@@ -35,15 +36,8 @@ end
 local function MINE(ctx)
     logger.log(ctx, "info", "State: MINE")
 
-    if turtle.getFuelLevel and turtle.getFuelLevel() < 100 then
-        -- Attempt refuel from inventory
-        fuelLib.refuel(ctx, { target = 1000, excludeItems = { "minecraft:torch" } })
-        
-        if turtle.getFuelLevel() < 100 then
-            logger.log(ctx, "warn", "Fuel low; switching to REFUEL")
-            ctx.resumeState = "MINE"
-            return "REFUEL"
-        end
+    if not startup.runFuelCheck(ctx, ctx.chests, 100, 1000) then
+        return "MINE"
     end
 
     -- Get current step
@@ -82,30 +76,52 @@ local function MINE(ctx)
     elseif step.type == "place_torch" then
         local ok = selectTorch(ctx)
         if not ok then
-            ctx.resumeState = "MINE"
-            return "RESTOCK"
-        end
-        
-        -- Try standard placement (works if there is space)
-        if turtle.placeDown() then
-            -- Success
-        elseif turtle.placeUp() then
-            -- Success
+            logger.log(ctx, "warn", "No torches to place. Skipping.")
+            -- ctx.resumeState = "MINE"
+            -- return "RESTOCK"
         else
-            -- Try placing behind (turn 180)
-            movement.turnRight(ctx)
-            movement.turnRight(ctx)
-            if turtle.place() then
+            -- Try standard placement (works if there is space)
+            if turtle.placeDown() then
+                -- Success
+            elseif turtle.placeUp() then
                 -- Success
             else
-                -- Last resort: Dig down and place in hole
-                if turtle.digDown() then
-                    turtle.placeDown()
+                -- Try placing behind (turn 180)
+                movement.turnRight(ctx)
+                movement.turnRight(ctx)
+                
+                -- Clear obstruction behind
+                if turtle.detect() then
+                    turtle.dig()
                 end
+
+                if turtle.place() then
+                    -- Success
+                else
+                    -- Try placing on the right wall (relative to original facing)
+                    movement.turnLeft(ctx)
+                    if turtle.detect() then
+                        turtle.dig()
+                    end
+                    
+                    if turtle.place() then
+                        -- Success
+                        movement.turnRight(ctx) -- Restore to facing behind
+                    else
+                        movement.turnRight(ctx) -- Restore to facing behind
+                        
+                        -- Last resort: Dig down and place in hole
+                        if turtle.digDown() then
+                            turtle.placeDown()
+                        else
+                            logger.log(ctx, "warn", "Failed to place torch")
+                        end
+                    end
+                end
+                -- Restore facing
+                movement.turnRight(ctx)
+                movement.turnRight(ctx)
             end
-            -- Restore facing
-            movement.turnRight(ctx)
-            movement.turnRight(ctx)
         end
         
     elseif step.type == "dump_trash" then
@@ -119,6 +135,20 @@ local function MINE(ctx)
     elseif step.type == "place_chest" then
         local chestItem = ctx.config.chestItem or "minecraft:chest"
         local ok = inventory.selectMaterial(ctx, chestItem)
+        
+        -- Fallback: Try to find any chest/barrel if the specific one isn't found
+        if not ok then
+            inventory.scan(ctx)
+            local state = inventory.ensureState(ctx)
+            for slot, item in pairs(state.slots) do
+                if item.name:find("chest") or item.name:find("barrel") or item.name:find("shulker") then
+                    turtle.select(slot)
+                    ok = true
+                    break
+                end
+            end
+        end
+
         if not ok then
             logger.log(ctx, "error", "Pre-flight check failed: Missing chest")
             return "ERROR"

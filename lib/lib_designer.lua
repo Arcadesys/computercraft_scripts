@@ -67,6 +67,8 @@ local function resetState()
         offsetY = 3, -- Screen Y offset of canvas
         scrollX = 0,
         scrollY = 0,
+        cursorX = 0,
+        cursorY = 0,
     }
 
     state.menuOpen = false
@@ -631,6 +633,33 @@ local function drawCanvas()
             end
         end
     end
+
+    -- Draw Cursor
+    local cx, cy = state.view.cursorX, state.view.cursorY
+    local screenX = ox + cx - sx
+    local screenY = oy + cy - sy
+    local w, h = term.getSize()
+    
+    if screenX >= ox and screenX < w and screenY >= oy and screenY < h - 2 then
+        term.setCursorPos(screenX, screenY)
+        if os.clock() % 0.8 < 0.4 then
+            term.setBackgroundColor(colors.white)
+            term.setTextColor(colors.black)
+        else
+            local matIdx = getBlock(cx, state.view.layer, cy)
+            local mat = getMaterial(matIdx)
+            if mat then
+                term.setBackgroundColor(mat.color == colors.white and colors.black or colors.white)
+                term.setTextColor(mat.color)
+            else
+                term.setBackgroundColor(colors.white)
+                term.setTextColor(colors.black)
+            end
+        end
+        local matIdx = getBlock(cx, state.view.layer, cy)
+        local mat = getMaterial(matIdx)
+        term.write(mat and mat.sym or "+")
+    end
 end
 
 
@@ -1049,6 +1078,64 @@ function designer.run(opts)
                     state.searchScroll = state.searchScroll + 1
                 end
             else
+                -- Cursor Movement
+                if key == keys.up then
+                    state.view.cursorY = math.max(0, state.view.cursorY - 1)
+                    if state.view.cursorY < state.view.scrollY then state.view.scrollY = state.view.cursorY end
+                    if state.mouse.drag then state.mouse.currY = state.view.cursorY end
+                elseif key == keys.down then
+                    state.view.cursorY = math.min(state.h - 1, state.view.cursorY + 1)
+                    local h = term.getSize()
+                    local viewH = h - 2 - state.view.offsetY
+                    if state.view.cursorY >= state.view.scrollY + viewH then state.view.scrollY = state.view.cursorY - viewH + 1 end
+                    if state.mouse.drag then state.mouse.currY = state.view.cursorY end
+                elseif key == keys.left then
+                    state.view.cursorX = math.max(0, state.view.cursorX - 1)
+                    if state.view.cursorX < state.view.scrollX then state.view.scrollX = state.view.cursorX end
+                    if state.mouse.drag then state.mouse.currX = state.view.cursorX end
+                elseif key == keys.right then
+                    state.view.cursorX = math.min(state.w - 1, state.view.cursorX + 1)
+                    local w = term.getSize()
+                    local viewW = w - state.view.offsetX
+                    if state.view.cursorX >= state.view.scrollX + viewW then state.view.scrollX = state.view.cursorX - viewW + 1 end
+                    if state.mouse.drag then state.mouse.currX = state.view.cursorX end
+                
+                -- Actions
+                elseif key == keys.space or key == keys.enter then
+                    if state.tool == TOOLS.PENCIL or state.tool == TOOLS.BUCKET or state.tool == TOOLS.PICKER then
+                        applyTool(state.view.cursorX, state.view.cursorY, 1)
+                    else
+                        -- Shape tools: Toggle drag
+                        if not state.mouse.drag then
+                            state.mouse.startX = state.view.cursorX
+                            state.mouse.startY = state.view.cursorY
+                            state.mouse.currX = state.view.cursorX
+                            state.mouse.currY = state.view.cursorY
+                            state.mouse.drag = true
+                            state.mouse.down = true
+                            state.mouse.btn = 1
+                        else
+                            state.mouse.currX = state.view.cursorX
+                            state.mouse.currY = state.view.cursorY
+                            applyShape(state.mouse.startX, state.mouse.startY, state.mouse.currX, state.mouse.currY, 1)
+                            state.mouse.drag = false
+                            state.mouse.down = false
+                        end
+                    end
+                
+                -- Palette
+                elseif key == keys.leftBracket then
+                    state.primaryColor = math.max(1, state.primaryColor - 1)
+                elseif key == keys.rightBracket then
+                    state.primaryColor = math.min(#state.palette, state.primaryColor + 1)
+                
+                -- Tools (Number keys 1-8)
+                elseif key >= keys.one and key <= keys.eight then
+                    local idx = key - keys.one + 1
+                    local toolsList = { TOOLS.PENCIL, TOOLS.LINE, TOOLS.RECT, TOOLS.RECT_FILL, TOOLS.CIRCLE, TOOLS.CIRCLE_FILL, TOOLS.BUCKET, TOOLS.PICKER }
+                    if toolsList[idx] then state.tool = toolsList[idx] end
+                end
+
                 if key == keys.q then state.running = false end
                 if key == keys.f then 
                     state.searchOpen = not state.searchOpen 

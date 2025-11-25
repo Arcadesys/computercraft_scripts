@@ -13,68 +13,156 @@ local movement = require("lib_movement")
 local ui = require("lib_ui")
 
 local function interactiveSetup(ctx)
+    local mode = "treefarm"
+    -- Farm params
     local width = 9
     local height = 9
-    local mode = "treefarm"
-    local selected = 1 -- 1: Mode, 2: Width, 3: Height, 4: START
+    -- Mine params
+    local length = 60
+    local branchInterval = 3
+    local branchLength = 16
+    local torchInterval = 6
+    
+    local selected = 1 
     
     while true do
         ui.clear()
-        ui.drawFrame(2, 2, 26, 12, "Factory Setup")
+        ui.drawFrame(2, 2, 30, 16, "Factory Setup")
         
         -- Mode
         ui.label(4, 4, "Mode: ")
+        local modeLabel = "Tree"
+        if mode == "potatofarm" then modeLabel = "Potato" end
+        if mode == "mine" then modeLabel = "Mine" end
+        
         if selected == 1 then
             if term.isColor() then term.setTextColor(colors.yellow) end
-            term.write("< " .. (mode == "treefarm" and "Tree" or "Potato") .. " >")
+            term.write("< " .. modeLabel .. " >")
         else
             if term.isColor() then term.setTextColor(colors.white) end
-            term.write("  " .. (mode == "treefarm" and "Tree" or "Potato") .. "  ")
+            term.write("  " .. modeLabel .. "  ")
         end
 
-        -- Width
-        ui.label(4, 6, "Width: ")
-        if selected == 2 then
-            if term.isColor() then term.setTextColor(colors.yellow) end
-            term.write("< " .. width .. " >")
-        else
-            if term.isColor() then term.setTextColor(colors.white) end
-            term.write("  " .. width .. "  ")
-        end
+        local startIdx = 4
         
-        -- Height
-        ui.label(4, 8, "Height:")
-        if selected == 3 then
-            if term.isColor() then term.setTextColor(colors.yellow) end
-            term.write("< " .. height .. " >")
-        else
-            if term.isColor() then term.setTextColor(colors.white) end
-            term.write("  " .. height .. "  ")
+        if mode == "treefarm" or mode == "potatofarm" then
+            startIdx = 4
+            -- Width
+            ui.label(4, 6, "Width: ")
+            if selected == 2 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write("< " .. width .. " >")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("  " .. width .. "  ")
+            end
+            
+            -- Height
+            ui.label(4, 8, "Height:")
+            if selected == 3 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write("< " .. height .. " >")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("  " .. height .. "  ")
+            end
+        elseif mode == "mine" then
+            startIdx = 6
+            -- Length
+            ui.label(4, 6, "Length: ")
+            if selected == 2 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write("< " .. length .. " >")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("  " .. length .. "  ")
+            end
+
+            -- Branch Interval
+            ui.label(4, 7, "Br. Int:")
+            if selected == 3 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write("< " .. branchInterval .. " >")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("  " .. branchInterval .. "  ")
+            end
+
+            -- Branch Length
+            ui.label(4, 8, "Br. Len:")
+            if selected == 4 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write("< " .. branchLength .. " >")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("  " .. branchLength .. "  ")
+            end
+
+            -- Torch Interval
+            ui.label(4, 9, "Torch Int:")
+            if selected == 5 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write("< " .. torchInterval .. " >")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("  " .. torchInterval .. "  ")
+            end
         end
         
         -- Button
-        ui.button(8, 11, "START", selected == 4)
+        ui.button(8, 12, "START", selected == startIdx)
         
         local event, key = os.pullEvent("key")
         if key == keys.up then
             selected = selected - 1
-            if selected < 1 then selected = 4 end
+            if selected < 1 then selected = startIdx end
         elseif key == keys.down then
             selected = selected + 1
-            if selected > 4 then selected = 1 end
+            if selected > startIdx then selected = 1 end
         elseif key == keys.left then
-            if selected == 1 then mode = (mode == "treefarm" and "potatofarm" or "treefarm") end
-            if selected == 2 then width = math.max(1, width - 1) end
-            if selected == 3 then height = math.max(1, height - 1) end
+            if selected == 1 then 
+                if mode == "treefarm" then mode = "potatofarm"
+                elseif mode == "potatofarm" then mode = "mine"
+                else mode = "treefarm" end
+                selected = 1
+            end
+            if mode == "treefarm" or mode == "potatofarm" then
+                if selected == 2 then width = math.max(1, width - 1) end
+                if selected == 3 then height = math.max(1, height - 1) end
+            elseif mode == "mine" then
+                if selected == 2 then length = math.max(10, length - 10) end
+                if selected == 3 then branchInterval = math.max(1, branchInterval - 1) end
+                if selected == 4 then branchLength = math.max(1, branchLength - 1) end
+                if selected == 5 then torchInterval = math.max(1, torchInterval - 1) end
+            end
         elseif key == keys.right then
-            if selected == 1 then mode = (mode == "treefarm" and "potatofarm" or "treefarm") end
-            if selected == 2 then width = width + 1 end
-            if selected == 3 then height = height + 1 end
+            if selected == 1 then 
+                if mode == "treefarm" then mode = "mine"
+                elseif mode == "mine" then mode = "potatofarm"
+                else mode = "treefarm" end
+                selected = 1
+            end
+            if mode == "treefarm" or mode == "potatofarm" then
+                if selected == 2 then width = width + 1 end
+                if selected == 3 then height = height + 1 end
+            elseif mode == "mine" then
+                if selected == 2 then length = length + 10 end
+                if selected == 3 then branchInterval = branchInterval + 1 end
+                if selected == 4 then branchLength = branchLength + 1 end
+                if selected == 5 then torchInterval = torchInterval + 1 end
+            end
         elseif key == keys.enter then
-            if selected == 4 then
+            if selected == startIdx then
                 ctx.config.mode = mode
-                ctx.config.width = width
-                ctx.config.height = height
+                if mode == "mine" then
+                    ctx.config.length = length
+                    ctx.config.branchInterval = branchInterval
+                    ctx.config.branchLength = branchLength
+                    ctx.config.torchInterval = torchInterval
+                else
+                    ctx.config.width = width
+                    ctx.config.height = height
+                end
                 return
             end
         end
@@ -93,7 +181,8 @@ local states = {
     DONE = require("state_done"),
     CHECK_REQUIREMENTS = require("state_check_requirements"),
     TREEFARM = require("state_treefarm"),
-    POTATOFARM = require("state_potatofarm")
+    POTATOFARM = require("state_potatofarm"),
+    BRANCHMINE = require("state_branchmine")
 }
 
 local function main(args)

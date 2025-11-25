@@ -33,6 +33,8 @@ local function calculateRequirements(ctx, strategy)
         for _, step in ipairs(strategy) do
             if step.type == "place_torch" then
                 reqs.materials["minecraft:torch"] = (reqs.materials["minecraft:torch"] or 0) + 1
+            elseif step.type == "place_chest" then
+                reqs.materials["minecraft:chest"] = (reqs.materials["minecraft:chest"] or 0) + 1
             end
         end
     else
@@ -83,11 +85,15 @@ local function retrieveFromNearby(ctx, missing)
                         end
                     end
                     
-                    for mat, _ in pairs(neededFromChest) do
-                        local amount = missing[mat]
+                    -- Check if we need anything from this chest
+                    local hasNeeds = false
+                    for k,v in pairs(neededFromChest) do hasNeeds = true break end
+                    
+                    if hasNeeds then
                         local pullSide = "forward"
                         local turned = false
                         
+                        -- Turn to face the chest if needed
                         if side == "top" then pullSide = "up"
                         elseif side == "bottom" then pullSide = "down"
                         elseif side == "front" then pullSide = "forward"
@@ -106,18 +112,23 @@ local function retrieveFromNearby(ctx, missing)
                             pullSide = "forward"
                         end
                         
-                        print(string.format("Attempting to pull %s from %s...", mat, side))
-                        local success, err = inventory.pullMaterial(ctx, mat, amount, { side = pullSide })
-                        if success then
-                            pulledAny = true
-                            -- Update missing count locally to avoid over-pulling
-                            missing[mat] = math.max(0, missing[mat] - amount)
-                        else
-                             logger.log(ctx, "warn", "Failed to pull " .. mat .. ": " .. tostring(err))
+                        -- Pull all needed items
+                        for mat, _ in pairs(neededFromChest) do
+                            local amount = missing[mat]
+                            if amount > 0 then
+                                print(string.format("Attempting to pull %s from %s...", mat, side))
+                                local success, err = inventory.pullMaterial(ctx, mat, amount, { side = pullSide })
+                                if success then
+                                    pulledAny = true
+                                    missing[mat] = math.max(0, missing[mat] - amount)
+                                else
+                                     logger.log(ctx, "warn", "Failed to pull " .. mat .. ": " .. tostring(err))
+                                end
+                            end
                         end
                         
+                        -- Restore facing
                         if turned then
-                            -- Restore facing
                             if side == "left" then movement.turnRight(ctx)
                             elseif side == "right" then movement.turnLeft(ctx)
                             elseif side == "back" then 
@@ -199,6 +210,20 @@ local function CHECK_REQUIREMENTS(ctx)
     -- Check materials
     for mat, count in pairs(reqs.materials) do
         local have = invCounts[mat] or 0
+        
+        -- Special handling for chests: allow any chest/barrel if "minecraft:chest" is requested
+        if mat == "minecraft:chest" and have < count then
+            local totalChests = 0
+            for invMat, invCount in pairs(invCounts) do
+                if invMat:find("chest") or invMat:find("barrel") or invMat:find("shulker") then
+                    totalChests = totalChests + invCount
+                end
+            end
+            if totalChests >= count then
+                have = count -- Satisfied
+            end
+        end
+
         if have < count then
             missing.materials[mat] = count - have
             hasMissing = true

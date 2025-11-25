@@ -11,6 +11,7 @@ local logger = require("lib_logger")
 local orientation = require("lib_orientation")
 local diagnostics = require("lib_diagnostics")
 local world = require("lib_world")
+local startup = require("lib_startup")
 
 local function localToWorld(localPos, facing)
     return world.localToWorld(localPos, facing)
@@ -34,18 +35,8 @@ local function BUILD(ctx)
     local material = step.block.material
     
     -- 1. Check Fuel
-    -- Simple check: do we have enough to move?
-    -- Real logic should be in REFUEL state or a robust check here.
-    ---@diagnostic disable-next-line: undefined-global
-    if turtle.getFuelLevel() < 100 and turtle.getFuelLevel() ~= "unlimited" then
-        -- Try to refuel from inventory first
-        fuelLib.refuel(ctx, { target = 1000 })
-        
-        ---@diagnostic disable-next-line: undefined-global
-        if turtle.getFuelLevel() < 100 then
-            ctx.resumeState = "BUILD"
-            return "REFUEL"
-        end
+    if not startup.runFuelCheck(ctx, ctx.chests, 100, 1000) then
+        return "BUILD"
     end
 
     -- 2. Check Inventory
