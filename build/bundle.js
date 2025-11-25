@@ -89,13 +89,16 @@ function minifyLua(content) {
     // Remove block comments --[[ ... ]]
     content = content.replace(/--\[\[[\s\S]*?\]\]/g, '');
     
-    // Remove full line comments (lines starting with optional whitespace and --)
-    content = content.replace(/^\s*--.*$/gm, '');
-    
-    // Remove empty lines
-    content = content.replace(/^\s*[\r\n]/gm, '');
-    
-    return content.trim();
+    return content.split('\n')
+        .map(line => line.trim()) // Remove indentation/whitespace
+        .filter(line => {
+            // Remove empty lines
+            if (line.length === 0) return false;
+            // Remove single-line comments
+            if (line.startsWith('--')) return false;
+            return true;
+        })
+        .join('\n');
 }
 
 function buildInstaller() {
