@@ -113,35 +113,127 @@ local function runExcavate()
 end
 
 local function runTreeFarm()
-    ui.clear()
-    print("Starting Tree Farm...")
-    sleep(1)
-    factory.run({ "treefarm" })
-    return pauseAndReturn("stay")
-end
-
-local function runPotatoFarm()
     local width = 9
-    local length = 9
+    local height = 9
     
-    local form = ui.Form("Potato Farm Configuration")
-    form:addInput("width", "Width", tostring(width))
-    form:addInput("length", "Length", tostring(length))
+    local form = ui.Form("Tree Farm Configuration")
+    -- Manually add elements to control layout for side-by-side preview
+    form.elements = {} 
+    
+    table.insert(form.elements, { type = "label", x = 2, y = 3, text = "Width:" })
+    table.insert(form.elements, { type = "input", x = 10, y = 3, width = 5, value = tostring(width), id = "width" })
+    
+    table.insert(form.elements, { type = "label", x = 2, y = 5, text = "Height:" })
+    table.insert(form.elements, { type = "input", x = 10, y = 5, width = 5, value = tostring(height), id = "height" })
+
+    form.onDraw = function(fx, fy, fw, fh)
+        -- Parse current values
+        local w, h = 9, 9
+        for _, el in ipairs(form.elements) do
+            if el.id == "width" then w = tonumber(el.value) or 9 end
+            if el.id == "height" then h = tonumber(el.value) or 9 end
+        end
+        
+        -- Draw grid preview to the right
+        local previewX = fx + 20
+        local previewY = fy + 2
+        
+        ui.label(previewX, previewY - 1, "Preview:")
+        
+        -- Limit preview size to fit in the box
+        local maxW = fw - 22
+        local maxH = fh - 4
+        
+        if w > maxW or h > maxH then
+             ui.label(previewX, previewY, "Too big")
+             return
+        end
+        
+        term.setBackgroundColor(colors.green)
+        term.setTextColor(colors.brown)
+        for y = 0, h - 1 do
+            for x = 0, w - 1 do
+                term.setCursorPos(previewX + x, previewY + y)
+                term.write("T")
+            end
+        end
+    end
     
     local result = form:run()
     if result == "cancel" then return "stay" end
     
     for _, el in ipairs(form.elements) do
         if el.id == "width" then width = tonumber(el.value) or 9 end
-        if el.id == "length" then length = tonumber(el.value) or 9 end
+        if el.id == "height" then height = tonumber(el.value) or 9 end
     end
     
     ui.clear()
-    print("Starting Potato Farm Build...")
-    print(string.format("W: %d, L: %d", width, length))
+    print("Starting Tree Farm...")
+    print(string.format("Size: %d x %d", width, height))
     sleep(1)
     
-    factory.run({ "farm", "--farm-type", "potato", "--width", tostring(width), "--length", tostring(length) })
+    factory.run({ "treefarm", "--width", tostring(width), "--height", tostring(height) })
+    
+    return pauseAndReturn("stay")
+end
+
+local function runPotatoFarm()
+    local width = 9
+    local height = 9
+    
+    local form = ui.Form("Potato Farm Configuration")
+    form.elements = {} 
+    
+    table.insert(form.elements, { type = "label", x = 2, y = 3, text = "Width:" })
+    table.insert(form.elements, { type = "input", x = 10, y = 3, width = 5, value = tostring(width), id = "width" })
+    
+    table.insert(form.elements, { type = "label", x = 2, y = 5, text = "Height:" })
+    table.insert(form.elements, { type = "input", x = 10, y = 5, width = 5, value = tostring(height), id = "height" })
+
+    form.onDraw = function(fx, fy, fw, fh)
+        local w, h = 9, 9
+        for _, el in ipairs(form.elements) do
+            if el.id == "width" then w = tonumber(el.value) or 9 end
+            if el.id == "height" then h = tonumber(el.value) or 9 end
+        end
+        
+        local previewX = fx + 20
+        local previewY = fy + 2
+        
+        ui.label(previewX, previewY - 1, "Preview:")
+        
+        local maxW = fw - 22
+        local maxH = fh - 4
+        
+        if w > maxW or h > maxH then
+             ui.label(previewX, previewY, "Too big")
+             return
+        end
+        
+        term.setBackgroundColor(colors.brown)
+        term.setTextColor(colors.orange)
+        for y = 0, h - 1 do
+            for x = 0, w - 1 do
+                term.setCursorPos(previewX + x, previewY + y)
+                term.write(".")
+            end
+        end
+    end
+    
+    local result = form:run()
+    if result == "cancel" then return "stay" end
+    
+    for _, el in ipairs(form.elements) do
+        if el.id == "width" then width = tonumber(el.value) or 9 end
+        if el.id == "height" then height = tonumber(el.value) or 9 end
+    end
+    
+    ui.clear()
+    print("Starting Potato Farm...")
+    print(string.format("Size: %d x %d", width, height))
+    sleep(1)
+    
+    factory.run({ "potatofarm", "--width", tostring(width), "--height", tostring(height) })
     
     return pauseAndReturn("stay")
 end

@@ -61,6 +61,7 @@ function strategy.generate(length, branchInterval, branchLength, torchInterval)
     local x, y, z = 0, 0, 0
     local facing = 0 -- 0: forward, 1: right, 2: back, 3: left
 
+    pushStep(steps, x, y, z, facing, "place_chest")
     pushStep(steps, x, y, z, facing, "mine_neighbors")
 
     for i = 1, length do
@@ -103,8 +104,8 @@ function strategy.generate(length, branchInterval, branchLength, torchInterval)
             pushStep(steps, x, y, z, facing, "move")
 
             -- Face down the spine again
-            facing = turnRight(facing)
-            pushStep(steps, x, y, z, facing, "turn", "right")
+            facing = turnLeft(facing)
+            pushStep(steps, x, y, z, facing, "turn", "left")
 
             -- Right branch (mirror of left)
             facing = turnRight(facing)
@@ -134,8 +135,8 @@ function strategy.generate(length, branchInterval, branchLength, torchInterval)
             y = y - 1
             pushStep(steps, x, y, z, facing, "move")
 
-            facing = turnLeft(facing)
-            pushStep(steps, x, y, z, facing, "turn", "left")
+            facing = turnRight(facing)
+            pushStep(steps, x, y, z, facing, "turn", "right")
         end
 
         if i % 5 == 0 then

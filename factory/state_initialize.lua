@@ -168,6 +168,30 @@ local function INITIALIZE(ctx)
         return "CHECK_REQUIREMENTS"
     end
 
+    if ctx.config.mode == "treefarm" then
+        logger.log(ctx, "info", "Starting Tree Farm mode...")
+        ctx.treefarm = {
+            width = tonumber(ctx.config.width) or 9,
+            height = tonumber(ctx.config.height) or 9,
+            currentX = 0,
+            currentZ = 0, -- Using Z for the second dimension to match Minecraft coordinates usually
+            state = "SETUP"
+        }
+        return "TREEFARM"
+    end
+
+    if ctx.config.mode == "potatofarm" then
+        logger.log(ctx, "info", "Starting Potato Farm mode...")
+        ctx.potatofarm = {
+            width = tonumber(ctx.config.width) or 9,
+            height = tonumber(ctx.config.height) or 9,
+            currentX = 0,
+            currentZ = 0,
+            state = "SETUP"
+        }
+        return "POTATOFARM"
+    end
+
     if ctx.config.mode == "farm" then
         logger.log(ctx, "info", "Generating farm strategy...")
         local farmType = ctx.config.farmType or "tree"

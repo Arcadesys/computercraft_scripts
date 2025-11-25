@@ -174,19 +174,42 @@ function ui.runForm(form)
     local result = nil
     local activeInput = nil
 
+    -- Identify focusable elements
+    local focusableIndices = {}
+    for i, el in ipairs(form.elements) do
+        if el.type == "input" or el.type == "button" then
+            table.insert(focusableIndices, i)
+        end
+    end
+    local currentFocusIndex = 1
+    if #focusableIndices > 0 then
+        local el = form.elements[focusableIndices[currentFocusIndex]]
+        if el.type == "input" then activeInput = el end
+    end
+
     while running do
         ui.clear()
         ui.drawFrame(fx, fy, fw, fh, form.title)
         
+        -- Custom Draw
+        if form.onDraw then
+            form.onDraw(fx, fy, fw, fh)
+        end
+
         -- Draw elements
-        for _, el in ipairs(form.elements) do
+        for i, el in ipairs(form.elements) do
             local ex, ey = fx + el.x, fy + el.y
+            local isFocused = false
+            if #focusableIndices > 0 and focusableIndices[currentFocusIndex] == i then
+                isFocused = true
+            end
+
             if el.type == "button" then
-                ui.button(ex, ey, el.text, false)
+                ui.button(ex, ey, el.text, isFocused)
             elseif el.type == "label" then
                 ui.label(ex, ey, el.text)
             elseif el.type == "input" then
-                ui.inputText(ex, ey, el.width, el.value, activeInput == el)
+                ui.inputText(ex, ey, el.width, el.value, activeInput == el or isFocused)
             end
         end
         
@@ -196,7 +219,7 @@ function ui.runForm(form)
             local btn, mx, my = p1, p2, p3
             local clickedSomething = false
             
-            for _, el in ipairs(form.elements) do
+            for i, el in ipairs(form.elements) do
                 local ex, ey = fx + el.x, fy + el.y
                 if el.type == "button" then
                     if my == ey and mx >= ex and mx < ex + #el.text + 2 then
@@ -207,11 +230,20 @@ function ui.runForm(form)
                             if res then return res end
                         end
                         clickedSomething = true
+                        -- Update focus
+                        for fi, idx in ipairs(focusableIndices) do
+                            if idx == i then currentFocusIndex = fi; break end
+                        end
+                        activeInput = nil
                     end
                 elseif el.type == "input" then
                     if my == ey and mx >= ex and mx < ex + el.width then
                         activeInput = el
                         clickedSomething = true
+                        -- Update focus
+                        for fi, idx in ipairs(focusableIndices) do
+                            if idx == i then currentFocusIndex = fi; break end
+                        end
                     end
                 end
             end
@@ -229,8 +261,46 @@ function ui.runForm(form)
                 if #val > 0 then
                     activeInput.value = val:sub(1, -2)
                 end
-            elseif key == keys.enter and activeInput then
-                activeInput = nil
+            elseif key == keys.tab or key == keys.down then
+                if #focusableIndices > 0 then
+                    currentFocusIndex = currentFocusIndex + 1
+                    if currentFocusIndex > #focusableIndices then currentFocusIndex = 1 end
+                    local el = form.elements[focusableIndices[currentFocusIndex]]
+                    activeInput = (el.type == "input") and el or nil
+                end
+            elseif key == keys.up then
+                if #focusableIndices > 0 then
+                    currentFocusIndex = currentFocusIndex - 1
+                    if currentFocusIndex < 1 then currentFocusIndex = #focusableIndices end
+                    local el = form.elements[focusableIndices[currentFocusIndex]]
+                    activeInput = (el.type == "input") and el or nil
+                end
+            elseif key == keys.enter then
+                if activeInput then
+                    activeInput = nil
+                    -- Move to next
+                    if #focusableIndices > 0 then
+                        currentFocusIndex = currentFocusIndex + 1
+                        if currentFocusIndex > #focusableIndices then currentFocusIndex = 1 end
+                        local el = form.elements[focusableIndices[currentFocusIndex]]
+                        activeInput = (el.type == "input") and el or nil
+                    end
+                else
+                    -- Activate button
+                    if #focusableIndices > 0 then
+                        local el = form.elements[focusableIndices[currentFocusIndex]]
+                        if el.type == "button" then
+                            ui.button(fx + el.x, fy + el.y, el.text, true) -- Flash
+                            sleep(0.1)
+                            if el.callback then
+                                local res = el.callback(form)
+                                if res then return res end
+                            end
+                        elseif el.type == "input" then
+                            activeInput = el
+                        end
+                    end
+                end
             end
         end
     end
@@ -245,7 +315,8 @@ function ui.runMenu(title, items)
     
     local scroll = 0
     local maxVisible = fh - 4 -- Title + padding (top/bottom)
-    
+    local selectedIndex = 1
+
     while true do
         ui.clear()
         ui.drawFrame(fx, fy, fw, fh, title)
@@ -255,7 +326,8 @@ function ui.runMenu(title, items)
             local idx = i + scroll
             if idx <= #items then
                 local item = items[idx]
-                ui.button(fx + 2, fy + 1 + i, item.text, false)
+                local isSelected = (idx == selectedIndex)
+                ui.button(fx + 2, fy + 1 + i, item.text, isSelected)
             end
         end
         
@@ -286,6 +358,7 @@ function ui.runMenu(title, items)
                             local res = item.callback()
                             if res then return res end
                         end
+                        selectedIndex = idx
                     end
                 end
             end
@@ -300,9 +373,27 @@ function ui.runMenu(title, items)
         elseif event == "key" then
             local key = p1
             if key == keys.up then
-                if scroll > 0 then scroll = scroll - 1 end
+                if selectedIndex > 1 then
+                    selectedIndex = selectedIndex - 1
+                    if selectedIndex <= scroll then
+                        scroll = selectedIndex - 1
+                    end
+                end
             elseif key == keys.down then
-                if scroll + maxVisible < #items then scroll = scroll + 1 end
+                if selectedIndex < #items then
+                    selectedIndex = selectedIndex + 1
+                    if selectedIndex > scroll + maxVisible then
+                        scroll = selectedIndex - maxVisible
+                    end
+                end
+            elseif key == keys.enter then
+                local item = items[selectedIndex]
+                if item and item.callback then
+                    ui.button(fx + 2, fy + 1 + (selectedIndex - scroll), item.text, true) -- Flash
+                    sleep(0.1)
+                    local res = item.callback()
+                    if res then return res end
+                end
             end
         end
     end

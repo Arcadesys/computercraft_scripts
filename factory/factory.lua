@@ -20,6 +20,7 @@ local states = {
     BUILD = requireForce("state_build"),
     MINE = requireForce("state_mine"),
     TREEFARM = requireForce("state_treefarm"),
+    POTATOFARM = requireForce("state_potatofarm"),
     RESTOCK = requireForce("state_restock"),
     REFUEL = requireForce("state_refuel"),
     BLOCKED = requireForce("state_blocked"),
@@ -75,7 +76,10 @@ local function run(args)
         elseif value == "excavate" then
             ctx.config.mode = "excavate"
         elseif value == "treefarm" then
-            ctx.state = "TREEFARM"
+            ctx.config.mode = "treefarm"
+            -- ctx.state = "TREEFARM" -- Let INITIALIZE handle setup
+        elseif value == "potatofarm" then
+            ctx.config.mode = "potatofarm"
         elseif value == "farm" then
             ctx.config.mode = "farm"
         elseif value == "--farm-type" then

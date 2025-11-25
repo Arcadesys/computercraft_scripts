@@ -49,6 +49,15 @@ local OPPOSITE_FACING = {
     west = "east",
 }
 
+local CONTAINER_KEYWORDS = {
+    "chest",
+    "barrel",
+    "shulker",
+    "crate",
+    "storage",
+    "inventory",
+}
+
 inventory.DEFAULT_TRASH = {
     ["minecraft:air"] = true,
     ["minecraft:stone"] = true,
