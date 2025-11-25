@@ -20,7 +20,9 @@ local states = {
     REFUEL = require("state_refuel"),
     BLOCKED = require("state_blocked"),
     ERROR = require("state_error"),
-    DONE = require("state_done")
+    DONE = require("state_done"),
+    TREEFARM = require("state_treefarm"),
+    POTATOFARM = require("state_potatofarm")
 }
 
 local function main(args)
@@ -48,9 +50,19 @@ local function main(args)
             ctx.config.verbose = true
         elseif arg == "mine" then
             ctx.config.mode = "mine"
+        elseif arg == "treefarm" then
+            ctx.config.mode = "treefarm"
+        elseif arg == "potatofarm" then
+            ctx.config.mode = "potatofarm"
         elseif arg == "--length" then
             i = i + 1
             ctx.config.length = tonumber(args[i])
+        elseif arg == "--width" then
+            i = i + 1
+            ctx.config.width = tonumber(args[i])
+        elseif arg == "--height" then
+            i = i + 1
+            ctx.config.height = tonumber(args[i])
         elseif arg == "--branch-interval" then
             i = i + 1
             ctx.config.branchInterval = tonumber(args[i])

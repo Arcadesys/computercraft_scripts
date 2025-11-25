@@ -211,7 +211,7 @@ local function pullFromSources(ctx, state, opts)
     return #pulled > 0, { pulled = pulled, errors = errors }
 end
 
-local function refuelRound(ctx, target, report)
+local function refuelRound(ctx, state, opts, target, report)
     local consumed, info = consumeFromInventory(ctx, target)
     report.steps[#report.steps + 1] = {
         type = "inventory",
@@ -294,7 +294,7 @@ local function refuelInternal(ctx, state, opts)
 
     for i = 1, rounds do
         report.round = i
-        local ok, roundReport = refuelRound(ctx, target, report)
+        local ok, roundReport = refuelRound(ctx, state, opts, target, report)
         report = roundReport
         if report.reachedTarget then
             return true, report

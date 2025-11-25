@@ -20,7 +20,9 @@ local MATERIALS = {
     soul_sand = "minecraft:soul_sand",
     farmland = "minecraft:farmland",
     stone = "minecraft:stone_bricks", -- Border
-    torch = "minecraft:torch"
+    torch = "minecraft:torch",
+    furnace = "minecraft:furnace",
+    chest = "minecraft:chest"
 }
 
 local function createBlock(mat)
@@ -63,6 +65,10 @@ function strategy.generate(farmType, width, length)
                 end
             end
         end
+
+        -- Add charcoal maker essentials (Furnace + Chest) on the border
+        set(0, 1, 1, MATERIALS.furnace)
+        set(0, 1, 2, MATERIALS.chest)
 
     elseif farmType == "cane" then
         -- Rows: Water, Sand, Sand, Water

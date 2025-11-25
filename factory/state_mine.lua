@@ -97,6 +97,26 @@ local function MINE(ctx)
         
     elseif step.type == "done" then
         return "DONE"
+    elseif step.type == "place_chest" then
+        local chestItem = ctx.config.chestItem or "minecraft:chest"
+        local ok = inventory.selectMaterial(ctx, chestItem)
+        if not ok then
+            logger.log(ctx, "error", "Pre-flight check failed: Missing chest")
+            return "ERROR"
+        end
+        
+        if not turtle.placeDown() then
+            if turtle.detectDown() then
+                turtle.digDown()
+                if not turtle.placeDown() then
+                    logger.log(ctx, "error", "Pre-flight check failed: Could not place chest")
+                    return "ERROR"
+                end
+            else
+                logger.log(ctx, "error", "Pre-flight check failed: Could not place chest")
+                return "ERROR"
+            end
+        end
     end
     
     ctx.pointer = stepIndex + 1

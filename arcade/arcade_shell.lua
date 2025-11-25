@@ -1,4 +1,4 @@
----@diagnostic disable: undefined-global
+---@diagnostic disable: undefined-global, undefined-field
 -- arcade_shell.lua
 -- Simple shell UI that lists arcade programs, lets players buy licenses,
 -- and launches games once unlocked.
@@ -431,6 +431,57 @@ end
 
 local function main()
   initState()
+  
+  if not term.isColor() then
+      local menu = require("lib_menu")
+      while true do
+          local options = {
+              {text = "Store", action = function() 
+                  for _, p in ipairs(programs) do
+                      if p.id == "store" then launchProgram(p) return end
+                  end
+              end},
+              {text = "My Apps", action = function() 
+                  local gameOptions = {}
+                  for _, p in ipairs(programs) do
+                      if p.id ~= "store" and state.licenseStore:has(p.id) then
+                          table.insert(gameOptions, {text = p.name, action = function() launchProgram(p) end})
+                      end
+                  end
+                  table.insert(gameOptions, {text = "Back", action = function() end})
+                  local idx, choice = menu.run("My Apps", gameOptions)
+                  if choice and choice.action then choice.action() end
+              end},
+              {text = "System", action = function()
+                   local sysOptions = {
+                      {text = "Themes", action = function() 
+                           for _, p in ipairs(programs) do
+                              if p.id == "themes" then launchProgram(p) return end
+                           end
+                      end},
+                      {text = "Disk Info", action = function()
+                          term.clear()
+                          term.setCursorPos(1,1)
+                          print("Free Space: " .. fs.getFreeSpace(detectDiskMount() or "/"))
+                          os.sleep(2)
+                      end},
+                      {text = "Back", action = function() end}
+                   }
+                   local idx, choice = menu.run("System", sysOptions)
+                   if choice and choice.action then choice.action() end
+              end},
+              {text = "Exit", action = function() 
+                  term.clear()
+                  term.setCursorPos(1,1)
+                  return
+              end}
+          }
+          
+          local idx, choice = menu.run("ArcadeOS (Mono)", options)
+          if choice and choice.action then choice.action() end
+      end
+      return
+  end
   
   local w, h = term.getSize()
   local running = true
