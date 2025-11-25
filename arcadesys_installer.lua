@@ -1,5 +1,5 @@
 -- Arcadesys Unified Installer
--- Auto-generated at 2025-11-25T19:38:15.635Z
+-- Auto-generated at 2025-11-25T19:39:59.773Z
 print("Starting Arcadesys install...")
 local files = {}
 
@@ -4308,48 +4308,53 @@ end
 local function runPotatoFarm()
 local width = 9
 local height = 9
-local form = ui.Form("Potato Farm Configuration")
-form.elements = {}
-table.insert(form.elements, { type = "label", x = 2, y = 3, text = "Width:" })
-table.insert(form.elements, { type = "input", x = 10, y = 3, width = 5, value = tostring(width), id = "width" })
-table.insert(form.elements, { type = "label", x = 2, y = 5, text = "Height:" })
-table.insert(form.elements, { type = "input", x = 10, y = 5, width = 5, value = tostring(height), id = "height" })
-form.onDraw = function(fx, fy, fw, fh)
-local w, h = 9, 9
-for _, el in ipairs(form.elements) do
-if el.id == "width" then w = tonumber(el.value) or 9 end
-if el.id == "height" then h = tonumber(el.value) or 9 end
+local selected = 1 -- 1: Width, 2: Height, 3: FARM
+while true do
+ui.clear()
+ui.drawFrame(2, 2, 26, 12, "Potato Farm Setup")
+ui.label(4, 5, "Width: ")
+if selected == 1 then
+if term.isColor() then term.setTextColor(colors.yellow) end
+term.write("< " .. width .. " >")
+else
+if term.isColor() then term.setTextColor(colors.white) end
+term.write("  " .. width .. "  ")
 end
-local previewX = fx + 20
-local previewY = fy + 2
-ui.label(previewX, previewY - 1, "Preview:")
-local maxW = fw - 22
-local maxH = fh - 4
-if w > maxW or h > maxH then
-ui.label(previewX, previewY, "Too big")
-return
+ui.label(4, 7, "Height:")
+if selected == 2 then
+if term.isColor() then term.setTextColor(colors.yellow) end
+term.write("< " .. height .. " >")
+else
+if term.isColor() then term.setTextColor(colors.white) end
+term.write("  " .. height .. "  ")
 end
-term.setBackgroundColor(colors.brown)
-term.setTextColor(colors.orange)
-for y = 0, h - 1 do
-for x = 0, w - 1 do
-term.setCursorPos(previewX + x, previewY + y)
-term.write(".")
-end
-end
-end
-local result = form:run()
-if result == "cancel" then return "stay" end
-for _, el in ipairs(form.elements) do
-if el.id == "width" then width = tonumber(el.value) or 9 end
-if el.id == "height" then height = tonumber(el.value) or 9 end
-end
+ui.button(8, 10, "FARM", selected == 3)
+local event, key = os.pullEvent("key")
+if key == keys.up then
+selected = selected - 1
+if selected < 1 then selected = 3 end
+elseif key == keys.down then
+selected = selected + 1
+if selected > 3 then selected = 1 end
+elseif key == keys.left then
+if selected == 1 then width = math.max(1, width - 1) end
+if selected == 2 then height = math.max(1, height - 1) end
+elseif key == keys.right then
+if selected == 1 then width = width + 1 end
+if selected == 2 then height = height + 1 end
+elseif key == keys.enter then
+if selected == 3 then
 ui.clear()
 print("Starting Potato Farm...")
 print(string.format("Size: %d x %d", width, height))
 sleep(1)
 factory.run({ "potatofarm", "--width", tostring(width), "--height", tostring(height) })
 return pauseAndReturn("stay")
+end
+elseif key == keys.q then
+return "stay"
+end
+end
 end
 local function runBuild(schemaFile)
 ui.clear()

@@ -70,10 +70,11 @@ local function POTATOFARM(ctx)
         
         -- Fly over (height 1 is directly above crop)
         local hoverHeight = 1
-        local target = { x = x, y = hoverHeight, z = -z }
+        -- Apply 1x1 offset for safety (start at 1,1 relative to home)
+        local target = { x = x + 1, y = hoverHeight, z = -(z + 1) }
         
         if not movement.goTo(ctx, target) then
-            logger.log(ctx, "warn", "Path blocked to " .. x .. "," .. z)
+            logger.log(ctx, "warn", "Path blocked to " .. target.x .. "," .. target.z)
             -- Try to move up and over?
             if not movement.up(ctx) then
                  return "POTATOFARM" -- Stuck
@@ -86,6 +87,7 @@ local function POTATOFARM(ctx)
                 if age >= 7 then
                     logger.log(ctx, "info", "Harvesting potato at " .. x .. "," .. z)
                     turtle.digDown()
+                    turtle.suckDown() -- Collect any extra drops
                     -- Replant
                     if inventory.selectMaterial(ctx, "minecraft:potato") then
                         turtle.placeDown()
