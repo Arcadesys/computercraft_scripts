@@ -34,6 +34,7 @@ end
 setupPaths()
 
 local LicenseStore = require("license_store")
+local httpUtils = require("lib.lib_http")
 
 local BASE_DIR = fs.getDir(shell and shell.getRunningProgram and shell.getRunningProgram() or "") or ""
 if BASE_DIR == "" then BASE_DIR = "." end
@@ -140,7 +141,7 @@ local function installProgram(program)
 
     local targetPath = resolvePath(program.path)
     
-    local ok, err = downloadFile(url, targetPath)
+    local ok, err = httpUtils.downloadFile(url, targetPath)
     
     if ok then
         center(math.floor((h-10)/2) + 5, "Success!")
@@ -330,34 +331,6 @@ end
 
 local REPO_BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
 
-local function downloadFile(url, path)
-    if not http then
-        return false, "HTTP API disabled"
-    end
-    
-    local response = http.get(url)
-    if not response then
-        return false, "Failed to connect"
-    end
-    
-    local content = response.readAll()
-    response.close()
-    
-    local dir = fs.getDir(path)
-    if dir ~= "" and not fs.exists(dir) then
-        fs.makeDir(dir)
-    end
-    
-    local file = fs.open(path, "w")
-    if file then
-        file.write(content)
-        file.close()
-        return true
-    else
-        return false, "Write failed"
-    end
-end
-
 local function installProgram(program)
     term.setBackgroundColor(colors.blue)
     term.clear()
@@ -380,7 +353,7 @@ local function installProgram(program)
 
     local targetPath = resolvePath(program.path)
     
-    local ok, err = downloadFile(url, targetPath)
+    local ok, err = httpUtils.downloadFile(url, targetPath)
     
     if ok then
         center(math.floor((h-10)/2) + 5, "Success!")
