@@ -14,7 +14,45 @@
 --
 -- Lua Tips (search 'Lua Tip:') are sprinkled in for learning.
 
-local arcade = require("games.arcade")
+-- Clear potentially failed loads
+package.loaded["arcade"] = nil
+package.loaded["log"] = nil
+
+local function setupPaths()
+    local program = shell.getRunningProgram()
+    local dir = fs.getDir(program)
+    -- idlecraft is in arcade/games/idlecraft.lua
+    -- dir is arcade/games
+    -- root is arcade
+    -- parent of root is installation root
+    local gamesDir = fs.getDir(program)
+    local arcadeDir = fs.getDir(gamesDir)
+    local root = fs.getDir(arcadeDir)
+    
+    local function add(path)
+        local part = fs.combine(root, path)
+        -- fs.combine strips leading slashes, so we force absolute path
+        local pattern = "/" .. fs.combine(part, "?.lua")
+        
+        if not string.find(package.path, pattern, 1, true) then
+            package.path = package.path .. ";" .. pattern
+        end
+    end
+    
+    add("lib")
+    add("arcade")
+    -- Explicitly add ui folder just in case
+    add("arcade/ui")
+    
+    -- Ensure root is in path so require("arcade.ui.renderer") works
+    if not string.find(package.path, ";/?.lua", 1, true) then
+        package.path = package.path .. ";/?.lua"
+    end
+end
+
+setupPaths()
+
+local arcade = require("arcade")
 
 -- ==========================
 -- Configuration
@@ -68,12 +106,14 @@ local state = {
         firstMod = false,
         stage2Announced = false,
     },
-    mode = nil,               -- nil | 'upgrade' | 'hire' | 'mod'
+    menuOpen = false,
+    menuSelection = 1,
     messages = {},
 }
 
 -- Lua Tip: Keeping formatting helpers local avoids re-computation / global pollution.
 local function formatNumber(value)
+    if not value then return "0" end
     if value >= 1e9 then return string.format("%.2fB", value / 1e9)
     elseif value >= 1e6 then return string.format("%.2fM", value / 1e6)
     elseif value >= 1e3 then return string.format("%.1fk", value / 1e3)
@@ -241,31 +281,74 @@ local function passiveTick()
 end
 
 -- ==========================
--- Mode Handling / Button Logic
+-- Persistence
 -- ==========================
 
-local modeCycle = { nil, "upgrade", "hire", "mod" } -- nil means plain mining
+local savePath = "arcade/data/idlecraft_save.txt"
+local lastSaveRealTime = os.clock()
 
-local function nextMode()
-    -- Lua Tip: ipairs iterates sequential numeric keys 1..n; we use it to find current mode index.
-    local idx
-    for i, m in ipairs(modeCycle) do
-        if m == state.mode then idx = i break end
+local function saveGame()
+    local file = fs.open(savePath, "w")
+    if file then
+        file.write(textutils.serialize(state))
+        file.close()
     end
-    idx = (idx or 1) + 1
-    if idx > #modeCycle then idx = 1 end
-    -- Skip 'mod' if stage not yet unlocked
-    if modeCycle[idx] == "mod" and state.stage < 2 then idx = 1 end
-    state.mode = modeCycle[idx]
 end
 
-local function performPrimary()
-    if state.mode == "upgrade" then upgradeTools()
-    elseif state.mode == "hire" then hireSteve()
-    elseif state.mode == "mod" then installMod()
-    else mineBlock() end
-    -- Ensure stage transitions can happen immediately after manual actions
-    checkStageProgress()
+local function loadGame()
+    if fs.exists(savePath) then
+        local file = fs.open(savePath, "r")
+        if file then
+            local content = file.readAll()
+            file.close()
+            local loaded = textutils.unserialize(content)
+            if loaded and type(loaded) == "table" then
+                for k, v in pairs(loaded) do
+                    state[k] = v
+                end
+            end
+        end
+    end
+end
+
+-- ==========================
+-- Menu Logic
+-- ==========================
+
+local function getMenuItems()
+    local items = {}
+    
+    -- Upgrade
+    table.insert(items, {
+        label = "Upgrade Tools (" .. formatNumber(state.toolUpgradeCost) .. ")",
+        action = function() upgradeTools() end,
+        enabled = state.cobble >= state.toolUpgradeCost
+    })
+
+    -- MODS (if stage 2)
+    if state.stage >= 2 then
+        table.insert(items, {
+            label = "MODS (" .. formatNumber(state.modCost) .. ")",
+            action = function() installMod() end,
+            enabled = state.cobble >= state.modCost
+        })
+    end
+
+    -- Resume
+    table.insert(items, {
+        label = "Resume",
+        action = function() state.menuOpen = false end,
+        enabled = true
+    })
+
+    -- EXIT
+    table.insert(items, {
+        label = "EXIT",
+        action = function(a) a:requestQuit() end,
+        enabled = true
+    })
+
+    return items
 end
 
 -- ==========================
@@ -276,48 +359,62 @@ local function getStageName()
     return config.stageNames[state.stage] or ("Stage " .. tostring(state.stage))
 end
 
-local function currentModeLabel()
-    if not state.mode then return "Mine" end
-    if state.mode == "upgrade" then return "Upgrade" end
-    if state.mode == "hire" then return "Hire" end
-    if state.mode == "mod" then return "Mods" end
-end
-
-local function modeStatusLine()
-    if not state.mode then
-        return "Mode: Mine (Center cycles)"
-    elseif state.mode == "upgrade" then
-        return string.format("Upgrade cost %s (Next +%s)",
-            formatNumber(state.toolUpgradeCost),
-            formatNumber(calculateManualGain(state.toolLevel+1)))
-    elseif state.mode == "hire" then
-        return string.format("Hire Steve cost %s (+%s/sec)",
-            formatNumber(state.steveCost), formatRate(state.stevePassiveRate))
-    elseif state.mode == "mod" then
-        return string.format("Install Mod cost %s (+%s/sec each)",
-            formatNumber(state.modCost), formatRate(state.modPassiveRate))
-    end
-end
-
 local function drawGame(a)
-    a:clearPlayfield(colors.black, colors.white)
-    -- Header
-    a:centerPrint(1, string.format("IdleCraft — %s", getStageName()), colors.cyan)
-    -- Resources
-    a:centerPrint(2, string.format("Cobble %s  Steves %s  Mods %s  OPS %s", 
-        formatNumber(state.cobble), formatNumber(state.steves), formatNumber(state.mods), formatRate(state.ops)), colors.white)
-    -- Mode line
-    a:centerPrint(3, modeStatusLine(), colors.lightGray)
+    local r = a:getRenderer()
+    if not r then return end
+    
+    a:clearPlayfield(colors.black)
+    local w, h = r:getSize()
+    
+    -- Header Bar
+    r:fillRect(1, 1, w, 1, colors.blue, colors.white, " ")
+    r:drawLabelCentered(1, 1, w, "IdleCraft - " .. getStageName(), colors.white)
+    
+    -- Stats Panel
+    r:fillRect(1, 2, w, 3, colors.gray, colors.white, " ")
+    r:drawLabelCentered(1, 2, math.floor(w/2), "Cobble: " .. formatNumber(state.cobble), colors.white)
+    r:drawLabelCentered(math.floor(w/2)+1, 2, math.floor(w/2), "OPS: " .. formatRate(state.ops), colors.white)
+    r:drawLabelCentered(1, 3, math.floor(w/2), "Steves: " .. formatNumber(state.steves), colors.lightGray)
+    r:drawLabelCentered(math.floor(w/2)+1, 3, math.floor(w/2), "Mods: " .. formatNumber(state.mods), colors.lightGray)
+    
     -- Messages
-    local baseY = 5
+    local msgY = 5
     local msgs = state.messages
-    local start = math.max(1, #msgs - (config.maxMessages) + 1)
-    local line = 0
+    local start = math.max(1, #msgs - 7)
     for i = start, #msgs do
-        line = line + 1
-        a:centerPrint(baseY + line - 1, msgs[i], colors.white)
+        r:drawLabelCentered(1, msgY, w, msgs[i], colors.white)
+        msgY = msgY + 1
     end
-    if #msgs == 0 then a:centerPrint(baseY, "(No messages yet. Mine something!)", colors.lightGray) end
+
+    -- Menu Overlay
+    if state.menuOpen then
+        local menuWidth = 30
+        local menuX = w - menuWidth + 1
+        local menuH = h - 1
+        
+        -- Draw shadow/dimming (optional, but let's just draw the menu)
+        r:fillRect(menuX, 2, menuWidth, menuH, colors.lightGray, colors.black, " ")
+        r:drawLabelCentered(menuX, 2, menuWidth, "--- MENU ---", colors.black)
+
+        local items = getMenuItems()
+        for i, item in ipairs(items) do
+            local y = 4 + (i-1)*2
+            local fg = colors.black
+            local bg = colors.lightGray
+            local prefix = "  "
+            if i == state.menuSelection then
+                fg = colors.white
+                bg = colors.blue
+                prefix = "> "
+            end
+            
+            -- Draw selection bar
+            if i == state.menuSelection then
+                r:fillRect(menuX + 1, y, menuWidth - 2, 1, bg, fg, " ")
+            end
+            r:drawLabel(menuX + 2, y, prefix .. item.label, fg, bg)
+        end
+    end
 end
 
 -- ==========================
@@ -328,36 +425,53 @@ local game = {
     name = "IdleCraft",
     init = function(self, a)
         math.randomseed(os.epoch and os.epoch("utc") or os.clock()) -- Reseed per session
-        -- Enable/disable left button if an action mode is selected but not affordable
-        local enableLeft = true
-        if state.mode == "upgrade" then enableLeft = state.cobble >= state.toolUpgradeCost
-        elseif state.mode == "hire" then enableLeft = state.cobble >= state.steveCost
-        elseif state.mode == "mod" then enableLeft = (state.stage >= 2) and (state.cobble >= state.modCost) end
-        a:setButtons({currentModeLabel(), "Cycle", "Quit"}, {enableLeft, true, true})
-        addMessage("Welcome to IdleCraft (Arcade edition). Press Center to pick an action mode.")
+        loadGame()
+        addMessage("Welcome to IdleCraft. Mine, Hire Steves, and Automate!")
+        self.draw(self, a)
     end,
     draw = function(self, a)
-        -- Update button labels each frame (mode can change between ticks)
-        local enableLeft = true
-        if state.mode == "upgrade" then enableLeft = state.cobble >= state.toolUpgradeCost
-        elseif state.mode == "hire" then enableLeft = state.cobble >= state.steveCost
-        elseif state.mode == "mod" then enableLeft = (state.stage >= 2) and (state.cobble >= state.modCost) end
-        a:setButtons({currentModeLabel(), "Cycle", "Quit"}, {enableLeft, true, true})
+        if state.menuOpen then
+            a:setButtons({"Up", "Select", "Down"}, {true, true, true})
+        else
+            local steveLabel = "Steve (" .. formatNumber(state.steveCost) .. ")"
+            local canAffordSteve = state.cobble >= state.steveCost
+            a:setButtons({"Mine", steveLabel, "Menu"}, {true, canAffordSteve, true})
+        end
         drawGame(a)
     end,
     onButton = function(self, a, which)
-        if which == "left" then
-            performPrimary()
-        elseif which == "center" then
-            nextMode()
-        elseif which == "right" then
-            a:requestQuit()
-            return
+        if state.menuOpen then
+            local items = getMenuItems()
+            if which == "left" then
+                state.menuSelection = state.menuSelection - 1
+                if state.menuSelection < 1 then state.menuSelection = #items end
+            elseif which == "right" then
+                state.menuSelection = state.menuSelection + 1
+                if state.menuSelection > #items then state.menuSelection = 1 end
+            elseif which == "center" then
+                local item = items[state.menuSelection]
+                if item and item.enabled then
+                    item.action(a)
+                end
+            end
+        else
+            if which == "left" then
+                mineBlock()
+            elseif which == "center" then
+                hireSteve()
+            elseif which == "right" then
+                state.menuOpen = true
+                state.menuSelection = 1
+            end
         end
         self.draw(self, a)
     end,
     onTick = function(self, a, dt)
         passiveTick()
+        if os.clock() - lastSaveRealTime >= 10 then
+            saveGame()
+            lastSaveRealTime = os.clock()
+        end
         self.draw(self, a)
     end,
 }

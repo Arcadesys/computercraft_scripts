@@ -3,10 +3,35 @@
 -- Simple shell UI that lists arcade programs, lets players buy licenses,
 -- and launches games once unlocked.
 
--- Ensure package path includes lib and arcade
-if not string.find(package.path, "/lib/?.lua") then
-    package.path = package.path .. ";/lib/?.lua;/arcade/?.lua;/factory/?.lua"
+-- Clear potentially failed loads from previous runs
+package.loaded["arcade"] = nil
+package.loaded["log"] = nil
+package.loaded["data.programs"] = nil
+
+local function setupPaths()
+    local program = shell.getRunningProgram()
+    local dir = fs.getDir(program)
+    -- We expect to be in /arcade or /disk/arcade
+    -- So parent of dir is the root.
+    local root = fs.getDir(dir)
+    
+    local function add(path)
+        local part = fs.combine(root, path)
+        -- fs.combine strips leading slashes, so we force absolute path
+        local pattern = "/" .. fs.combine(part, "?.lua")
+        
+        if not string.find(package.path, pattern, 1, true) then
+            package.path = package.path .. ";" .. pattern
+        end
+    end
+    
+    add("lib")
+    add("arcade")
+    add("factory")
+    add("") -- Add root for games.arcade shim
 end
+
+setupPaths()
 
 local LicenseStore = require("license_store")
 
@@ -86,82 +111,48 @@ end
 -- Program catalog
 -- ==========================
 
-local programs = {
-  {
-    id = "blackjack",
-    name = "Blackjack",
-    path = "games/blackjack.lua",
-    price = 5,
-    description = "Beat the dealer in a race to 21.",
-    category = "games",
-  },
-  {
-    id = "slots",
-    name = "Slots",
-    path = "games/slots.lua",
-    price = 3,
-    description = "Spin reels for quick wins.",
-    category = "games",
-  },
-  {
-    id = "cantstop",
-    name = "Can't Stop",
-    path = "games/cantstop.lua",
-    price = 4,
-    description = "Push your luck dice classic.",
-    category = "games",
-  },
-  {
-    id = "idlecraft",
-    name = "IdleCraft",
-    path = "games/idlecraft.lua",
-    price = 6,
-    description = "AFK-friendly cobble empire.",
-    category = "games",
-  },
-  {
-    id = "artillery",
-    name = "Artillery",
-    path = "games/artillery.lua",
-    price = 5,
-    description = "2-player tank battle.",
-    category = "games",
-  },
-  {
-    id = "factory_planner",
-    name = "Factory Planner",
-    path = "factory_planner.lua",
-    price = 0,
-    description = "Design factory layouts for turtles.",
-    category = "actions",
-  },
-  -- Placeholder for Inventory Manager
-  {
-    id = "inv_manager",
-    name = "Inventory Manager",
-    path = "inv_manager.lua", -- Doesn't exist yet
-    price = 0,
-    description = "Manage inventory (Coming Soon).",
-    category = "actions",
-    prodReady = false,
-  },
-  {
-    id = "store",
-    name = "App Store",
-    path = "games/store.lua",
-    price = 0,
-    description = "Download new games.",
-    category = "system",
-  },
-  {
-    id = "themes",
-    name = "Themes",
-    path = "games/themes.lua",
-    price = 0,
-    description = "Change system theme.",
-    category = "system",
-  },
-}
+package.loaded["data.programs"] = nil -- Force reload
+local programs = require("data.programs")
+
+-- ==========================
+-- Package Manager
+-- ==========================
+
+local function installProgram(program)
+    term.setBackgroundColor(colors.blue)
+    term.clear()
+    local w, h = term.getSize()
+    
+    local function center(y, text)
+        term.setCursorPos(math.floor((w - #text) / 2), y)
+        term.write(text)
+    end
+    
+    UI.drawWindow(math.floor((w-30)/2), math.floor((h-10)/2), 30, 10, "Installing...")
+    center(math.floor((h-10)/2) + 3, "Downloading " .. program.name)
+    
+    local url = program.url
+    if not url then
+        center(math.floor((h-10)/2) + 5, "Error: No URL")
+        os.sleep(2)
+        return false
+    end
+
+    local targetPath = resolvePath(program.path)
+    
+    local ok, err = downloadFile(url, targetPath)
+    
+    if ok then
+        center(math.floor((h-10)/2) + 5, "Success!")
+        os.sleep(1)
+        return true
+    else
+        center(math.floor((h-10)/2) + 5, "Error: " .. (err or "Unknown"))
+        os.sleep(2)
+        return false
+    end
+end
+
 
 -- ==========================
 -- Shell state
@@ -172,14 +163,17 @@ local state = {
   licenseStore = nil,
   theme = {
     text = colors.white,
-    bg = colors.black,
+    bg = colors.cyan,
     header = colors.blue,
-    highlight = colors.yellow
+    highlight = colors.yellow,
+    windowBg = colors.lightGray,
+    buttonBg = colors.lightGray,
+    buttonFg = colors.black
   },
   environment = DEFAULT_ENVIRONMENT.mode,
 }
 
-local THEME_FILE = "theme.settings"
+local THEME_FILE = "arcade_skin.settings"
 
 local function loadTheme()
   if fs.exists(THEME_FILE) then
@@ -188,7 +182,15 @@ local function loadTheme()
       local data = textutils.unserialize(handle.readAll())
       handle.close()
       if data then
-        for k, v in pairs(data) do state.theme[k] = v end
+        -- Map skin to theme
+        state.theme.bg = data.background or state.theme.bg
+        state.theme.windowBg = data.playfield or state.theme.windowBg
+        state.theme.header = data.titleColor or state.theme.header
+        
+        if data.buttons and data.buttons.enabled then
+             state.theme.buttonBg = data.buttons.enabled.shadowColor or state.theme.buttonBg
+             state.theme.buttonFg = data.buttons.enabled.labelColor or state.theme.buttonFg
+        end
       end
     end
   end
@@ -239,11 +241,11 @@ function UI.drawWindow(x, y, w, h, title)
     -- Shadow
     paintutils.drawFilledBox(x + 1, y + 1, x + w, y + h, colors.black)
     -- Body
-    paintutils.drawFilledBox(x, y, x + w - 1, y + h - 1, colors.lightGray)
+    paintutils.drawFilledBox(x, y, x + w - 1, y + h - 1, state.theme.windowBg)
     -- Title Bar
-    paintutils.drawFilledBox(x, y, x + w - 1, y, colors.blue)
+    paintutils.drawFilledBox(x, y, x + w - 1, y, state.theme.header)
     term.setTextColor(colors.white)
-    term.setBackgroundColor(colors.blue)
+    term.setBackgroundColor(state.theme.header)
     term.setCursorPos(x + math.floor((w - #title) / 2), y)
     term.write(title)
     -- Close button
@@ -252,14 +254,8 @@ function UI.drawWindow(x, y, w, h, title)
 end
 
 function UI.drawButton(x, y, w, text, active, hovered)
-    local bg = active and colors.green or (hovered and colors.gray or colors.lightGray)
-    local fg = active and colors.white or (hovered and colors.white or colors.black)
-    
-    -- If it's a button on a gray background, we might want it to pop
-    if not active and not hovered then
-        bg = colors.gray
-        fg = colors.white
-    end
+    local bg = active and colors.green or (hovered and colors.gray or state.theme.buttonBg)
+    local fg = active and colors.white or (hovered and colors.white or state.theme.buttonFg)
 
     paintutils.drawFilledBox(x, y, x + w - 1, y, bg)
     term.setTextColor(fg)
@@ -375,7 +371,13 @@ local function installProgram(program)
     UI.drawWindow(math.floor((w-30)/2), math.floor((h-10)/2), 30, 10, "Installing...")
     center(math.floor((h-10)/2) + 3, "Downloading " .. program.name)
     
-    local url = REPO_BASE_URL .. "arcade/" .. program.path
+    local url = program.url
+    if not url then
+        center(math.floor((h-10)/2) + 5, "Error: No URL")
+        os.sleep(2)
+        return false
+    end
+
     local targetPath = resolvePath(program.path)
     
     local ok, err = downloadFile(url, targetPath)
@@ -388,52 +390,6 @@ local function installProgram(program)
         center(math.floor((h-10)/2) + 5, "Error: " .. (err or "Unknown"))
         os.sleep(2)
         return false
-    end
-end
-
-local function downloadPackage(code, filename)
-    if not http then
-        print("Error: HTTP API not enabled.")
-        return false
-    end
-
-    local url = "https://pastebin.com/raw/" .. textutils.urlEncode(code)
-    print("Connecting to Pastebin...")
-    local response = http.get(url)
-    if response then
-        print("Downloading...")
-        local content = response.readAll()
-        response.close()
-        
-        local file = fs.open(filename, "w")
-        file.write(content)
-        file.close()
-        print("Saved to " .. filename)
-        return true
-    else
-        print("Failed to download.")
-        return false
-    end
-end
-
-local function packageManagerScreen()
-    term.setBackgroundColor(colors.black)
-    term.clear()
-    term.setCursorPos(1,1)
-    term.setTextColor(colors.white)
-    print("Pastebin Package Manager")
-    print("------------------------")
-    print("Enter Pastebin Code:")
-    write("> ")
-    local code = read()
-    if #code > 0 then
-        print("Enter Filename (e.g. game.lua):")
-        write("> ")
-        local name = read()
-        if #name > 0 then
-            downloadPackage(code, name)
-            os.sleep(2)
-        end
     end
 end
 
@@ -467,6 +423,9 @@ local function launchProgram(program)
     print("Program error: " .. tostring(err))
     print("Press Enter to return...")
     read()
+  else
+    print("Program finished cleanly.")
+    os.sleep(2)
   end
 end
 
@@ -475,22 +434,22 @@ local function main()
   
   local w, h = term.getSize()
   local running = true
-  local currentMenu = "main" -- main, games, actions, utils
+  local currentMenu = "main" -- main, library, system
   local mouseX, mouseY = 0, 0
   
   while running do
     -- Draw Desktop
-    UI.clear(colors.cyan)
+    UI.clear(state.theme.bg)
     
     -- Draw Window
     local winW, winH = 26, 14
     local winX = math.floor((w - winW) / 2) + 1
     local winY = math.floor((h - winH) / 2) + 1
+    if winY < 1 then winY = 1 end
     
     local title = "ArcadeOS"
-    if currentMenu == "games" then title = "Games" end
-    if currentMenu == "actions" then title = "Actions" end
-    if currentMenu == "utils" then title = "Utilities" end
+    if currentMenu == "library" then title = "My Apps" end
+    if currentMenu == "system" then title = "System" end
     
     UI.drawWindow(winX, winY, winW, winH, title)
     
@@ -501,33 +460,52 @@ local function main()
     local btnX = winX + 4
     
     if currentMenu == "main" then
-        table.insert(buttons, {text = "Games", y = startY, action = function() currentMenu = "games" end})
-        table.insert(buttons, {text = "Actions", y = startY + 2, action = function() currentMenu = "actions" end})
-        table.insert(buttons, {text = "Utilities", y = startY + 4, action = function() currentMenu = "utils" end})
-        table.insert(buttons, {text = "Exit", y = startY + 8, action = function() running = false end})
-  elseif currentMenu == "games" or currentMenu == "actions" then
-      local list = {}
-      for _, p in ipairs(programs) do
-            if shouldShowProgram(p, currentMenu) then table.insert(list, p) end
-      end
-        
-        for i, p in ipairs(list) do
-            if i > 5 then break end
-            local fullPath = resolvePath(p.path)
-            local label = p.name
-            if not fs.exists(fullPath) then
-                label = "[DL] " .. label
+        table.insert(buttons, {text = "Store", y = startY, action = function() 
+            for _, p in ipairs(programs) do
+                if p.id == "store" then launchProgram(p) return end
             end
-            
-            table.insert(buttons, {
-                text = label, 
-                y = startY + (i-1)*2, 
-                action = function() launchProgram(p) end
-            })
+        end})
+        table.insert(buttons, {text = "My Apps", y = startY + 2, action = function() currentMenu = "library" end})
+        table.insert(buttons, {text = "System", y = startY + 4, action = function() currentMenu = "system" end})
+        table.insert(buttons, {text = "Exit", y = startY + 8, action = function() running = false end})
+    elseif currentMenu == "library" then
+        local list = {}
+        for _, p in ipairs(programs) do
+            -- Show purchased games/actions
+            if p.id ~= "store" and state.licenseStore:has(p.id) then
+                table.insert(list, p)
+            end
+        end
+        
+        if #list == 0 then
+             table.insert(buttons, {text = "(No Apps)", y = startY, action = function() end})
+        else
+            for i, p in ipairs(list) do
+                if i > 5 then break end
+                table.insert(buttons, {
+                    text = p.name, 
+                    y = startY + (i-1)*2, 
+                    action = function() launchProgram(p) end
+                })
+            end
         end
         table.insert(buttons, {text = "Back", y = winY + winH - 2, action = function() currentMenu = "main" end})
-    elseif currentMenu == "utils" then
-        table.insert(buttons, {text = "Package Manager", y = startY, action = packageManagerScreen})
+    elseif currentMenu == "system" then
+        table.insert(buttons, {text = "Themes", y = startY, action = function() 
+             local found = false
+             for _, p in ipairs(programs) do
+                if p.id == "themes" then 
+                    launchProgram(p) 
+                    found = true
+                    return 
+                end
+            end
+            if not found then
+                term.setCursorPos(1,1)
+                print("Theme app not found")
+                os.sleep(1)
+            end
+        end})
         table.insert(buttons, {text = "Disk Info", y = startY + 2, action = function() 
             term.setBackgroundColor(colors.black)
             term.clear()
@@ -535,7 +513,7 @@ local function main()
             print("Free Space: " .. fs.getFreeSpace(detectDiskMount() or "/"))
             os.sleep(2)
         end})
-        table.insert(buttons, {text = "Back", y = winY + winH - 2, action = function() currentMenu = "main" end})
+        table.insert(buttons, {text = "Back", y = startY + 4, action = function() currentMenu = "main" end})
     end
     
     -- Draw Buttons
@@ -568,5 +546,6 @@ local function main()
   term.clear()
   term.setCursorPos(1,1)
 end
+
 
 main()

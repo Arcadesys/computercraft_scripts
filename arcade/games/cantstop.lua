@@ -1,4 +1,5 @@
 -- Can't Stop (Sid Sackson) on ComputerCraft
+---@diagnostic disable: undefined-global, undefined-field
 -- Author: You + Copilot
 -- 
 -- This script implements a playable version of "Can't Stop" with:
@@ -20,10 +21,48 @@
 -- Configuration and constants
 -- ==========================
 
+-- Clear potentially failed loads
+package.loaded["arcade"] = nil
+package.loaded["log"] = nil
+
+local function setupPaths()
+    local program = shell.getRunningProgram()
+    local dir = fs.getDir(program)
+    -- cantstop is in arcade/games/cantstop.lua
+    -- dir is arcade/games
+    -- root is arcade
+    -- parent of root is installation root
+    local gamesDir = fs.getDir(program)
+    local arcadeDir = fs.getDir(gamesDir)
+    local root = fs.getDir(arcadeDir)
+    
+    local function add(path)
+        local part = fs.combine(root, path)
+        -- fs.combine strips leading slashes, so we force absolute path
+        local pattern = "/" .. fs.combine(part, "?.lua")
+        
+        if not string.find(package.path, pattern, 1, true) then
+            package.path = package.path .. ";" .. pattern
+        end
+    end
+    
+    add("lib")
+    add("arcade")
+    -- Explicitly add ui folder just in case
+    add("arcade/ui")
+
+    -- Ensure root is in path so require("arcade.ui.renderer") works
+    if not string.find(package.path, ";/?.lua", 1, true) then
+        package.path = package.path .. ";/?.lua"
+    end
+end
+
+setupPaths()
+
 -- Arcade wrapper note: we require the wrapper for consistency with other games,
 -- but Can't Stop currently uses its own bespoke UI/event loop.
-local _arcade_ok, _arcade = pcall(require, "games.arcade")
-local Renderer = require("ui.renderer")
+local _arcade_ok, _arcade = pcall(require, "arcade")
+local Renderer = require("arcade.ui.renderer")
 
 local function toBlit(color)
         if colors.toBlit then return colors.toBlit(color) end

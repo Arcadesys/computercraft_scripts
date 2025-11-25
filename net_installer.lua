@@ -1,22 +1,20 @@
 -- Arcadesys Network Installer
--- Auto-generated at 2025-11-24T19:02:43.437Z
+-- Auto-generated at 2025-11-24T23:11:52.899Z
 -- Downloads files from GitHub to bypass file size limits
 
-local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
+local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/appify/"
 local files = {
     "arcade/arcade_shell.lua",
     "arcade/arcade.lua",
     "arcade/arcadeos.lua",
+    "arcade/data/programs.lua",
     "arcade/data/valhelsia_blocks.lua",
-    "arcade/factory_planner.lua",
-    "arcade/farm_manager.lua",
-    "arcade/games/arcade.lua",
-    "arcade/games/blackjack.lua",
     "arcade/games/cantstop.lua",
     "arcade/games/idlecraft.lua",
-    "arcade/games/poker.lua",
     "arcade/games/slots.lua",
+    "arcade/games/themes.lua",
     "arcade/license_store.lua",
+    "arcade/store.lua",
     "arcade/ui/renderer.lua",
     "factory/factory.lua",
     "factory/harness_common.lua",
@@ -44,6 +42,7 @@ local files = {
     "factory/state_restock.lua",
     "factory/state_treefarm.lua",
     "factory/turtle_os.lua",
+    "games/arcade.lua",
     "installer.lua",
     "lib/lib_designer.lua",
     "lib/lib_diagnostics.lua",
@@ -126,8 +125,20 @@ print("")
 print("Install Complete!")
 print("Downloaded: " .. successCount)
 print("Failed: " .. failCount)
-if failCount == 0 then
+
+print("Verifying installation...")
+local errors = 0
+for _, file in ipairs(files) do
+    if not fs.exists(file) then
+        printError("Missing: " .. file)
+        errors = errors + 1
+    end
+end
+if failCount == 0 and errors == 0 then
+    print("Verification successful.")
     print("Reboot or run startup to launch.")
 else
-    print("Some files failed to download. Check your connection.")
+    print("Installation issues detected.")
+    if failCount > 0 then print("Failed downloads: " .. failCount) end
+    if errors > 0 then print("Missing files: " .. errors) end
 end

@@ -32,7 +32,7 @@ files["arcade.lua"] = [[-- arcade.lua
 ---@diagnostic disable: undefined-global, undefined-field
 
  local M = {}
- local Renderer = require("ui.renderer")
+ local Renderer = require("arcade.ui.renderer")
  local Log = require("log")
 
 -- ==========================
@@ -1431,7 +1431,7 @@ files["cantstop.lua"] = [[-- Can't Stop (Sid Sackson) on ComputerCraft
 -- Arcade wrapper note: we require the wrapper for consistency with other games,
 -- but Can't Stop currently uses its own bespoke UI/event loop.
 local _arcade_ok, _arcade = pcall(require, "games.arcade")
-local Renderer = require("ui.renderer")
+local Renderer = require("arcade.ui.renderer")
 
 local function toBlit(color)
         if colors.toBlit then return colors.toBlit(color) end
