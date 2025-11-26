@@ -11,4 +11,4 @@ Run the following command in the terminal:
 
 `node build/bundle.js`
 
-Ensure that all changes are captured by the buildloader to be considered 'done'.
+Ensure that all changes are captured by the build/bundle.js to be considered 'done'. that may include adding new configurations, files, etc. to bundle.js.

@@ -1,6 +1,6 @@
 -- Arcadesys Unified Installer
--- Auto-generated at 2025-11-26T15:31:41.964Z
-print("Starting Arcadesys install...")
+-- Auto-generated at 2025-11-26T16:20:43.548Z
+print("Starting Arcadesys install v2.1.1 (build 40)...")
 local files = {}
 
 files["arcade/arcade_shell.lua"] = [[package.loaded["arcade"] = nil
@@ -24,6 +24,7 @@ add("") -- Add root for games.arcade shim
 end
 setupPaths()
 local LicenseStore = require("license_store")
+local version = require("version")
 local BASE_DIR = fs.getDir(shell and shell.getRunningProgram and shell.getRunningProgram() or "") or ""
 if BASE_DIR == "" then BASE_DIR = "." end
 local function resolvePath(rel)
@@ -378,9 +379,26 @@ local currentMenu = "main" -- main, library, system
 local lastMenu = currentMenu
 local selectedButtonIndex = 1
 local mouseX, mouseY = 0, 0
+local LIBRARY_VISIBLE_LIMIT = 5
+local libraryScrollOffset = 0
+local libraryScrollMax = 0
+local libraryVisibleCount = 0
+local libraryTotalCount = 0
+local function adjustLibraryScroll(delta)
+if delta == 0 or libraryScrollMax <= 0 then
+return
+end
+local nextOffset = math.max(0, math.min(libraryScrollOffset + delta, libraryScrollMax))
+if nextOffset ~= libraryScrollOffset then
+libraryScrollOffset = nextOffset
+end
+end
 while running do
 if currentMenu ~= lastMenu then
 selectedButtonIndex = 1
+if currentMenu == "library" then
+libraryScrollOffset = 0
+end
 lastMenu = currentMenu
 end
 UI.clear(state.theme.bg)
@@ -389,6 +407,9 @@ local winX = math.floor((w - winW) / 2) + 1
 local winY = math.floor((h - winH) / 2) + 1
 if winY < 1 then winY = 1 end
 local title = "ArcadeOS"
+if currentMenu == "main" and version then
+title = title .. " v" .. version.MAJOR .. "." .. version.MINOR .. "." .. version.PATCH
+end
 if currentMenu == "library" then title = "My Apps" end
 if currentMenu == "system" then title = "System" end
 UI.drawWindow(winX, winY, winW, winH, title)
@@ -412,19 +433,46 @@ if p.id ~= "store" and state.licenseStore:has(p.id) then
 table.insert(list, p)
 end
 end
-if #list == 0 then
+libraryTotalCount = #list
+libraryScrollMax = math.max(libraryTotalCount - LIBRARY_VISIBLE_LIMIT, 0)
+if libraryTotalCount == 0 then
+libraryScrollOffset = 0
+libraryVisibleCount = 0
 table.insert(buttons, {text = "(No Apps)", y = startY, action = function() end})
 else
-for i, p in ipairs(list) do
-if i > 5 then break end
+if libraryScrollOffset > libraryScrollMax then
+libraryScrollOffset = libraryScrollMax
+end
+libraryVisibleCount = 0
+for i = 1, LIBRARY_VISIBLE_LIMIT do
+local idx = libraryScrollOffset + i
+local p = list[idx]
+if not p then break end
+libraryVisibleCount = libraryVisibleCount + 1
 table.insert(buttons, {
 text = p.name,
 y = startY + (i-1)*2,
 action = function() launchProgram(p) end
 })
 end
+if libraryScrollMax > 0 then
+local infoStart = libraryScrollOffset + 1
+local infoEnd = libraryScrollOffset + libraryVisibleCount
+local info = string.format("Apps %d-%d/%d", infoStart, infoEnd, libraryTotalCount)
+local infoY = winY + winH - 3
+local innerWidth = winW - 4
+term.setBackgroundColor(state.theme.windowBg or colors.lightGray)
+term.setTextColor(state.theme.buttonFg or colors.black)
+term.setCursorPos(winX + 2, infoY)
+term.write(string.rep(" ", innerWidth))
+term.setCursorPos(winX + 2, infoY)
+term.write(info:sub(1, innerWidth))
 end
-table.insert(buttons, {text = "Back", y = winY + winH - 2, action = function() currentMenu = "main" end})
+end
+table.insert(buttons, {text = "Back", y = winY + winH - 2, action = function()
+currentMenu = "main"
+libraryScrollOffset = 0
+end})
 elseif currentMenu == "system" then
 table.insert(buttons, {text = "Themes", y = startY, action = function()
 local found = false
@@ -470,14 +518,34 @@ mouseX, mouseY = -1, -1 -- Reset
 end
 end
 end
+elseif event == "mouse_scroll" then
+if currentMenu == "library" then
+adjustLibraryScroll(p1)
+end
 elseif event == "key" then
 local key = p1
 if key == keys.up then
+if currentMenu == "library" and libraryScrollOffset > 0 and selectedButtonIndex == 1 then
+libraryScrollOffset = libraryScrollOffset - 1
+else
 selectedButtonIndex = selectedButtonIndex - 1
 if selectedButtonIndex < 1 then selectedButtonIndex = #buttons end
+end
 elseif key == keys.down then
+if currentMenu == "library" and libraryScrollOffset < libraryScrollMax and selectedButtonIndex == libraryVisibleCount and libraryVisibleCount > 0 then
+libraryScrollOffset = libraryScrollOffset + 1
+else
 selectedButtonIndex = selectedButtonIndex + 1
 if selectedButtonIndex > #buttons then selectedButtonIndex = 1 end
+end
+elseif key == keys.pageUp then
+if currentMenu == "library" then
+adjustLibraryScroll(-LIBRARY_VISIBLE_LIMIT)
+end
+elseif key == keys.pageDown then
+if currentMenu == "library" then
+adjustLibraryScroll(LIBRARY_VISIBLE_LIMIT)
+end
 elseif key == keys.enter then
 local btn = buttons[selectedButtonIndex]
 if btn then
@@ -831,7 +899,7 @@ if not string.find(package.path, ";/?.lua", 1, true) then
 package.path = package.path .. ";/?.lua"
 end
 end]]
-files["arcade/data/programs.lua"] = [[local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/appify/arcade/"
+files["arcade/data/programs.lua"] = [[local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/arcade/"
 local PRICING = {
 blackjack = 0,
 slots = 0,
@@ -2278,6 +2346,368 @@ end
 term.setBackgroundColor(colors.black)
 term.clear()
 term.setCursorPos(1, 1)]]
+files["arcade/games/videopoker.lua"] = [[package.loaded["arcade"] = nil
+local function setupPaths()
+local dir = fs.getDir(shell.getRunningProgram())
+local boot = fs.combine(fs.getDir(dir), "boot.lua")
+if fs.exists(boot) then dofile(boot) end
+end
+setupPaths()
+local arcade = require("arcade")
+local cards = require("lib_cards")
+local STATE_BETTING = "BETTING"
+local STATE_DEAL = "DEAL" -- Cards dealt, waiting for hold
+local STATE_RESULT = "RESULT" -- Show win/loss
+local currentState = STATE_BETTING
+local deck = {}
+local hand = {}
+local held = {false, false, false, false, false}
+local bet = 1
+local message = "BET 1-5 & DEAL"
+local lastWin = 0
+local lastHandName = ""
+local CARD_W = 7
+local CARD_H = 5
+local CARD_SPACING = 2
+local game = {
+name = "Video Poker",
+init = function(self, a)
+a:setButtons({"Bet One", "Deal", "Quit"})
+deck = cards.createDeck()
+cards.shuffle(deck)
+end,
+draw = function(self, a)
+a:clearPlayfield(colors.blue)
+local r = a:getRenderer()
+if not r then return end
+local w, h = r:getSize()
+local cx = math.floor(w / 2)
+a:centerPrint(2, "--- VIDEO POKER ---", colors.yellow, colors.blue)
+local totalW = (CARD_W * 5) + (CARD_SPACING * 4)
+local startX = cx - math.floor(totalW / 2)
+local startY = 6
+for i=1,5 do
+local x = startX + (i-1)*(CARD_W+CARD_SPACING)
+local card = hand[i]
+local bg = colors.white
+if currentState == STATE_DEAL and held[i] then bg = colors.lightGray end
+r:fillRect(x, startY, CARD_W, CARD_H, bg, colors.black, " ")
+if card then
+local col = cards.SUIT_COLORS[card.suit]
+local txt = card.rankStr .. cards.SUIT_SYMBOLS[card.suit]
+r:drawLabelCentered(x, startY + 2, CARD_W, txt, col, bg)
+if currentState == STATE_DEAL and held[i] then
+r:drawLabelCentered(x, startY + CARD_H + 1, CARD_W, "HELD", colors.yellow, colors.blue)
+end
+else
+r:fillRect(x, startY, CARD_W, CARD_H, colors.red, colors.white, "#")
+end
+end
+a:centerPrint(startY + CARD_H + 3, message, colors.white, colors.blue)
+if lastWin > 0 then
+a:centerPrint(startY + CARD_H + 4, "WON " .. lastWin .. " CREDITS (" .. lastHandName .. ")", colors.lime, colors.blue)
+end
+a:centerPrint(h - 4, "Bet: " .. bet .. "   Credits: " .. a:getCredits(), colors.orange, colors.blue)
+end,
+onButton = function(self, a, button)
+if button == "left" then -- Bet One
+if currentState == STATE_BETTING or currentState == STATE_RESULT then
+bet = bet + 1
+if bet > 5 then bet = 1 end
+currentState = STATE_BETTING
+message = "BET " .. bet .. " & DEAL"
+lastWin = 0
+hand = {} -- Clear hand
+end
+elseif button == "center" then -- Deal / Draw
+if currentState == STATE_BETTING or currentState == STATE_RESULT then
+if a:consumeCredits(bet) then
+deck = cards.createDeck()
+cards.shuffle(deck)
+hand = {}
+held = {false, false, false, false, false}
+for i=1,5 do table.insert(hand, table.remove(deck)) end
+local name, payout = cards.evaluateHand(hand)
+if payout > 0 then
+message = "Hand: " .. name .. ". HOLD cards & DRAW."
+else
+message = "Select cards to HOLD then DRAW."
+end
+currentState = STATE_DEAL
+lastWin = 0
+a:setButtons({"Bet One", "Draw", "Quit"})
+else
+message = "INSERT COIN"
+end
+elseif currentState == STATE_DEAL then
+for i=1,5 do
+if not held[i] then
+hand[i] = table.remove(deck)
+end
+end
+local name, payout = cards.evaluateHand(hand)
+local win = payout * bet
+if name == "ROYAL_FLUSH" and bet == 5 then win = 800 end -- Bonus for max bet
+if win > 0 then
+a:addCredits(win)
+lastWin = win
+lastHandName = name
+message = "WINNER!"
+else
+message = "GAME OVER"
+lastWin = 0
+end
+currentState = STATE_RESULT
+a:setButtons({"Bet One", "Deal", "Quit"})
+end
+elseif button == "right" then
+a:requestQuit()
+end
+end,
+handleEvent = function(self, a, e)
+if currentState == STATE_DEAL and (e[1] == "monitor_touch" or e[1] == "mouse_click") then
+local x, y = e[3], e[4]
+local r = a:getRenderer()
+if not r then return end
+local w, h = r:getSize()
+local cx = math.floor(w / 2)
+local totalW = (CARD_W * 5) + (CARD_SPACING * 4)
+local startX = cx - math.floor(totalW / 2)
+local startY = 6
+if y >= startY and y < startY + CARD_H then
+for i=1,5 do
+local cx = startX + (i-1)*(CARD_W+CARD_SPACING)
+if x >= cx and x < cx + CARD_W then
+held[i] = not held[i]
+self:draw(a)
+return
+end
+end
+end
+end
+end
+}
+arcade.start(game)]]
+files["arcade/games/warlords.lua"] = [[local arcade = require("arcade")
+local INPUT_SIDES = {"left", "right", "back", "bottom"}
+local PADDLE_SIZE = 6
+local BALL_SPEED_START = 0.8
+local MAX_SCORE = 10
+local COLORS = {
+P1 = colors.red,    -- Bottom
+P2 = colors.blue,   -- Top
+P3 = colors.green,  -- Left
+P4 = colors.yellow, -- Right
+BALL = colors.white,
+BG = colors.black,
+TEXT = colors.white
+}
+local mon = nil
+local W, H = 0, 0
+local running = false
+local winner = nil
+local players = {}
+local ball = {x=0, y=0, vx=0, vy=0}
+local function createPlayer(id, side, color, isVertical, axisPos)
+return {
+id = id,
+side = side,
+color = color,
+vertical = isVertical,
+axisPos = axisPos, -- The fixed coordinate (Y for horiz, X for vert)
+pos = 1, -- The moving coordinate
+score = MAX_SCORE,
+alive = true
+}
+end
+local game = {
+name = "Warlords 4-Way",
+init = function(self, a)
+mon = peripheral.find("monitor")
+if not mon then
+mon = term.current()
+end
+if mon.setTextScale then mon.setTextScale(0.5) end
+W, H = mon.getSize()
+H = H - 3 -- Reserve button space
+players = {
+createPlayer(1, INPUT_SIDES[1], COLORS.P1, false, H), -- Bottom
+createPlayer(2, INPUT_SIDES[2], COLORS.P2, false, 1), -- Top
+createPlayer(3, INPUT_SIDES[3], COLORS.P3, true, 1),  -- Left
+createPlayer(4, INPUT_SIDES[4], COLORS.P4, true, W)   -- Right
+}
+players[1].pos = W/2 - PADDLE_SIZE/2
+players[2].pos = W/2 - PADDLE_SIZE/2
+players[3].pos = H/2 - PADDLE_SIZE/2
+players[4].pos = H/2 - PADDLE_SIZE/2
+a:setButtons({"Start", "Reset", "Quit"})
+self:resetBall()
+end,
+resetBall = function(self)
+ball.x = W/2
+ball.y = H/2
+local angle = math.random() * math.pi * 2
+ball.vx = math.cos(angle) * BALL_SPEED_START
+ball.vy = math.sin(angle) * BALL_SPEED_START
+if math.abs(ball.vx) < 0.3 then ball.vx = (ball.vx < 0 and -0.5 or 0.5) end
+if math.abs(ball.vy) < 0.3 then ball.vy = (ball.vy < 0 and -0.5 or 0.5) end
+end,
+onTick = function(self, a, dt)
+if not running then
+self:drawDirect()
+return
+end
+for _, p in ipairs(players) do
+if p.alive then
+local input = rs.getInput(p.side)
+local dir = input and 1 or -1
+local limit = p.vertical and H or W
+p.pos = p.pos + (dir * 1.5) -- Speed multiplier
+if p.pos < 1 then p.pos = 1 end
+if p.pos > limit - PADDLE_SIZE + 1 then p.pos = limit - PADDLE_SIZE + 1 end
+end
+end
+local nextX = ball.x + ball.vx
+local nextY = ball.y + ball.vy
+local hit = false
+if nextX <= 1 then
+if self:checkPaddle(players[3], nextY) then
+ball.vx = math.abs(ball.vx) * 1.05
+hit = true
+else
+self:damage(players[3])
+ball.vx = math.abs(ball.vx) -- Bounce anyway
+end
+elseif nextX >= W then
+if self:checkPaddle(players[4], nextY) then
+ball.vx = -math.abs(ball.vx) * 1.05
+hit = true
+else
+self:damage(players[4])
+ball.vx = -math.abs(ball.vx)
+end
+end
+if nextY <= 1 then
+if self:checkPaddle(players[2], nextX) then
+ball.vy = math.abs(ball.vy) * 1.05
+hit = true
+else
+self:damage(players[2])
+ball.vy = math.abs(ball.vy)
+end
+elseif nextY >= H then
+if self:checkPaddle(players[1], nextX) then
+ball.vy = -math.abs(ball.vy) * 1.05
+hit = true
+else
+self:damage(players[1])
+ball.vy = -math.abs(ball.vy)
+end
+end
+if not hit then
+ball.x = ball.x + ball.vx
+ball.y = ball.y + ball.vy
+else
+ball.x = ball.x + ball.vx
+ball.y = ball.y + ball.vy
+end
+if ball.x < 1 then ball.x = 1 end
+if ball.x > W then ball.x = W end
+if ball.y < 1 then ball.y = 1 end
+if ball.y > H then ball.y = H end
+self:drawDirect()
+end,
+checkPaddle = function(self, p, ballPos)
+return ballPos >= p.pos - 1 and ballPos <= p.pos + PADDLE_SIZE
+end,
+damage = function(self, p)
+if not p.alive then return end
+p.score = p.score - 1
+if p.score <= 0 then
+p.alive = false
+p.color = colors.gray
+self:checkWin()
+end
+end,
+checkWin = function(self)
+local alive = 0
+local last = nil
+for _, p in ipairs(players) do
+if p.alive then
+alive = alive + 1
+last = p
+end
+end
+if alive <= 1 then
+running = false
+winner = last
+end
+end,
+drawDirect = function(self)
+if not mon then return end
+mon.setBackgroundColor(COLORS.BG)
+for y=1, H do
+mon.setCursorPos(1, y)
+mon.write(string.rep(" ", W))
+end
+for _, p in ipairs(players) do
+mon.setBackgroundColor(p.color)
+if p.vertical then
+for i=0, PADDLE_SIZE-1 do
+local y = math.floor(p.pos + i)
+if y >= 1 and y <= H then
+mon.setCursorPos(p.axisPos, y)
+mon.write(" ")
+end
+end
+else
+for i=0, PADDLE_SIZE-1 do
+local x = math.floor(p.pos + i)
+if x >= 1 and x <= W then
+mon.setCursorPos(x, p.axisPos)
+mon.write(" ")
+end
+end
+end
+mon.setTextColor(p.color)
+mon.setBackgroundColor(COLORS.BG)
+if p.id == 1 then mon.setCursorPos(W/2, H-1) -- Bottom
+elseif p.id == 2 then mon.setCursorPos(W/2, 2) -- Top
+elseif p.id == 3 then mon.setCursorPos(2, H/2) -- Left
+elseif p.id == 4 then mon.setCursorPos(W-2, H/2) -- Right
+end
+mon.write(tostring(p.score))
+end
+mon.setBackgroundColor(COLORS.BALL)
+mon.setCursorPos(math.floor(ball.x), math.floor(ball.y))
+mon.write(" ")
+if winner then
+mon.setBackgroundColor(COLORS.BG)
+mon.setTextColor(winner.color)
+local msg = "WINNER: P" .. winner.id
+mon.setCursorPos(W/2 - #msg/2, H/2)
+mon.write(msg)
+end
+end,
+onButton = function(self, a, btn)
+if btn == "left" then running = true end
+if btn == "center" then
+self:resetBall()
+for _, p in ipairs(players) do
+p.score = MAX_SCORE
+p.alive = true
+p.color = (p.id==1 and COLORS.P1) or (p.id==2 and COLORS.P2) or (p.id==3 and COLORS.P3) or (p.id==4 and COLORS.P4)
+end
+winner = nil
+running = false
+end
+if btn == "right" then a:requestQuit() end
+end,
+draw = function(self, a)
+self:drawDirect()
+end
+}
+arcade.start(game, {tickSeconds = 0.05})]]
 files["arcade/license_store.lua"] = [[local LicenseStore = {}
 LicenseStore.__index = LicenseStore
 local function ensureDirectory(path)
@@ -14156,7 +14586,7 @@ files["lib/version.lua"] = [[local version = {}
 version.MAJOR = 2
 version.MINOR = 1
 version.PATCH = 1
-version.BUILD = 33
+version.BUILD = 40
 function version.toString()
 return string.format("v%d.%d.%d (build %d)",
 version.MAJOR, version.MINOR, version.PATCH, version.BUILD)
@@ -14166,7 +14596,7 @@ return string.format("TurtleOS v%d.%d.%d #%d",
 version.MAJOR, version.MINOR, version.PATCH, version.BUILD)
 end
 return version]]
-files["net_installer.lua"] = [[local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/appify/"
+files["net_installer.lua"] = [[local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
 local files = {
 "arcade/arcade_shell.lua",
 "arcade/arcade.lua",
@@ -14421,7 +14851,7 @@ if fs.exists("arcade") then fs.delete("arcade") end
 if fs.exists("lib") then fs.delete("lib") end
 if fs.exists("factory") then fs.delete("factory") end
 
-print("Unpacking 68 files...")
+print("Unpacking 70 files...")
 for path, content in pairs(files) do
     local dir = fs.getDir(path)
     if dir ~= "" and not fs.exists(dir) then

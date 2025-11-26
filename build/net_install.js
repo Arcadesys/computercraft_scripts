@@ -5,7 +5,7 @@ const PROJECT_ROOT = path.resolve(__dirname, '..');
 const OUTPUT_NAME = 'net_installer.lua';
 const OUTPUT_PATH = path.join(PROJECT_ROOT, OUTPUT_NAME);
 const LUA_EXTENSION = '.lua';
-const REPO_BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/appify/";
+const REPO_BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/";
 
 const IGNORE_DIRS = new Set([
     '.git',

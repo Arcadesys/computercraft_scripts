@@ -55,7 +55,7 @@ function shouldSkip(relativePath, stat) {
         // Exclude games from bundle (download separately), but keep system apps
         if (relativePath.startsWith('arcade/games/')) {
             const filename = path.basename(relativePath);
-            if (filename !== 'store.lua' && filename !== 'themes.lua' && filename !== 'slots.lua' && filename !== 'idlecraft.lua' && filename !== 'cantstop.lua') {
+            if (filename !== 'store.lua' && filename !== 'themes.lua' && filename !== 'slots.lua' && filename !== 'idlecraft.lua' && filename !== 'cantstop.lua' && filename !== 'videopoker.lua' && filename !== 'warlords.lua') {
                 return true;
             }
         }
@@ -111,11 +111,17 @@ function incrementBuildCounter() {
         content = content.replace(/version\.BUILD\s*=\s*\d+/, `version.BUILD = ${newBuild}`);
         fs.writeFileSync(versionPath, content, 'utf8');
         console.log(`🔢 Build counter: ${oldBuild} → ${newBuild}`);
+
+        const major = content.match(/version\.MAJOR\s*=\s*(\d+)/)?.[1] || 0;
+        const minor = content.match(/version\.MINOR\s*=\s*(\d+)/)?.[1] || 0;
+        const patch = content.match(/version\.PATCH\s*=\s*(\d+)/)?.[1] || 0;
+        return `v${major}.${minor}.${patch} (build ${newBuild})`;
     }
+    return "v0.0.0 (build 0)";
 }
 
 function buildInstaller() {
-    incrementBuildCounter();
+    const versionString = incrementBuildCounter();
     console.log('📦 Building Arcadesys installer...');
     const files = collectLuaFiles(PROJECT_ROOT)
         .sort((a, b) => a.relPath.localeCompare(b.relPath));
@@ -128,7 +134,7 @@ function buildInstaller() {
 
     let lua = `-- Arcadesys Unified Installer\n` +
         `-- Auto-generated at ${new Date().toISOString()}\n` +
-        `print("Starting Arcadesys install...")\n` +
+        `print("Starting Arcadesys install ${versionString}...")\n` +
         `local files = {}\n\n`;
 
     files.forEach(file => {

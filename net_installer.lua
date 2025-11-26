@@ -2,7 +2,7 @@
 -- Auto-generated at 2025-11-24T23:11:52.899Z
 -- Downloads files from GitHub to bypass file size limits
 
-local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/appify/"
+local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
 local files = {
     "arcade/arcade_shell.lua",
     "arcade/arcade.lua",

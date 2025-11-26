@@ -34,6 +34,7 @@ end
 setupPaths()
 
 local LicenseStore = require("license_store")
+local version = require("version")
 
 local BASE_DIR = fs.getDir(shell and shell.getRunningProgram and shell.getRunningProgram() or "") or ""
 if BASE_DIR == "" then BASE_DIR = "." end
@@ -489,11 +490,29 @@ local function main()
   local lastMenu = currentMenu
   local selectedButtonIndex = 1
   local mouseX, mouseY = 0, 0
+  local LIBRARY_VISIBLE_LIMIT = 5
+  local libraryScrollOffset = 0
+  local libraryScrollMax = 0
+  local libraryVisibleCount = 0
+  local libraryTotalCount = 0
+
+  local function adjustLibraryScroll(delta)
+    if delta == 0 or libraryScrollMax <= 0 then
+        return
+    end
+    local nextOffset = math.max(0, math.min(libraryScrollOffset + delta, libraryScrollMax))
+    if nextOffset ~= libraryScrollOffset then
+        libraryScrollOffset = nextOffset
+    end
+  end
   
   while running do
     if currentMenu ~= lastMenu then
-        selectedButtonIndex = 1
-        lastMenu = currentMenu
+      selectedButtonIndex = 1
+      if currentMenu == "library" then
+        libraryScrollOffset = 0
+      end
+      lastMenu = currentMenu
     end
 
     -- Draw Desktop
@@ -506,6 +525,9 @@ local function main()
     if winY < 1 then winY = 1 end
     
     local title = "ArcadeOS"
+    if currentMenu == "main" and version then
+        title = title .. " v" .. version.MAJOR .. "." .. version.MINOR .. "." .. version.PATCH
+    end
     if currentMenu == "library" then title = "My Apps" end
     if currentMenu == "system" then title = "System" end
     
@@ -527,27 +549,57 @@ local function main()
         table.insert(buttons, {text = "System", y = startY + 4, action = function() currentMenu = "system" end})
         table.insert(buttons, {text = "Exit", y = startY + 8, action = function() running = false end})
     elseif currentMenu == "library" then
-        local list = {}
-        for _, p in ipairs(programs) do
-            -- Show purchased games/actions
-            if p.id ~= "store" and state.licenseStore:has(p.id) then
-                table.insert(list, p)
-            end
+      local list = {}
+      for _, p in ipairs(programs) do
+        -- Show purchased games/actions
+        if p.id ~= "store" and state.licenseStore:has(p.id) then
+          table.insert(list, p)
         end
-        
-        if #list == 0 then
-             table.insert(buttons, {text = "(No Apps)", y = startY, action = function() end})
-        else
-            for i, p in ipairs(list) do
-                if i > 5 then break end
-                table.insert(buttons, {
-                    text = p.name, 
-                    y = startY + (i-1)*2, 
-                    action = function() launchProgram(p) end
-                })
-            end
+      end
+
+      libraryTotalCount = #list
+      libraryScrollMax = math.max(libraryTotalCount - LIBRARY_VISIBLE_LIMIT, 0)
+
+      if libraryTotalCount == 0 then
+        libraryScrollOffset = 0
+        libraryVisibleCount = 0
+        table.insert(buttons, {text = "(No Apps)", y = startY, action = function() end})
+      else
+        if libraryScrollOffset > libraryScrollMax then
+          libraryScrollOffset = libraryScrollMax
         end
-        table.insert(buttons, {text = "Back", y = winY + winH - 2, action = function() currentMenu = "main" end})
+        libraryVisibleCount = 0
+        for i = 1, LIBRARY_VISIBLE_LIMIT do
+          local idx = libraryScrollOffset + i
+          local p = list[idx]
+          if not p then break end
+          libraryVisibleCount = libraryVisibleCount + 1
+          table.insert(buttons, {
+            text = p.name,
+            y = startY + (i-1)*2,
+            action = function() launchProgram(p) end
+          })
+        end
+
+        if libraryScrollMax > 0 then
+          local infoStart = libraryScrollOffset + 1
+          local infoEnd = libraryScrollOffset + libraryVisibleCount
+          local info = string.format("Apps %d-%d/%d", infoStart, infoEnd, libraryTotalCount)
+          local infoY = winY + winH - 3
+          local innerWidth = winW - 4
+          term.setBackgroundColor(state.theme.windowBg or colors.lightGray)
+          term.setTextColor(state.theme.buttonFg or colors.black)
+          term.setCursorPos(winX + 2, infoY)
+          term.write(string.rep(" ", innerWidth))
+          term.setCursorPos(winX + 2, infoY)
+          term.write(info:sub(1, innerWidth))
+        end
+      end
+
+      table.insert(buttons, {text = "Back", y = winY + winH - 2, action = function()
+        currentMenu = "main"
+        libraryScrollOffset = 0
+      end})
     elseif currentMenu == "system" then
         table.insert(buttons, {text = "Themes", y = startY, action = function() 
              local found = false
@@ -599,14 +651,34 @@ local function main()
                 end
              end
         end
+    elseif event == "mouse_scroll" then
+      if currentMenu == "library" then
+        adjustLibraryScroll(p1)
+      end
     elseif event == "key" then
         local key = p1
         if key == keys.up then
-            selectedButtonIndex = selectedButtonIndex - 1
-            if selectedButtonIndex < 1 then selectedButtonIndex = #buttons end
+        if currentMenu == "library" and libraryScrollOffset > 0 and selectedButtonIndex == 1 then
+          libraryScrollOffset = libraryScrollOffset - 1
+        else
+          selectedButtonIndex = selectedButtonIndex - 1
+          if selectedButtonIndex < 1 then selectedButtonIndex = #buttons end
+        end
         elseif key == keys.down then
-            selectedButtonIndex = selectedButtonIndex + 1
-            if selectedButtonIndex > #buttons then selectedButtonIndex = 1 end
+        if currentMenu == "library" and libraryScrollOffset < libraryScrollMax and selectedButtonIndex == libraryVisibleCount and libraryVisibleCount > 0 then
+          libraryScrollOffset = libraryScrollOffset + 1
+        else
+          selectedButtonIndex = selectedButtonIndex + 1
+          if selectedButtonIndex > #buttons then selectedButtonIndex = 1 end
+        end
+      elseif key == keys.pageUp then
+        if currentMenu == "library" then
+          adjustLibraryScroll(-LIBRARY_VISIBLE_LIMIT)
+        end
+      elseif key == keys.pageDown then
+        if currentMenu == "library" then
+          adjustLibraryScroll(LIBRARY_VISIBLE_LIMIT)
+        end
         elseif key == keys.enter then
             local btn = buttons[selectedButtonIndex]
             if btn then

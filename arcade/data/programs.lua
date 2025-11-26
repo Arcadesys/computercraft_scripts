@@ -1,4 +1,4 @@
-local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/appify/arcade/"
+local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/arcade/"
 
 -- Pricing Configuration
 -- Adjust prices here. Set to 0 for free downloads.
