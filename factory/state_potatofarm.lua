@@ -46,7 +46,8 @@ local function POTATOFARM(ctx)
         -- Apply 1x1 offset for safety (start at 1,1 relative to home)
         local target = { x = x + 1, y = hoverHeight, z = -(z + 1) }
         
-        if not movement.goTo(ctx, target) then
+        -- Move Y first to avoid hitting chests at origin perimeter
+        if not movement.goTo(ctx, target, { axisOrder = { "y", "x", "z" } }) then
             logger.log(ctx, "warn", "Path blocked to " .. target.x .. "," .. target.z)
             -- Try to move up and over?
             if not movement.up(ctx) then
@@ -76,8 +77,11 @@ local function POTATOFARM(ctx)
                         turtle.placeDown()
                     else
                         -- Or try with empty hand
-                        inventory.findEmptySlot(ctx)
-                        turtle.placeDown()
+                        local emptySlot = inventory.findEmptySlot(ctx)
+                        if emptySlot then
+                            turtle.select(emptySlot)
+                            turtle.placeDown()
+                        end
                     end
 
                     -- Check if harvest happened (age reset)
@@ -124,6 +128,10 @@ local function POTATOFARM(ctx)
         return "POTATOFARM"
 
     elseif pf.state == "DEPOSIT" then
+        if not pf.chests or not pf.chests.output then
+             logger.log(ctx, "error", "Missing output chest configuration.")
+             return "ERROR"
+        end
         logger.log(ctx, "info", "Depositing items...")
         movement.goTo(ctx, { x=0, y=2, z=0 }) -- Return to start, safe height
         

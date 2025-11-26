@@ -8,7 +8,7 @@ local version = {}
 version.MAJOR = 2
 version.MINOR = 1
 version.PATCH = 1
-version.BUILD = 13
+version.BUILD = 16
 
 --- Format version string (e.g., "v2.1.1 (build 42)")
 function version.toString()

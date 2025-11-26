@@ -1,5 +1,5 @@
 -- Arcadesys Unified Installer
--- Auto-generated at 2025-11-26T03:56:32.659Z
+-- Auto-generated at 2025-11-26T04:22:17.001Z
 print("Starting Arcadesys install...")
 local files = {}
 
@@ -4292,7 +4292,7 @@ local x = pf.nextX
 local z = pf.nextZ
 local hoverHeight = 1
 local target = { x = x + 1, y = hoverHeight, z = -(z + 1) }
-if not movement.goTo(ctx, target) then
+if not movement.goTo(ctx, target, { axisOrder = { "y", "x", "z" } }) then
 logger.log(ctx, "warn", "Path blocked to " .. target.x .. "," .. target.z)
 if not movement.up(ctx) then
 return "POTATOFARM" -- Stuck
@@ -4313,8 +4313,11 @@ local harvested = false
 if inventory.selectMaterial(ctx, "minecraft:potato") then
 turtle.placeDown()
 else
-inventory.findEmptySlot(ctx)
+local emptySlot = inventory.findEmptySlot(ctx)
+if emptySlot then
+turtle.select(emptySlot)
 turtle.placeDown()
+end
 end
 local hCheck, dCheck = turtle.inspectDown()
 if hCheck and dCheck.name == "minecraft:potatoes" then
@@ -4350,6 +4353,10 @@ pf.nextZ = pf.nextZ + 1
 end
 return "POTATOFARM"
 elseif pf.state == "DEPOSIT" then
+if not pf.chests or not pf.chests.output then
+logger.log(ctx, "error", "Missing output chest configuration.")
+return "ERROR"
+end
 logger.log(ctx, "info", "Depositing items...")
 movement.goTo(ctx, { x=0, y=2, z=0 }) -- Return to start, safe height
 while movement.getPosition(ctx).y > 0 do
@@ -4507,11 +4514,12 @@ logger.log(ctx, "info", "Starting patrol run. Grid: " .. treeW .. "x" .. treeH .
 local totalSpots = (limitX + 1) * (limitZ + 1)
 local fuelPerSpot = 16 -- Descent/Ascent + Travel
 local needed = (totalSpots * fuelPerSpot) + 200
+if type(needed) ~= "number" then needed = 1000 end
 local current = turtle.getFuelLevel()
 if current == "unlimited" then current = math.huge end
 if type(current) ~= "number" then current = 0 end
 if current < needed then
-logger.log(ctx, "warn", string.format("Pre-run fuel check: Have %d, Need %d", current, needed))
+logger.log(ctx, "warn", string.format("Pre-run fuel check: Have %s, Need %s", tostring(current), tostring(needed)))
 fuelLib.refuel(ctx, { target = needed, excludeItems = { "sapling", "log" } })
 current = turtle.getFuelLevel()
 if current == "unlimited" then current = math.huge end
@@ -14057,7 +14065,7 @@ files["lib/version.lua"] = [[local version = {}
 version.MAJOR = 2
 version.MINOR = 1
 version.PATCH = 1
-version.BUILD = 13
+version.BUILD = 16
 function version.toString()
 return string.format("v%d.%d.%d (build %d)",
 version.MAJOR, version.MINOR, version.PATCH, version.BUILD)

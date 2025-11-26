@@ -50,13 +50,14 @@ local function TREEFARM(ctx)
             local totalSpots = (limitX + 1) * (limitZ + 1)
             local fuelPerSpot = 16 -- Descent/Ascent + Travel
             local needed = (totalSpots * fuelPerSpot) + 200
+            if type(needed) ~= "number" then needed = 1000 end
             
             local current = turtle.getFuelLevel()
             if current == "unlimited" then current = math.huge end
             if type(current) ~= "number" then current = 0 end
             
             if current < needed then
-                logger.log(ctx, "warn", string.format("Pre-run fuel check: Have %d, Need %d", current, needed))
+                logger.log(ctx, "warn", string.format("Pre-run fuel check: Have %s, Need %s", tostring(current), tostring(needed)))
                 
                 -- 1. Try inventory
                 fuelLib.refuel(ctx, { target = needed, excludeItems = { "sapling", "log" } })
