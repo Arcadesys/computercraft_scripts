@@ -642,6 +642,14 @@ local function main()
         local isSelected = (i == selectedButtonIndex)
         UI.drawButton(btnX, btn.y, btnW, btn.text, false, isHovered or isSelected)
     end
+
+    -- Build badge in bottom-right corner so installers can be verified quickly
+    local buildLabel = string.format("Build %d", version.BUILD or 0)
+    local badgeX = math.max(1, w - #buildLabel + 1)
+    term.setBackgroundColor(state.theme.bg or colors.black)
+    term.setTextColor(state.theme.text or colors.white)
+    term.setCursorPos(badgeX, h)
+    term.write(buildLabel)
     
     -- Event Handling
     local event, p1, p2, p3 = os.pullEvent()

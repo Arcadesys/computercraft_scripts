@@ -1,7 +1,26 @@
--- arcade/boot.lua
--- Sets up package.path for arcade games
+-- Determine current program path even if the shell API is unavailable
+local function detectProgramPath()
+    if shell and shell.getRunningProgram then
+        return shell.getRunningProgram()
+    end
+    if debug and debug.getinfo then
+        local info = debug.getinfo(1, "S")
+        if info and info.source then
+            local src = info.source
+            if src:sub(1, 1) == "@" then
+                src = src:sub(2)
+            end
+            return src
+        end
+    end
+    return nil
+end
 
-local program = shell.getRunningProgram()
+local program = detectProgramPath()
+if not program then
+    return -- Cannot safely configure search paths without a reference point
+end
+
 local dir = fs.getDir(program)
 
 local function findRoot(startDir)

@@ -1,6 +1,6 @@
 -- Arcadesys Unified Installer
--- Auto-generated at 2025-11-26T16:39:32.638Z
-print("Starting Arcadesys install v2.1.1 (build 41)...")
+-- Auto-generated at 2025-11-26T17:06:14.898Z
+print("Starting Arcadesys install v2.1.1 (build 42)...")
 local files = {}
 
 files["arcade/arcade_shell.lua"] = [[package.loaded["arcade"] = nil
@@ -511,6 +511,12 @@ local isHovered = (mouseX >= btnX and mouseX <= btnX + btnW - 1 and mouseY == bt
 local isSelected = (i == selectedButtonIndex)
 UI.drawButton(btnX, btn.y, btnW, btn.text, false, isHovered or isSelected)
 end
+local buildLabel = string.format("Build %d", version.BUILD or 0)
+local badgeX = math.max(1, w - #buildLabel + 1)
+term.setBackgroundColor(state.theme.bg or colors.black)
+term.setTextColor(state.theme.text or colors.white)
+term.setCursorPos(badgeX, h)
+term.write(buildLabel)
 local event, p1, p2, p3 = os.pullEvent()
 if event == "mouse_click" or event == "mouse_drag" or event == "mouse_move" then
 mouseX, mouseY = p2, p3
@@ -876,7 +882,26 @@ saveCredits()
 log("info", "Arcade wrapper stopped")
 end
 return M]]
-files["arcade/boot.lua"] = [[local program = shell.getRunningProgram()
+files["arcade/boot.lua"] = [[local function detectProgramPath()
+if shell and shell.getRunningProgram then
+return shell.getRunningProgram()
+end
+if debug and debug.getinfo then
+local info = debug.getinfo(1, "S")
+if info and info.source then
+local src = info.source
+if src:sub(1, 1) == "@" then
+src = src:sub(2)
+end
+return src
+end
+end
+return nil
+end
+local program = detectProgramPath()
+if not program then
+return -- Cannot safely configure search paths without a reference point
+end
 local dir = fs.getDir(program)
 local function findRoot(startDir)
 local current = startDir
@@ -1127,8 +1152,25 @@ files["arcade/data/valhelsia_blocks.lua"] = [[return {
 { id = "computercraft:wired_modem", label = "Wired Modem" },
 { id = "computercraft:wireless_modem_normal", label = "Wireless Modem" },
 }]]
-files["arcade/games/artillery.lua"] = [[local function setupPaths()
-local dir = fs.getDir(shell.getRunningProgram())
+files["arcade/games/artillery.lua"] = [[local function detectProgramPath()
+if shell and shell.getRunningProgram then
+return shell.getRunningProgram()
+end
+if debug and debug.getinfo then
+local info = debug.getinfo(2, "S")
+if not info then info = debug.getinfo(1, "S") end
+if info and info.source then
+local src = info.source
+if src:sub(1, 1) == "@" then src = src:sub(2) end
+return src
+end
+end
+return nil
+end
+local function setupPaths()
+local program = detectProgramPath()
+if not program then return end
+local dir = fs.getDir(program)
 local boot = fs.combine(fs.getDir(dir), "boot.lua")
 if fs.exists(boot) then dofile(boot) end
 end
@@ -1276,8 +1318,25 @@ end
 end
 gameLoop()]]
 files["arcade/games/blackjack.lua"] = [[package.loaded["arcade"] = nil
+local function detectProgramPath()
+if shell and shell.getRunningProgram then
+return shell.getRunningProgram()
+end
+if debug and debug.getinfo then
+local info = debug.getinfo(2, "S") -- caller (setupPaths)
+if not info then info = debug.getinfo(1, "S") end
+if info and info.source then
+local src = info.source
+if src:sub(1, 1) == "@" then src = src:sub(2) end
+return src
+end
+end
+return nil
+end
 local function setupPaths()
-local dir = fs.getDir(shell.getRunningProgram())
+local program = detectProgramPath()
+if not program then return end
+local dir = fs.getDir(program)
 local boot = fs.combine(fs.getDir(dir), "boot.lua")
 if fs.exists(boot) then dofile(boot) end
 end
@@ -15130,7 +15189,7 @@ files["lib/version.lua"] = [[local version = {}
 version.MAJOR = 2
 version.MINOR = 1
 version.PATCH = 1
-version.BUILD = 41
+version.BUILD = 42
 function version.toString()
 return string.format("v%d.%d.%d (build %d)",
 version.MAJOR, version.MINOR, version.PATCH, version.BUILD)

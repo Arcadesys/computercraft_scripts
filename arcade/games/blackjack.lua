@@ -1,8 +1,26 @@
 ---@diagnostic disable: undefined-global, undefined-field
 package.loaded["arcade"] = nil
 
+local function detectProgramPath()
+    if shell and shell.getRunningProgram then
+        return shell.getRunningProgram()
+    end
+    if debug and debug.getinfo then
+        local info = debug.getinfo(2, "S") -- caller (setupPaths)
+        if not info then info = debug.getinfo(1, "S") end
+        if info and info.source then
+            local src = info.source
+            if src:sub(1, 1) == "@" then src = src:sub(2) end
+            return src
+        end
+    end
+    return nil
+end
+
 local function setupPaths()
-    local dir = fs.getDir(shell.getRunningProgram())
+    local program = detectProgramPath()
+    if not program then return end
+    local dir = fs.getDir(program)
     local boot = fs.combine(fs.getDir(dir), "boot.lua")
     if fs.exists(boot) then dofile(boot) end
 end
