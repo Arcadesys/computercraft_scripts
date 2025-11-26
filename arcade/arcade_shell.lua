@@ -332,17 +332,24 @@ end
 local REPO_BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
 
 local function downloadFile(url, path)
-    if not http then
-        return false, "HTTP API disabled"
-    end
+  if not http then
+    return false, "HTTP API disabled"
+  end
     
-    local response = http.get(url)
-    if not response then
-        return false, "Failed to connect"
-    end
+  local response, err = http.get(url)
+  if not response then
+    return false, err or "Failed to connect"
+  end
     
-    local content = response.readAll()
+  local status = response.getResponseCode and response.getResponseCode() or 200
+  if status >= 400 then
+    local body = response.readAll()
     response.close()
+    return false, string.format("HTTP %d", status)
+  end
+    
+  local content = response.readAll()
+  response.close()
     
     local dir = fs.getDir(path)
     if dir ~= "" and not fs.exists(dir) then

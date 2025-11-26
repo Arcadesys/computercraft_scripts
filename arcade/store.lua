@@ -86,8 +86,15 @@ local function downloadItem(item)
     if not http then return false, "HTTP API disabled" end
     if not item.url then return false, "No URL" end
     
-    local response = http.get(item.url)
-    if not response then return false, "Connection failed" end
+    local response, err = http.get(item.url)
+    if not response then return false, err or "Connection failed" end
+    
+    local status = response.getResponseCode and response.getResponseCode() or 200
+    if status >= 400 then
+        local body = response.readAll()
+        response.close()
+        return false, string.format("HTTP %d", status)
+    end
     
     local content = response.readAll()
     response.close()

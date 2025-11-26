@@ -1,4 +1,4 @@
-local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/arcade/"
+local REPO_ROOT = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
 
 -- Pricing Configuration
 -- Adjust prices here. Set to 0 for free downloads.
@@ -15,71 +15,88 @@ local PRICING = {
     themes = 0
 }
 
+local function configureProgram(def)
+    if def.remotePath == false then
+        def.url = nil
+    else
+        local remotePath = def.remotePath
+        if not remotePath or remotePath == "" then
+            local localPath = def.path or ""
+            if localPath:sub(1, 1) == "/" then
+                localPath = localPath:sub(2)
+            end
+            remotePath = "arcade/" .. localPath
+        end
+        if remotePath:sub(1, 1) == "/" then
+            remotePath = remotePath:sub(2)
+        end
+        def.url = REPO_ROOT .. remotePath
+    end
+    def.remotePath = nil
+    return def
+end
+
 local programs = {
-  {
+  configureProgram({
     id = "blackjack",
     name = "Blackjack",
     path = "games/blackjack.lua",
     price = PRICING.blackjack,
     description = "Beat the dealer in a race to 21.",
     category = "games",
-    url = BASE_URL .. "games/blackjack.lua"
-  },
-  {
+    remotePath = "arcade/games/blackjack.lua"
+  }),
+  configureProgram({
     id = "slots",
     name = "Slots",
     path = "games/slots.lua",
     price = PRICING.slots,
     description = "Spin reels for quick wins.",
     category = "games",
-    url = BASE_URL .. "games/slots.lua"
-  },
-  {
+  }),
+  configureProgram({
     id = "videopoker",
     name = "Video Poker",
     path = "games/videopoker.lua",
     price = PRICING.videopoker,
     description = "Jacks or Better poker.",
     category = "games",
-    url = BASE_URL .. "games/videopoker.lua"
-  },
-  {
+  }),
+  configureProgram({
     id = "cantstop",
     name = "Can't Stop",
     path = "games/cantstop.lua",
     price = PRICING.cantstop,
     description = "Push your luck dice classic.",
     category = "games",
-    url = BASE_URL .. "games/cantstop.lua"
-  },
-  {
+  }),
+  configureProgram({
     id = "idlecraft",
     name = "IdleCraft",
     path = "games/idlecraft.lua",
     price = PRICING.idlecraft,
     description = "AFK-friendly cobble empire.",
     category = "games",
-    url = BASE_URL .. "games/idlecraft.lua"
-  },
-  {
+  }),
+  configureProgram({
     id = "artillery",
     name = "Artillery",
     path = "games/artillery.lua",
     price = PRICING.artillery,
     description = "2-player tank battle.",
     category = "games",
-    url = BASE_URL .. "games/artillery.lua"
-  },
-  {
+    remotePath = "arcade/games/artillery.lua"
+  }),
+  configureProgram({
     id = "factory_planner",
     name = "Factory Planner",
     path = "factory_planner.lua",
     price = PRICING.factory_planner,
     description = "Design factory layouts for turtles.",
     category = "actions",
-    url = BASE_URL .. "factory_planner.lua"
-  },
-  {
+    remotePath = "factory_planner.lua"
+  }),
+  configureProgram({
     id = "inv_manager",
     name = "Inventory Manager",
     path = "inv_manager.lua",
@@ -87,26 +104,24 @@ local programs = {
     description = "Manage inventory (Coming Soon).",
     category = "actions",
     prodReady = false,
-    url = BASE_URL .. "inv_manager.lua"
-  },
-  {
+    remotePath = false
+  }),
+  configureProgram({
     id = "store",
     name = "App Store",
     path = "store.lua",
     price = PRICING.store,
     description = "Download new games.",
     category = "system",
-    url = BASE_URL .. "store.lua"
-  },
-  {
+  }),
+  configureProgram({
     id = "themes",
     name = "Themes",
     path = "games/themes.lua",
     price = PRICING.themes,
     description = "Change system theme.",
     category = "system",
-    url = BASE_URL .. "games/themes.lua"
-  },
+  }),
 }
 
 return programs

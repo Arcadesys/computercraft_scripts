@@ -1,6 +1,6 @@
 -- Arcadesys Unified Installer
--- Auto-generated at 2025-11-26T16:20:43.548Z
-print("Starting Arcadesys install v2.1.1 (build 40)...")
+-- Auto-generated at 2025-11-26T16:39:32.638Z
+print("Starting Arcadesys install v2.1.1 (build 41)...")
 local files = {}
 
 files["arcade/arcade_shell.lua"] = [[package.loaded["arcade"] = nil
@@ -249,9 +249,15 @@ local function downloadFile(url, path)
 if not http then
 return false, "HTTP API disabled"
 end
-local response = http.get(url)
+local response, err = http.get(url)
 if not response then
-return false, "Failed to connect"
+return false, err or "Failed to connect"
+end
+local status = response.getResponseCode and response.getResponseCode() or 200
+if status >= 400 then
+local body = response.readAll()
+response.close()
+return false, string.format("HTTP %d", status)
 end
 local content = response.readAll()
 response.close()
@@ -899,7 +905,7 @@ if not string.find(package.path, ";/?.lua", 1, true) then
 package.path = package.path .. ";/?.lua"
 end
 end]]
-files["arcade/data/programs.lua"] = [[local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/arcade/"
+files["arcade/data/programs.lua"] = [[local REPO_ROOT = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
 local PRICING = {
 blackjack = 0,
 slots = 0,
@@ -912,71 +918,87 @@ inv_manager = 0,
 store = 0,
 themes = 0
 }
+local function configureProgram(def)
+if def.remotePath == false then
+def.url = nil
+else
+local remotePath = def.remotePath
+if not remotePath or remotePath == "" then
+local localPath = def.path or ""
+if localPath:sub(1, 1) == "/" then
+localPath = localPath:sub(2)
+end
+remotePath = "arcade/" .. localPath
+end
+if remotePath:sub(1, 1) == "/" then
+remotePath = remotePath:sub(2)
+end
+def.url = REPO_ROOT .. remotePath
+end
+def.remotePath = nil
+return def
+end
 local programs = {
-{
+configureProgram({
 id = "blackjack",
 name = "Blackjack",
 path = "games/blackjack.lua",
 price = PRICING.blackjack,
 description = "Beat the dealer in a race to 21.",
 category = "games",
-url = BASE_URL .. "games/blackjack.lua"
-},
-{
+remotePath = "arcade/games/blackjack.lua"
+}),
+configureProgram({
 id = "slots",
 name = "Slots",
 path = "games/slots.lua",
 price = PRICING.slots,
 description = "Spin reels for quick wins.",
 category = "games",
-url = BASE_URL .. "games/slots.lua"
-},
-{
+}),
+configureProgram({
 id = "videopoker",
 name = "Video Poker",
 path = "games/videopoker.lua",
 price = PRICING.videopoker,
 description = "Jacks or Better poker.",
 category = "games",
-url = BASE_URL .. "games/videopoker.lua"
-},
-{
+}),
+configureProgram({
 id = "cantstop",
 name = "Can't Stop",
 path = "games/cantstop.lua",
 price = PRICING.cantstop,
 description = "Push your luck dice classic.",
 category = "games",
-url = BASE_URL .. "games/cantstop.lua"
-},
-{
+}),
+configureProgram({
 id = "idlecraft",
 name = "IdleCraft",
 path = "games/idlecraft.lua",
 price = PRICING.idlecraft,
 description = "AFK-friendly cobble empire.",
 category = "games",
-url = BASE_URL .. "games/idlecraft.lua"
-},
-{
+}),
+configureProgram({
 id = "artillery",
 name = "Artillery",
 path = "games/artillery.lua",
 price = PRICING.artillery,
 description = "2-player tank battle.",
 category = "games",
-url = BASE_URL .. "games/artillery.lua"
-},
-{
+remotePath = "arcade/games/artillery.lua"
+}),
+configureProgram({
 id = "factory_planner",
 name = "Factory Planner",
 path = "factory_planner.lua",
 price = PRICING.factory_planner,
 description = "Design factory layouts for turtles.",
 category = "actions",
-url = BASE_URL .. "factory_planner.lua"
-},
-{
+remotePath = "factory_planner.lua"
+}),
+configureProgram({
 id = "inv_manager",
 name = "Inventory Manager",
 path = "inv_manager.lua",
@@ -984,26 +1006,24 @@ price = PRICING.inv_manager,
 description = "Manage inventory (Coming Soon).",
 category = "actions",
 prodReady = false,
-url = BASE_URL .. "inv_manager.lua"
-},
-{
+remotePath = false
+}),
+configureProgram({
 id = "store",
 name = "App Store",
 path = "store.lua",
 price = PRICING.store,
 description = "Download new games.",
 category = "system",
-url = BASE_URL .. "store.lua"
-},
-{
+}),
+configureProgram({
 id = "themes",
 name = "Themes",
 path = "games/themes.lua",
 price = PRICING.themes,
 description = "Change system theme.",
 category = "system",
-url = BASE_URL .. "games/themes.lua"
-},
+}),
 }
 return programs]]
 files["arcade/data/valhelsia_blocks.lua"] = [[return {
@@ -1107,6 +1127,524 @@ files["arcade/data/valhelsia_blocks.lua"] = [[return {
 { id = "computercraft:wired_modem", label = "Wired Modem" },
 { id = "computercraft:wireless_modem_normal", label = "Wireless Modem" },
 }]]
+files["arcade/games/artillery.lua"] = [[local function setupPaths()
+local dir = fs.getDir(shell.getRunningProgram())
+local boot = fs.combine(fs.getDir(dir), "boot.lua")
+if fs.exists(boot) then dofile(boot) end
+end
+setupPaths()
+if not fs.exists("Pine3D.lua") and not fs.exists("Pine3D") then
+print("Pine3D not found. Please install it using:")
+print("pastebin run qpJYiYs2")
+return
+end
+local Pine3D = require("Pine3D")
+local function testLoad(path)
+if not fs.exists(path) then
+print("File not found: " .. path)
+return false
+end
+local ok, err = loadfile(path)
+if not ok then
+printError("Syntax error in " .. path .. ": " .. tostring(err))
+return false
+end
+local ok2, res = pcall(ok)
+if not ok2 then
+printError("Runtime error loading " .. path .. ": " .. tostring(res))
+return false
+end
+return true
+end
+testLoad("models/tank.lua")
+testLoad("models/projectile.lua")
+local frame = Pine3D.newFrame()
+frame:setFoV(60)
+frame:setCamera(0, 8, -15, 0.4, 0, 0)
+frame:setBackgroundColor(colors.lightBlue)
+local GRAVITY = 9.8
+local DT = 0.1
+local GROUND_Y = 0
+local players = {
+{ id = 1, x = -8, y = 0, z = 0, angle = 45, velocity = 15, color = colors.blue, model = nil },
+{ id = 2, x = 8, y = 0, z = 0, angle = 135, velocity = 15, color = colors.red, model = nil }
+}
+local turn = 1
+local projectile = {
+active = false,
+x = 0, y = 0, z = 0,
+vx = 0, vy = 0, vz = 0,
+model = nil
+}
+players[1].model = frame:newObject("tank", players[1].x, players[1].y, players[1].z)
+players[2].model = frame:newObject("tank", players[2].x, players[2].y, players[2].z)
+projectile.model = frame:newObject("projectile", 0, -10, 0)
+local function drawUI(text, line)
+term.setCursorPos(1, line)
+term.clearLine()
+term.write(text)
+end
+local function updateModels()
+for _, p in ipairs(players) do
+if p.model then
+p.model.x = p.x
+p.model.y = p.y
+p.model.z = p.z
+if p.id == 2 then
+p.model.rotY = math.pi
+end
+end
+end
+if projectile.active then
+projectile.model.x = projectile.x
+projectile.model.y = projectile.y
+projectile.model.z = projectile.z
+else
+projectile.model.y = -100
+end
+end
+local function fire(player)
+projectile.active = true
+projectile.x = player.x
+projectile.y = player.y + 1
+projectile.z = player.z
+local rad = math.rad(player.angle)
+local vx = math.cos(rad) * player.velocity
+local vy = math.sin(rad) * player.velocity
+projectile.vx = vx
+projectile.vy = vy
+projectile.vz = 0
+end
+local function gameLoop()
+while true do
+updateModels()
+frame:drawObjects({players[1].model, players[2].model, projectile.model})
+frame:drawBuffer()
+term.setTextColor(colors.white)
+term.setBackgroundColor(colors.black)
+drawUI("Player " .. turn .. "'s Turn", 1)
+drawUI("Angle: " .. players[turn].angle, 2)
+drawUI("Velocity: " .. players[turn].velocity, 3)
+drawUI("Pos: " .. players[turn].x, 4)
+if projectile.active then
+projectile.x = projectile.x + projectile.vx * DT
+projectile.y = projectile.y + projectile.vy * DT
+projectile.vy = projectile.vy - GRAVITY * DT
+if projectile.y <= GROUND_Y then
+projectile.active = false
+local hit = false
+for _, p in ipairs(players) do
+if math.abs(projectile.x - p.x) < 1.5 then
+drawUI("HIT Player " .. p.id .. "!", 5)
+sleep(2)
+hit = true
+end
+end
+if not hit then
+drawUI("Miss!", 5)
+sleep(1)
+end
+turn = (turn == 1) and 2 or 1
+projectile.vx = 0
+projectile.vy = 0
+projectile.vz = 0
+end
+end
+local event, key = os.pullEvent()
+if event == "key" then
+if key == keys.left then
+players[turn].angle = players[turn].angle - 1
+elseif key == keys.right then
+players[turn].angle = players[turn].angle + 1
+elseif key == keys.up then
+players[turn].velocity = math.min(50, players[turn].velocity + 1)
+elseif key == keys.down then
+players[turn].velocity = math.max(5, players[turn].velocity - 1)
+elseif key == keys.a then
+players[turn].x = players[turn].x - 0.5
+elseif key == keys.d then
+players[turn].x = players[turn].x + 0.5
+elseif key == keys.space then
+fire(players[turn])
+elseif key == keys.q then
+term.clear()
+term.setCursorPos(1, 1)
+break
+end
+end
+end
+end
+gameLoop()]]
+files["arcade/games/blackjack.lua"] = [[package.loaded["arcade"] = nil
+local function setupPaths()
+local dir = fs.getDir(shell.getRunningProgram())
+local boot = fs.combine(fs.getDir(dir), "boot.lua")
+if fs.exists(boot) then dofile(boot) end
+end
+setupPaths()
+local arcade = require("games.arcade")
+local suits = {"S", "H", "C", "D"}
+local ranks = {
+{label = "A", value = 11},
+{label = "2", value = 2}, {label = "3", value = 3}, {label = "4", value = 4}, {label = "5", value = 5},
+{label = "6", value = 6}, {label = "7", value = 7}, {label = "8", value = 8}, {label = "9", value = 9},
+{label = "10", value = 10}, {label = "J", value = 10}, {label = "Q", value = 10}, {label = "K", value = 10}
+}
+local shoe = {}
+local shoeDecks = 4
+local playerHand, dealerHand = {}, {}
+local baseBet = 1
+local activeWager = 0
+local phase = "betting"
+local statusMessage = "Adjust bet then deal"
+local adapter = nil
+local revealTimer = 0
+local revealDelay = 0.35
+local dealQueue = {}
+local dealerHoleRevealed = false
+local playerHasActed = false
+local screenDirty = true
+local function shuffle(list)
+for i = #list, 2, -1 do
+local j = math.random(i)
+list[i], list[j] = list[j], list[i]
+end
+end
+local function buildShoe()
+shoe = {}
+for _ = 1, shoeDecks do
+for _, suit in ipairs(suits) do
+for _, rank in ipairs(ranks) do
+table.insert(shoe, {label = rank.label, value = rank.value, suit = suit})
+end
+end
+end
+shuffle(shoe)
+end
+local function drawCard()
+if #shoe == 0 then buildShoe() end
+return table.remove(shoe)
+end
+local function handTotal(hand)
+local total, aces = 0, 0
+for _, card in ipairs(hand) do
+total = total + card.value
+if card.label == "A" then aces = aces + 1 end
+end
+while total > 21 and aces > 0 do
+total = total - 10
+aces = aces - 1
+end
+return total
+end
+local function visibleDealerTotal(hand)
+local total, aces = 0, 0
+for _, card in ipairs(hand) do
+if not card.hidden then
+total = total + card.value
+if card.label == "A" then aces = aces + 1 end
+end
+end
+while total > 21 and aces > 0 do
+total = total - 10
+aces = aces - 1
+end
+return total
+end
+local function formatCard(card, hide)
+if hide then return "[??]" end
+return string.format("[%s%s]", card.label, card.suit)
+end
+local function cardLine(hand, reveal)
+local bits = {}
+for i, card in ipairs(hand) do
+local hide = card.hidden and not reveal
+bits[i] = formatCard(card, hide)
+end
+return table.concat(bits, " ")
+end
+local function setButtonsForPhase()
+if not adapter then return end
+if phase == "betting" then
+adapter:setButtons({"Bet -", "Deal", "Bet +"})
+elseif phase == "player" then
+local canDouble = (not playerHasActed) and adapter:getCredits() >= activeWager
+adapter:setButtons({"Hit", "Stand", "Double"}, {true, true, canDouble})
+elseif phase == "roundEnd" then
+adapter:setButtons({"Bet -", "New", "Bet +"})
+else
+adapter:setButtons({"", "...", ""}, {false, false, false})
+end
+end
+local function resetRoundState()
+playerHand, dealerHand = {}, {}
+activeWager = 0
+dealQueue = {}
+phase = "betting"
+statusMessage = "Adjust bet then deal"
+dealerHoleRevealed = false
+playerHasActed = false
+revealTimer = 0
+screenDirty = true
+setButtonsForPhase()
+end
+local function isBlackjack(hand)
+return #hand == 2 and handTotal(hand) == 21
+end
+local function setPhase(newPhase)
+phase = newPhase
+setButtonsForPhase()
+screenDirty = true
+end
+local function payout(amount)
+if amount > 0 and adapter then adapter:addCredits(amount) end
+end
+local function endRound(outcome)
+local totalPlayer = handTotal(playerHand)
+local totalDealer = handTotal(dealerHand)
+local label = outcome
+if outcome == "playerBlackjack" then
+local award = math.floor(activeWager * 2.5)
+payout(award)
+label = string.format("Blackjack! Paid %d", award)
+elseif outcome == "playerWin" or outcome == "dealerBust" then
+payout(activeWager * 2)
+label = string.format("You win! Paid %d", activeWager * 2)
+elseif outcome == "push" then
+payout(activeWager)
+label = string.format("Push. Returned %d", activeWager)
+else
+label = "Dealer wins"
+end
+statusMessage = string.format("%s (You %d / Dealer %d)", label, totalPlayer, totalDealer)
+setPhase("roundEnd")
+end
+local function evaluateAfterPlayerStands()
+local playerTotal = handTotal(playerHand)
+local dealerTotal = handTotal(dealerHand)
+if dealerTotal > 21 then
+endRound("dealerBust")
+elseif dealerTotal < playerTotal then
+endRound("playerWin")
+elseif dealerTotal > playerTotal then
+endRound("dealerWin")
+else
+endRound("push")
+end
+end
+local function revealDealerHole()
+for _, card in ipairs(dealerHand) do
+if card.hidden then card.hidden = false end
+end
+dealerHoleRevealed = true
+screenDirty = true
+end
+local function startDealerTurn()
+revealDealerHole()
+setPhase("dealer")
+statusMessage = "Dealer drawing..."
+revealTimer = 0
+end
+local function resolveForBlackjack()
+local playerBJ = isBlackjack(playerHand)
+local dealerBJ = isBlackjack(dealerHand)
+if playerBJ or dealerBJ then
+revealDealerHole()
+if playerBJ and dealerBJ then
+endRound("push")
+elseif playerBJ then
+endRound("playerBlackjack")
+else
+endRound("dealerWin")
+end
+return true
+end
+return false
+end
+local function queueInitialDeal()
+dealQueue = {"player", "dealer", "player", "dealer"}
+setPhase("dealing")
+statusMessage = "Dealing..."
+revealTimer = 0
+end
+local function dealTo(target)
+local card = drawCard()
+if target == "dealer" and #dealerHand == 1 then
+card.hidden = true
+end
+if target == "player" then
+table.insert(playerHand, card)
+else
+table.insert(dealerHand, card)
+end
+screenDirty = true
+end
+local function drawHud(a)
+a:clearPlayfield(colors.green, colors.white)
+a:centerPrint(1, "Blackjack", colors.white, colors.green)
+a:centerPrint(2, string.format("Credits: %d   Bet: %d   Shoe: %d", a:getCredits(), baseBet, #shoe))
+local wagerLine = activeWager > 0 and ("Wager in play: " .. activeWager) or "Waiting for next hand"
+a:centerPrint(3, wagerLine, colors.lightGray)
+a:centerPrint(5, "Dealer", colors.white)
+a:centerPrint(6, cardLine(dealerHand, dealerHoleRevealed or (phase ~= "dealing" and phase ~= "player")), colors.white)
+local dealerTotalText = "Total: "
+if dealerHoleRevealed or phase == "roundEnd" or phase == "dealer" then
+dealerTotalText = dealerTotalText .. tostring(handTotal(dealerHand))
+else
+dealerTotalText = dealerTotalText .. tostring(visibleDealerTotal(dealerHand)) .. " + ?"
+end
+a:centerPrint(7, dealerTotalText, colors.lightGray)
+a:centerPrint(9, "Player", colors.white)
+a:centerPrint(10, cardLine(playerHand, true), colors.white)
+a:centerPrint(11, "Total: " .. tostring(handTotal(playerHand)), colors.lightGray)
+a:centerPrint(13, statusMessage or " ", colors.yellow)
+a:centerPrint(15, "Keys: 1/2/3 or buttons. Q to quit.", colors.gray)
+end
+local function redraw()
+if adapter then
+drawHud(adapter)
+screenDirty = false
+end
+end
+local function startRound()
+if not adapter then return end
+if adapter:consumeCredits(baseBet) then
+resetRoundState()
+activeWager = baseBet
+queueInitialDeal()
+else
+statusMessage = "Not enough credits for that bet"
+setPhase("betting")
+end
+end
+local function playerHit()
+dealTo("player")
+local total = handTotal(playerHand)
+playerHasActed = true
+if total > 21 then
+statusMessage = "Bust!"
+revealDealerHole()
+endRound("dealerWin")
+else
+statusMessage = "Hit or stand"
+setPhase("player")
+end
+end
+local function playerStand()
+playerHasActed = true
+startDealerTurn()
+end
+local function playerDouble()
+if adapter:consumeCredits(activeWager) then
+activeWager = activeWager * 2
+dealTo("player")
+playerHasActed = true
+if handTotal(playerHand) > 21 then
+statusMessage = "Double bust"
+revealDealerHole()
+endRound("dealerWin")
+else
+startDealerTurn()
+end
+else
+statusMessage = "Need more credits to double"
+end
+end
+local function adjustBet(delta)
+baseBet = math.max(1, math.min(100, baseBet + delta))
+statusMessage = "Bet set to " .. baseBet
+screenDirty = true
+end
+local function advanceDealing(dt)
+if #dealQueue == 0 then return end
+revealTimer = revealTimer + dt
+if revealTimer >= revealDelay then
+revealTimer = 0
+local target = table.remove(dealQueue, 1)
+dealTo(target)
+if #dealQueue == 0 then
+if not resolveForBlackjack() then
+setPhase("player")
+statusMessage = "Hit or stand"
+end
+end
+end
+end
+local function advanceDealer(dt)
+revealTimer = revealTimer + dt
+if not dealerHoleRevealed and revealTimer >= revealDelay then
+revealTimer = 0
+revealDealerHole()
+screenDirty = true
+return
+end
+if revealTimer < revealDelay then return end
+local total = handTotal(dealerHand)
+if total < 17 then
+revealTimer = 0
+dealTo("dealer")
+else
+revealTimer = 0
+evaluateAfterPlayerStands()
+end
+end
+local function onButton(a, which)
+adapter = a
+if phase == "betting" then
+if which == "left" then
+adjustBet(-1)
+elseif which == "center" then
+startRound()
+elseif which == "right" then
+adjustBet(1)
+end
+elseif phase == "player" then
+if which == "left" then
+playerHit()
+elseif which == "center" then
+playerStand()
+elseif which == "right" then
+playerDouble()
+end
+elseif phase == "roundEnd" then
+if which == "left" then
+adjustBet(-1)
+elseif which == "center" then
+resetRoundState()
+elseif which == "right" then
+adjustBet(1)
+end
+end
+redraw()
+end
+local game = {
+name = "Blackjack",
+init = function(a)
+math.randomseed(os.time())
+adapter = a
+buildShoe()
+resetRoundState()
+setButtonsForPhase()
+redraw()
+end,
+draw = function(a)
+adapter = a
+redraw()
+end,
+onButton = function(a, which)
+onButton(a, which)
+end,
+onTick = function(a, dt)
+adapter = a
+if phase == "dealing" then
+advanceDealing(dt)
+elseif phase == "dealer" then
+advanceDealer(dt)
+end
+if screenDirty then redraw() end
+end,
+}
+arcade.start(game)]]
 files["arcade/games/cantstop.lua"] = [[package.loaded["arcade"] = nil
 package.loaded["log"] = nil
 local function setupPaths()
@@ -2851,8 +3389,14 @@ end
 local function downloadItem(item)
 if not http then return false, "HTTP API disabled" end
 if not item.url then return false, "No URL" end
-local response = http.get(item.url)
-if not response then return false, "Connection failed" end
+local response, err = http.get(item.url)
+if not response then return false, err or "Connection failed" end
+local status = response.getResponseCode and response.getResponseCode() or 200
+if status >= 400 then
+local body = response.readAll()
+response.close()
+return false, string.format("HTTP %d", status)
+end
 local content = response.readAll()
 response.close()
 local path = fs.combine("arcade", item.path)
@@ -14586,7 +15130,7 @@ files["lib/version.lua"] = [[local version = {}
 version.MAJOR = 2
 version.MINOR = 1
 version.PATCH = 1
-version.BUILD = 40
+version.BUILD = 41
 function version.toString()
 return string.format("v%d.%d.%d (build %d)",
 version.MAJOR, version.MINOR, version.PATCH, version.BUILD)
@@ -14603,10 +15147,13 @@ local files = {
 "arcade/arcadeos.lua",
 "arcade/data/programs.lua",
 "arcade/data/valhelsia_blocks.lua",
+"arcade/games/artillery.lua",
+"arcade/games/blackjack.lua",
 "arcade/games/cantstop.lua",
 "arcade/games/idlecraft.lua",
 "arcade/games/slots.lua",
 "arcade/games/themes.lua",
+"arcade/games/videopoker.lua",
 "arcade/license_store.lua",
 "arcade/store.lua",
 "arcade/ui/renderer.lua",
@@ -14851,7 +15398,7 @@ if fs.exists("arcade") then fs.delete("arcade") end
 if fs.exists("lib") then fs.delete("lib") end
 if fs.exists("factory") then fs.delete("factory") end
 
-print("Unpacking 70 files...")
+print("Unpacking 72 files...")
 for path, content in pairs(files) do
     local dir = fs.getDir(path)
     if dir ~= "" and not fs.exists(dir) then
