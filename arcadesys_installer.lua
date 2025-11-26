@@ -1,5 +1,5 @@
 -- Arcadesys Unified Installer
--- Auto-generated at 2025-11-26T07:27:48.037Z
+-- Auto-generated at 2025-11-26T15:01:42.916Z
 print("Starting Arcadesys install...")
 local files = {}
 
@@ -378,10 +378,12 @@ local currentMenu = "main" -- main, library, system
 local lastMenu = currentMenu
 local selectedButtonIndex = 1
 local mouseX, mouseY = 0, 0
+local libraryPage = 0
 while running do
 if currentMenu ~= lastMenu then
 selectedButtonIndex = 1
 lastMenu = currentMenu
+libraryPage = 0
 end
 UI.clear(state.theme.bg)
 local winW, winH = 26, 14
@@ -415,13 +417,28 @@ end
 if #list == 0 then
 table.insert(buttons, {text = "(No Apps)", y = startY, action = function() end})
 else
-for i, p in ipairs(list) do
-if i > 5 then break end
+local pageSize = 3
+local totalPages = math.ceil(#list / pageSize)
+if libraryPage >= totalPages then libraryPage = totalPages - 1 end
+if libraryPage < 0 then libraryPage = 0 end
+local startIdx = libraryPage * pageSize + 1
+local endIdx = math.min(startIdx + pageSize - 1, #list)
+for i = startIdx, endIdx do
+local p = list[i]
+local btnIdx = i - startIdx
 table.insert(buttons, {
 text = p.name,
-y = startY + (i-1)*2,
+y = startY + btnIdx*2,
 action = function() launchProgram(p) end
 })
+end
+if totalPages > 1 then
+if libraryPage > 0 then
+table.insert(buttons, {text = "^ Prev Page", y = startY + pageSize*2, action = function() libraryPage = libraryPage - 1; selectedButtonIndex = 1 end})
+end
+if libraryPage < totalPages - 1 then
+table.insert(buttons, {text = "v Next Page", y = startY + pageSize*2 + 2, action = function() libraryPage = libraryPage + 1; selectedButtonIndex = 1 end})
+end
 end
 end
 table.insert(buttons, {text = "Back", y = winY + winH - 2, action = function() currentMenu = "main" end})
@@ -2833,6 +2850,169 @@ function Renderer.mergeSkin(base, override)
 return deepMerge(base, override)
 end
 return Renderer]]
+files["factory_planner.lua"] = [[local filename = "factory_schema.lua"
+local diskPath = "disk/" .. filename
+local gridWidth = 20
+local gridHeight = 15
+local cellSize = 1 -- 1x1 char per cell? Or maybe 2x1 for square-ish look?
+local palette = {
+{ id = "minecraft:air", char = " ", color = colors.black, label = "Air" },
+{ id = "minecraft:stone", char = "#", color = colors.gray, label = "Stone" },
+{ id = "minecraft:dirt", char = "#", color = colors.brown, label = "Dirt" },
+{ id = "minecraft:planks", char = "=", color = colors.orange, label = "Planks" },
+{ id = "minecraft:cobblestone", char = "%", color = colors.lightGray, label = "Cobble" },
+{ id = "computercraft:turtle_advanced", char = "T", color = colors.yellow, label = "Turtle" },
+{ id = "minecraft:chest", char = "C", color = colors.orange, label = "Chest" },
+{ id = "minecraft:furnace", char = "F", color = colors.gray, label = "Furnace" },
+}
+local grid = {} -- 2D array [y][x] = paletteIndex
+local selectedPaletteIndex = 2 -- Default to Stone
+local clipboard = nil
+local isRunning = true
+local message = "Welcome to Factory Planner"
+local messageTimer = 0
+for y = 1, gridHeight do
+grid[y] = {}
+for x = 1, gridWidth do
+grid[y][x] = 1 -- Air
+end
+end
+local function clear()
+term.setBackgroundColor(colors.black)
+term.clear()
+term.setCursorPos(1, 1)
+end
+local function drawRect(x, y, w, h, color)
+term.setBackgroundColor(color)
+for i = 0, h - 1 do
+term.setCursorPos(x, y + i)
+term.write(string.rep(" ", w))
+end
+end
+local function drawText(x, y, text, fg, bg)
+if fg then term.setTextColor(fg) end
+if bg then term.setBackgroundColor(bg) end
+term.setCursorPos(x, y)
+term.write(text)
+end
+local function draw()
+clear()
+local startX = 2
+local startY = 2
+drawRect(startX - 1, startY - 1, gridWidth + 2, gridHeight + 2, colors.white)
+drawRect(startX, startY, gridWidth, gridHeight, colors.black)
+for y = 1, gridHeight do
+for x = 1, gridWidth do
+local itemIndex = grid[y][x]
+local item = palette[itemIndex]
+drawText(startX + x - 1, startY + y - 1, item.char, item.color, colors.black)
+end
+end
+local palX = startX + gridWidth + 3
+local palY = 2
+drawText(palX, palY - 1, "Palette:", colors.white, colors.black)
+for i, item in ipairs(palette) do
+local prefix = (i == selectedPaletteIndex) and "> " or "  "
+drawText(palX, palY + i - 1, prefix .. item.char .. " " .. item.label, item.color, colors.black)
+end
+local helpX = palX
+local helpY = palY + #palette + 2
+drawText(helpX, helpY, "Controls:", colors.white, colors.black)
+drawText(helpX, helpY + 1, "L-Click: Paint", colors.lightGray, colors.black)
+drawText(helpX, helpY + 2, "R-Click: Erase", colors.lightGray, colors.black)
+drawText(helpX, helpY + 3, "C: Copy Grid", colors.lightGray, colors.black)
+drawText(helpX, helpY + 4, "V: Paste Grid", colors.lightGray, colors.black)
+drawText(helpX, helpY + 5, "S: Save to Disk", colors.lightGray, colors.black)
+drawText(helpX, helpY + 6, "Q: Quit", colors.lightGray, colors.black)
+if messageTimer > 0 then
+drawText(2, gridHeight + 4, message, colors.yellow, colors.black)
+end
+end
+local function saveSchema()
+local data = {
+width = gridWidth,
+height = gridHeight,
+palette = palette,
+grid = grid
+}
+local path = filename
+if fs.exists("disk") then
+path = diskPath
+end
+local file = fs.open(path, "w")
+if file then
+file.write(textutils.serialize(data))
+file.close()
+message = "Saved to " .. path
+else
+message = "Error saving to " .. path
+end
+messageTimer = 50
+end
+local function copyGrid()
+clipboard = textutils.unserialize(textutils.serialize(grid)) -- Deep copy
+message = "Grid copied to clipboard"
+messageTimer = 30
+end
+local function pasteGrid()
+if clipboard then
+grid = textutils.unserialize(textutils.serialize(clipboard))
+message = "Grid pasted from clipboard"
+else
+message = "Clipboard empty"
+end
+messageTimer = 30
+end
+local function handleMouse(button, x, y)
+local startX = 2
+local startY = 2
+local gx = x - startX + 1
+local gy = y - startY + 1
+if gx >= 1 and gx <= gridWidth and gy >= 1 and gy <= gridHeight then
+if button == 1 then -- Left Click
+grid[gy][gx] = selectedPaletteIndex
+elseif button == 2 then -- Right Click
+grid[gy][gx] = 1 -- Air
+end
+else
+local palX = startX + gridWidth + 3
+local palY = 2
+if x >= palX and x <= palX + 15 then -- Approximate width
+local py = y - palY + 1
+if py >= 1 and py <= #palette then
+selectedPaletteIndex = py
+end
+end
+end
+end
+local function handleKey(key)
+if key == keys.q then
+isRunning = false
+elseif key == keys.s then
+saveSchema()
+elseif key == keys.c then
+copyGrid()
+elseif key == keys.v then
+pasteGrid()
+end
+end
+while isRunning do
+draw()
+local event, p1, p2, p3 = os.pullEvent()
+if event == "mouse_click" or event == "mouse_drag" then
+handleMouse(p1, p2, p3)
+elseif event == "key" then
+handleKey(p1)
+elseif event == "timer" then
+if p1 == messageTimerId then
+end
+end
+if messageTimer > 0 then
+messageTimer = messageTimer - 1
+end
+end
+clear()
+print("Exited Factory Planner")]]
 files["factory/factory.lua"] = [[local logger = require("lib_logger")
 local diagnostics = require("lib_diagnostics")
 local debug = debug
@@ -13945,7 +14125,7 @@ files["lib/version.lua"] = [[local version = {}
 version.MAJOR = 2
 version.MINOR = 1
 version.PATCH = 1
-version.BUILD = 29
+version.BUILD = 30
 function version.toString()
 return string.format("v%d.%d.%d (build %d)",
 version.MAJOR, version.MINOR, version.PATCH, version.BUILD)
@@ -14108,7 +14288,7 @@ if fs.exists("arcade") then fs.delete("arcade") end
 if fs.exists("lib") then fs.delete("lib") end
 if fs.exists("factory") then fs.delete("factory") end
 
-print("Unpacking 66 files...")
+print("Unpacking 67 files...")
 for path, content in pairs(files) do
     local dir = fs.getDir(path)
     if dir ~= "" and not fs.exists(dir) then
