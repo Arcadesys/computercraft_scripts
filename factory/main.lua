@@ -11,6 +11,7 @@ end
 local logger = require("lib_logger")
 local movement = require("lib_movement")
 local ui = require("lib_ui")
+local trash_config = require("ui.trash_config")
 
 local function interactiveSetup(ctx)
     local mode = "treefarm"
@@ -67,7 +68,7 @@ local function interactiveSetup(ctx)
                 term.write("  " .. height .. "  ")
             end
         elseif mode == "mine" then
-            startIdx = 6
+            startIdx = 7
             -- Length
             ui.label(4, 6, "Length: ")
             if selected == 2 then
@@ -106,6 +107,16 @@ local function interactiveSetup(ctx)
             else
                 if term.isColor() then term.setTextColor(colors.white) end
                 term.write("  " .. torchInterval .. "  ")
+            end
+
+            -- Trash Config
+            ui.label(4, 10, "Trash:")
+            if selected == 6 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write(" < EDIT > ")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("   EDIT   ")
             end
         end
         
@@ -153,17 +164,17 @@ local function interactiveSetup(ctx)
             end
         elseif key == keys.enter then
             if selected == startIdx then
-                ctx.config.mode = mode
-                if mode == "mine" then
-                    ctx.config.length = length
-                    ctx.config.branchInterval = branchInterval
-                    ctx.config.branchLength = branchLength
-                    ctx.config.torchInterval = torchInterval
-                else
-                    ctx.config.width = width
-                    ctx.config.height = height
-                end
-                return
+                return { 
+                    mode = mode, 
+                    width = width, 
+                    height = height, 
+                    length = length, 
+                    branchInterval = branchInterval, 
+                    branchLength = branchLength, 
+                    torchInterval = torchInterval 
+                }
+            elseif mode == "mine" and selected == 6 then
+                trash_config.run()
             end
         end
     end
@@ -240,7 +251,10 @@ local function main(args)
     
     -- If no args provided, run interactive setup
     if #args == 0 then
-        interactiveSetup(ctx)
+        local setupConfig = interactiveSetup(ctx)
+        for k, v in pairs(setupConfig) do
+            ctx.config[k] = v
+        end
     end
     
     if not ctx.config.schemaPath and ctx.config.mode ~= "mine" then

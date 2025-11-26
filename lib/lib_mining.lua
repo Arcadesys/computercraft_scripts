@@ -9,6 +9,9 @@ local mining = {}
 local inventory = require("lib_inventory")
 local movement = require("lib_movement")
 local logger = require("lib_logger")
+local json = require("lib_json")
+
+local CONFIG_FILE = "data/trash_config.json"
 
 -- Blocks that are considered "trash" and should be ignored during ore scanning.
 -- Also used to determine what blocks can be used to fill holes.
@@ -17,6 +20,39 @@ mining.TRASH_BLOCKS["minecraft:chest"] = true
 mining.TRASH_BLOCKS["minecraft:barrel"] = true
 mining.TRASH_BLOCKS["minecraft:trapped_chest"] = true
 mining.TRASH_BLOCKS["minecraft:torch"] = true
+
+function mining.loadConfig()
+    if fs.exists(CONFIG_FILE) then
+        local f = fs.open(CONFIG_FILE, "r")
+        if f then
+            local data = f.readAll()
+            f.close()
+            local config = json.decodeJson(data)
+            if config and config.trash then
+                for k, v in pairs(config.trash) do
+                    mining.TRASH_BLOCKS[k] = v
+                end
+            end
+        end
+    end
+end
+
+function mining.saveConfig()
+    local config = { trash = mining.TRASH_BLOCKS }
+    local data = json.encode(config)
+    -- Ensure data directory exists
+    if not fs.exists("data") then
+        fs.makeDir("data")
+    end
+    local f = fs.open(CONFIG_FILE, "w")
+    if f then
+        f.write(data)
+        f.close()
+    end
+end
+
+-- Load config on startup
+mining.loadConfig()
 
 -- Blocks that should NEVER be placed to fill holes (liquids, gravity blocks, etc)
 mining.FILL_BLACKLIST = {

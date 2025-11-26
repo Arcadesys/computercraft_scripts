@@ -1,5 +1,5 @@
 -- Arcadesys Unified Installer
--- Auto-generated at 2025-11-26T15:01:42.916Z
+-- Auto-generated at 2025-11-26T15:31:41.964Z
 print("Starting Arcadesys install...")
 local files = {}
 
@@ -378,12 +378,10 @@ local currentMenu = "main" -- main, library, system
 local lastMenu = currentMenu
 local selectedButtonIndex = 1
 local mouseX, mouseY = 0, 0
-local libraryPage = 0
 while running do
 if currentMenu ~= lastMenu then
 selectedButtonIndex = 1
 lastMenu = currentMenu
-libraryPage = 0
 end
 UI.clear(state.theme.bg)
 local winW, winH = 26, 14
@@ -417,28 +415,13 @@ end
 if #list == 0 then
 table.insert(buttons, {text = "(No Apps)", y = startY, action = function() end})
 else
-local pageSize = 3
-local totalPages = math.ceil(#list / pageSize)
-if libraryPage >= totalPages then libraryPage = totalPages - 1 end
-if libraryPage < 0 then libraryPage = 0 end
-local startIdx = libraryPage * pageSize + 1
-local endIdx = math.min(startIdx + pageSize - 1, #list)
-for i = startIdx, endIdx do
-local p = list[i]
-local btnIdx = i - startIdx
+for i, p in ipairs(list) do
+if i > 5 then break end
 table.insert(buttons, {
 text = p.name,
-y = startY + btnIdx*2,
+y = startY + (i-1)*2,
 action = function() launchProgram(p) end
 })
-end
-if totalPages > 1 then
-if libraryPage > 0 then
-table.insert(buttons, {text = "^ Prev Page", y = startY + pageSize*2, action = function() libraryPage = libraryPage - 1; selectedButtonIndex = 1 end})
-end
-if libraryPage < totalPages - 1 then
-table.insert(buttons, {text = "v Next Page", y = startY + pageSize*2 + 2, action = function() libraryPage = libraryPage + 1; selectedButtonIndex = 1 end})
-end
 end
 end
 table.insert(buttons, {text = "Back", y = winY + winH - 2, action = function() currentMenu = "main" end})
@@ -3173,6 +3156,7 @@ end
 local logger = require("lib_logger")
 local movement = require("lib_movement")
 local ui = require("lib_ui")
+local trash_config = require("ui.trash_config")
 local function interactiveSetup(ctx)
 local mode = "treefarm"
 local width = 9
@@ -3216,7 +3200,7 @@ if term.isColor() then term.setTextColor(colors.white) end
 term.write("  " .. height .. "  ")
 end
 elseif mode == "mine" then
-startIdx = 6
+startIdx = 7
 ui.label(4, 6, "Length: ")
 if selected == 2 then
 if term.isColor() then term.setTextColor(colors.yellow) end
@@ -3248,6 +3232,14 @@ term.write("< " .. torchInterval .. " >")
 else
 if term.isColor() then term.setTextColor(colors.white) end
 term.write("  " .. torchInterval .. "  ")
+end
+ui.label(4, 10, "Trash:")
+if selected == 6 then
+if term.isColor() then term.setTextColor(colors.yellow) end
+term.write(" < EDIT > ")
+else
+if term.isColor() then term.setTextColor(colors.white) end
+term.write("   EDIT   ")
 end
 end
 ui.button(8, 12, "START", selected == startIdx)
@@ -3292,17 +3284,17 @@ if selected == 5 then torchInterval = torchInterval + 1 end
 end
 elseif key == keys.enter then
 if selected == startIdx then
-ctx.config.mode = mode
-if mode == "mine" then
-ctx.config.length = length
-ctx.config.branchInterval = branchInterval
-ctx.config.branchLength = branchLength
-ctx.config.torchInterval = torchInterval
-else
-ctx.config.width = width
-ctx.config.height = height
-end
-return
+return {
+mode = mode,
+width = width,
+height = height,
+length = length,
+branchInterval = branchInterval,
+branchLength = branchLength,
+torchInterval = torchInterval
+}
+elseif mode == "mine" and selected == 6 then
+trash_config.run()
 end
 end
 end
@@ -3371,7 +3363,10 @@ end
 i = i + 1
 end
 if #args == 0 then
-interactiveSetup(ctx)
+local setupConfig = interactiveSetup(ctx)
+for k, v in pairs(setupConfig) do
+ctx.config[k] = v
+end
 end
 if not ctx.config.schemaPath and ctx.config.mode ~= "mine" then
 ctx.config.schemaPath = "schema.json"
@@ -4921,6 +4916,7 @@ local json = require("lib_json")
 local items = require("lib_items")
 local schema_utils = require("lib_schema")
 local parser = require("lib_parser")
+local version = require("version")
 local designer = {}
 local COLORS = {
 bg = colors.gray,
@@ -5354,6 +5350,11 @@ term.setCursorPos(1, h)
 term.setBackgroundColor(COLORS.bg)
 term.clearLine()
 term.write(state.status)
+local versionText = version.display()
+term.setCursorPos(w - #versionText + 1, h)
+term.setTextColor(colors.lightGray)
+term.write(versionText)
+term.setTextColor(COLORS.text)
 term.setCursorPos(1, h-1)
 term.write("S:Save L:Load F:Find R:Resize C:Clear Q:Quit PgUp/Dn:Layer")
 drawMenu()
@@ -9761,11 +9762,41 @@ files["lib/lib_mining.lua"] = [[local mining = {}
 local inventory = require("lib_inventory")
 local movement = require("lib_movement")
 local logger = require("lib_logger")
+local json = require("lib_json")
+local CONFIG_FILE = "data/trash_config.json"
 mining.TRASH_BLOCKS = inventory.DEFAULT_TRASH
 mining.TRASH_BLOCKS["minecraft:chest"] = true
 mining.TRASH_BLOCKS["minecraft:barrel"] = true
 mining.TRASH_BLOCKS["minecraft:trapped_chest"] = true
 mining.TRASH_BLOCKS["minecraft:torch"] = true
+function mining.loadConfig()
+if fs.exists(CONFIG_FILE) then
+local f = fs.open(CONFIG_FILE, "r")
+if f then
+local data = f.readAll()
+f.close()
+local config = json.decodeJson(data)
+if config and config.trash then
+for k, v in pairs(config.trash) do
+mining.TRASH_BLOCKS[k] = v
+end
+end
+end
+end
+end
+function mining.saveConfig()
+local config = { trash = mining.TRASH_BLOCKS }
+local data = json.encode(config)
+if not fs.exists("data") then
+fs.makeDir("data")
+end
+local f = fs.open(CONFIG_FILE, "w")
+if f then
+f.write(data)
+f.close()
+end
+end
+mining.loadConfig()
 mining.FILL_BLACKLIST = {
 ["minecraft:air"] = true,
 ["minecraft:water"] = true,
@@ -14125,7 +14156,7 @@ files["lib/version.lua"] = [[local version = {}
 version.MAJOR = 2
 version.MINOR = 1
 version.PATCH = 1
-version.BUILD = 30
+version.BUILD = 33
 function version.toString()
 return string.format("v%d.%d.%d (build %d)",
 version.MAJOR, version.MINOR, version.PATCH, version.BUILD)
@@ -14282,13 +14313,115 @@ else
 print("Arcade Shell not found at " .. arcade_shell)
 end
 end]]
+files["ui/trash_config.lua"] = [[local ui = require("lib_ui")
+local mining = require("lib_mining")
+local valhelsia_blocks = require("arcade.data.valhelsia_blocks")
+local trash_config = {}
+function trash_config.run()
+local searchTerm = ""
+local scroll = 0
+local selectedIndex = 1
+local filteredBlocks = {}
+local function updateFilter()
+filteredBlocks = {}
+for _, block in ipairs(valhelsia_blocks) do
+if searchTerm == "" or
+block.label:lower():find(searchTerm:lower()) or
+block.id:lower():find(searchTerm:lower()) then
+table.insert(filteredBlocks, block)
+end
+end
+end
+updateFilter()
+while true do
+ui.clear()
+ui.drawFrame(2, 2, 48, 16, "Trash Configuration")
+ui.label(4, 4, "Search: ")
+ui.inputText(12, 4, 30, searchTerm, true)
+ui.label(4, 6, "Name")
+ui.label(35, 6, "Trash?")
+ui.drawBox(4, 7, 44, 1, colors.gray, colors.white)
+local listHeight = 8
+local maxScroll = math.max(0, #filteredBlocks - listHeight)
+if scroll > maxScroll then scroll = maxScroll end
+for i = 1, listHeight do
+local idx = i + scroll
+if idx <= #filteredBlocks then
+local block = filteredBlocks[idx]
+local y = 7 + i
+local isTrash = mining.TRASH_BLOCKS[block.id]
+local trashLabel = isTrash and "[YES]" or "[NO ]"
+local trashColor = isTrash and colors.red or colors.green
+if i == selectedIndex then
+term.setBackgroundColor(colors.white)
+term.setTextColor(colors.black)
+else
+term.setBackgroundColor(colors.blue)
+term.setTextColor(colors.white)
+end
+term.setCursorPos(4, y)
+local label = block.label
+if #label > 30 then label = label:sub(1, 27) .. "..." end
+term.write(label .. string.rep(" ", 31 - #label))
+term.setCursorPos(35, y)
+if i == selectedIndex then
+term.setTextColor(colors.black)
+else
+term.setTextColor(trashColor)
+end
+term.write(trashLabel)
+end
+end
+ui.label(4, 17, "Arrows: Move/Scroll  Enter: Toggle  Esc: Save")
+local event, p1 = os.pullEvent()
+if event == "char" then
+searchTerm = searchTerm .. p1
+updateFilter()
+selectedIndex = 1
+scroll = 0
+elseif event == "key" then
+if p1 == keys.backspace then
+searchTerm = searchTerm:sub(1, -2)
+updateFilter()
+selectedIndex = 1
+scroll = 0
+elseif p1 == keys.up then
+if selectedIndex > 1 then
+selectedIndex = selectedIndex - 1
+elseif scroll > 0 then
+scroll = scroll - 1
+end
+elseif p1 == keys.down then
+if selectedIndex < math.min(listHeight, #filteredBlocks) then
+selectedIndex = selectedIndex + 1
+elseif scroll < maxScroll then
+scroll = scroll + 1
+end
+elseif p1 == keys.enter then
+local idx = selectedIndex + scroll
+if filteredBlocks[idx] then
+local block = filteredBlocks[idx]
+if mining.TRASH_BLOCKS[block.id] then
+mining.TRASH_BLOCKS[block.id] = nil -- Remove from trash
+else
+mining.TRASH_BLOCKS[block.id] = true -- Add to trash
+end
+end
+elseif p1 == keys.enter or p1 == keys.escape then
+mining.saveConfig()
+return
+end
+end
+end
+end
+return trash_config]]
 
 print("Cleaning old installation...")
 if fs.exists("arcade") then fs.delete("arcade") end
 if fs.exists("lib") then fs.delete("lib") end
 if fs.exists("factory") then fs.delete("factory") end
 
-print("Unpacking 67 files...")
+print("Unpacking 68 files...")
 for path, content in pairs(files) do
     local dir = fs.getDir(path)
     if dir ~= "" and not fs.exists(dir) then

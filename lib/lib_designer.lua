@@ -7,6 +7,7 @@ local json = require("lib_json")
 local items = require("lib_items")
 local schema_utils = require("lib_schema")
 local parser = require("lib_parser")
+local version = require("version")
 
 local designer = {}
 
@@ -543,6 +544,13 @@ local function drawUI()
     term.setBackgroundColor(COLORS.bg)
     term.clearLine()
     term.write(state.status)
+    
+    -- Display version in bottom right corner
+    local versionText = version.display()
+    term.setCursorPos(w - #versionText + 1, h)
+    term.setTextColor(colors.lightGray)
+    term.write(versionText)
+    term.setTextColor(COLORS.text)
     
     -- Instructions
     term.setCursorPos(1, h-1)
