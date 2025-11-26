@@ -1,5 +1,5 @@
 -- Arcadesys Unified Installer
--- Auto-generated at 2025-11-26T03:51:17.101Z
+-- Auto-generated at 2025-11-26T03:56:32.659Z
 print("Starting Arcadesys install...")
 local files = {}
 
@@ -4508,24 +4508,26 @@ local totalSpots = (limitX + 1) * (limitZ + 1)
 local fuelPerSpot = 16 -- Descent/Ascent + Travel
 local needed = (totalSpots * fuelPerSpot) + 200
 local current = turtle.getFuelLevel()
-if current ~= "unlimited" and type(current) == "number" and current < needed then
+if current == "unlimited" then current = math.huge end
+if type(current) ~= "number" then current = 0 end
+if current < needed then
 logger.log(ctx, "warn", string.format("Pre-run fuel check: Have %d, Need %d", current, needed))
 fuelLib.refuel(ctx, { target = needed, excludeItems = { "sapling", "log" } })
 current = turtle.getFuelLevel()
 if current == "unlimited" then current = math.huge end
 if type(current) ~= "number" then current = 0 end
 logger.log(ctx, "debug", string.format("Fuel check: current=%s needed=%s", tostring(current), tostring(needed)))
-if current < (needed or 0) and tf.chests and tf.chests.fuel then
+if current < needed and tf.chests and tf.chests.fuel then
 logger.log(ctx, "info", "Insufficient fuel. Visiting fuel depot.")
 movement.goTo(ctx, { x=0, y=0, z=0 })
 movement.face(ctx, tf.chests.fuel)
 local attempts = 0
-while current < (needed or 0) and attempts < 16 do
+while current < needed and attempts < 16 do
 if not turtle.suck() then
 logger.log(ctx, "warn", "Fuel chest empty or inventory full!")
 break
 end
-fuelLib.refuel(ctx, { target = (needed or 0), excludeItems = { "sapling", "log" } })
+fuelLib.refuel(ctx, { target = needed, excludeItems = { "sapling", "log" } })
 current = turtle.getFuelLevel()
 if current == "unlimited" then current = math.huge end
 if type(current) ~= "number" then current = 0 end
@@ -5088,6 +5090,7 @@ print("Detected Platform: " .. string.upper(platform))
 print("")
 print("This installer would normally download files from a server.")
 print("Since you are running from a local repo, the files are already here.")
+print("NOTE: This script DOES NOT update files. Use 'arcadesys_installer' for that.")
 print("")
 print("Verifying structure...")
 local missing = false
@@ -14054,7 +14057,7 @@ files["lib/version.lua"] = [[local version = {}
 version.MAJOR = 2
 version.MINOR = 1
 version.PATCH = 1
-version.BUILD = 10
+version.BUILD = 13
 function version.toString()
 return string.format("v%d.%d.%d (build %d)",
 version.MAJOR, version.MINOR, version.PATCH, version.BUILD)
