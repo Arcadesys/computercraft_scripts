@@ -1,5 +1,5 @@
 -- Arcadesys Unified Installer
--- Auto-generated at 2025-11-26T06:24:00.918Z
+-- Auto-generated at 2025-11-26T07:27:48.037Z
 print("Starting Arcadesys install...")
 local files = {}
 
@@ -802,6 +802,35 @@ saveCredits()
 log("info", "Arcade wrapper stopped")
 end
 return M]]
+files["arcade/boot.lua"] = [[local program = shell.getRunningProgram()
+local dir = fs.getDir(program)
+local function findRoot(startDir)
+local current = startDir
+while true do
+if fs.exists(fs.combine(current, "lib")) then
+return current
+end
+if current == "" or current == ".." then break end
+current = fs.getDir(current)
+end
+return nil
+end
+local root = findRoot(dir)
+if root then
+local function add(path)
+local part = fs.combine(root, path)
+local pattern = "/" .. fs.combine(part, "?.lua")
+if not string.find(package.path, pattern, 1, true) then
+package.path = package.path .. ";" .. pattern
+end
+end
+add("lib")
+add("arcade")
+add("arcade/ui")
+if not string.find(package.path, ";/?.lua", 1, true) then
+package.path = package.path .. ";/?.lua"
+end
+end]]
 files["arcade/data/programs.lua"] = [[local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/appify/arcade/"
 local PRICING = {
 blackjack = 0,
@@ -1013,32 +1042,15 @@ files["arcade/data/valhelsia_blocks.lua"] = [[return {
 files["arcade/games/cantstop.lua"] = [[package.loaded["arcade"] = nil
 package.loaded["log"] = nil
 local function setupPaths()
-local program = shell.getRunningProgram()
-local dir = fs.getDir(program)
-local gamesDir = fs.getDir(program)
-local arcadeDir = fs.getDir(gamesDir)
-local root = fs.getDir(arcadeDir)
-local function add(path)
-local part = fs.combine(root, path)
-local pattern = "/" .. fs.combine(part, "?.lua")
-if not string.find(package.path, pattern, 1, true) then
-package.path = package.path .. ";" .. pattern
-end
-end
-add("lib")
-add("arcade")
-add("arcade/ui")
-if not string.find(package.path, ";/?.lua", 1, true) then
-package.path = package.path .. ";/?.lua"
-end
+local dir = fs.getDir(shell.getRunningProgram())
+local boot = fs.combine(fs.getDir(dir), "boot.lua")
+if fs.exists(boot) then dofile(boot) end
 end
 setupPaths()
 local _arcade_ok, _arcade = pcall(require, "arcade")
 local Renderer = require("arcade.ui.renderer")
-local function toBlit(color)
-if colors.toBlit then return colors.toBlit(color) end
-return string.format("%x", math.floor(math.log(color, 2)))
-end
+local ui = require("lib_ui")
+local toBlit = ui.toBlit
 local SAVE_FILE = "cantstop.save" -- (Arcade wrapper note: this game predates arcade.lua and runs standalone.)
 local BOARD_HEIGHTS = {
 [2] = 3, [3] = 5, [4] = 7, [5] = 9, [6] = 11,
@@ -2000,31 +2012,14 @@ arcade.start(game, { tickSeconds = config.tickSeconds })]]
 files["arcade/games/slots.lua"] = [[package.loaded["arcade"] = nil
 package.loaded["log"] = nil
 local function setupPaths()
-local program = shell.getRunningProgram()
-local dir = fs.getDir(program)
-local gamesDir = fs.getDir(program)
-local arcadeDir = fs.getDir(gamesDir)
-local root = fs.getDir(arcadeDir)
-local function add(path)
-local part = fs.combine(root, path)
-local pattern = "/" .. fs.combine(part, "?.lua")
-if not string.find(package.path, pattern, 1, true) then
-package.path = package.path .. ";" .. pattern
-end
-end
-add("lib")
-add("arcade")
-if not string.find(package.path, ";/?.lua", 1, true) then
-package.path = package.path .. ";/?.lua"
-end
+local dir = fs.getDir(shell.getRunningProgram())
+local boot = fs.combine(fs.getDir(dir), "boot.lua")
+if fs.exists(boot) then dofile(boot) end
 end
 setupPaths()
 local arcade = require("arcade")
-local function toBlit(color)
-if colors.toBlit then return colors.toBlit(color) end
-local idx = math.floor(math.log(color, 2))
-return ("0123456789abcdef"):sub(idx + 1, idx + 1)
-end
+local ui = require("lib_ui")
+local toBlit = ui.toBlit
 local function solidTex(char, fg, bg, w, h)
 local f = string.rep(toBlit(fg), w)
 local b = string.rep(toBlit(bg), w)
@@ -3357,6 +3352,7 @@ logger.log(ctx, "warn", "Failed to place torch (all strategies failed).")
 return false
 end
 local function dumpTrash(ctx)
+inventory.condense(ctx)
 inventory.scan(ctx)
 local state = ctx.inventory
 if not state or not state.slots then return end
@@ -3497,17 +3493,16 @@ bm.state = "BRANCH_LEFT_RETURN"
 return "BRANCHMINE"
 end
 bm.branchDist = bm.branchDist + 1
-if isNewGround then
 mining.scanAndMineNeighbors(ctx)
-end
 return "BRANCHMINE"
 elseif bm.state == "BRANCH_LEFT_UP" then
-if movement.up(ctx) then
-else
+local moved = movement.up(ctx)
+if not moved then
 turtle.digUp()
-if movement.up(ctx) then
-mining.scanAndMineNeighbors(ctx)
+moved = movement.up(ctx)
 end
+if moved then
+mining.scanAndMineNeighbors(ctx)
 end
 bm.state = "BRANCH_LEFT_RETURN"
 return "BRANCHMINE"
@@ -3560,17 +3555,16 @@ bm.state = "BRANCH_RIGHT_RETURN"
 return "BRANCHMINE"
 end
 bm.branchDist = bm.branchDist + 1
-if isNewGround then
 mining.scanAndMineNeighbors(ctx)
-end
 return "BRANCHMINE"
 elseif bm.state == "BRANCH_RIGHT_UP" then
-if movement.up(ctx) then
-else
+local moved = movement.up(ctx)
+if not moved then
 turtle.digUp()
-if movement.up(ctx) then
-mining.scanAndMineNeighbors(ctx)
+moved = movement.up(ctx)
 end
+if moved then
+mining.scanAndMineNeighbors(ctx)
 end
 bm.state = "BRANCH_RIGHT_RETURN"
 return "BRANCHMINE"
@@ -3623,12 +3617,6 @@ local orientation = require("lib_orientation")
 local diagnostics = require("lib_diagnostics")
 local world = require("lib_world")
 local startup = require("lib_startup")
-local function localToWorld(localPos, facing)
-return world.localToWorld(localPos, facing)
-end
-local function addPos(p1, p2)
-return { x = p1.x + p2.x, y = p1.y + p2.y, z = p1.z + p2.z }
-end
 local function BUILD(ctx)
 local strategy, errMsg = diagnostics.requireStrategy(ctx)
 if not strategy then
@@ -3649,9 +3637,7 @@ ctx.missingMaterial = material
 ctx.resumeState = "BUILD"
 return "RESTOCK"
 end
-local origin = ctx.origin
-local worldOffset = localToWorld(step.approachLocal, origin.facing)
-local targetPos = addPos(origin, worldOffset)
+local targetPos = world.localToWorldRelative(ctx.origin, step.approachLocal)
 local ok, err = movement.goTo(ctx, targetPos)
 if not ok then
 logger.log(ctx, "warn", "Movement blocked: " .. tostring(err))
@@ -3731,111 +3717,6 @@ local torchCount = math.max(1, math.floor(length / torchInterval))
 reqs.materials[torchItem] = torchCount
 return reqs
 end
-local function getInventoryCounts(ctx)
-local counts = {}
-for i = 1, 16 do
-local item = turtle.getItemDetail(i)
-if item then
-counts[item.name] = (counts[item.name] or 0) + item.count
-end
-end
-return counts
-end
-local function retrieveFromNearby(ctx, missing)
-local sides = {"front", "top", "bottom", "left", "right", "back"}
-local pulledAny = false
-for _, side in ipairs(sides) do
-if peripheral.isPresent(side) then
-local types = { peripheral.getType(side) }
-local isInventory = false
-for _, t in ipairs(types) do
-if t == "inventory" then isInventory = true break end
-end
-if isInventory then
-local p = peripheral.wrap(side)
-if p and p.list then
-local list = p.list()
-local neededFromChest = {}
-for slot, item in pairs(list) do
-if item and missing[item.name] and missing[item.name] > 0 then
-neededFromChest[item.name] = true
-end
-end
-local hasNeeds = false
-for k,v in pairs(neededFromChest) do hasNeeds = true break end
-if hasNeeds then
-local pullSide = "forward"
-local turned = false
-if side == "top" then pullSide = "up"
-elseif side == "bottom" then pullSide = "down"
-elseif side == "front" then pullSide = "forward"
-elseif side == "left" then
-movement.turnLeft(ctx)
-turned = true
-pullSide = "forward"
-elseif side == "right" then
-movement.turnRight(ctx)
-turned = true
-pullSide = "forward"
-elseif side == "back" then
-movement.turnRight(ctx)
-movement.turnRight(ctx)
-turned = true
-pullSide = "forward"
-end
-for mat, _ in pairs(neededFromChest) do
-local amount = missing[mat]
-if amount > 0 then
-print(string.format("Attempting to pull %s from %s...", mat, side))
-local success, err = inventory.pullMaterial(ctx, mat, amount, { side = pullSide })
-if success then
-pulledAny = true
-missing[mat] = math.max(0, missing[mat] - amount)
-else
-logger.log(ctx, "warn", "Failed to pull " .. mat .. ": " .. tostring(err))
-end
-end
-end
-if turned then
-if side == "left" then movement.turnRight(ctx)
-elseif side == "right" then movement.turnLeft(ctx)
-elseif side == "back" then
-movement.turnRight(ctx)
-movement.turnRight(ctx)
-end
-end
-end
-end
-end
-end
-end
-return pulledAny
-end
-local function checkNearbyChests(ctx, missing)
-local found = {}
-local sides = {"front", "top", "bottom", "left", "right", "back"}
-for _, side in ipairs(sides) do
-if peripheral.isPresent(side) then
-local types = { peripheral.getType(side) }
-local isInventory = false
-for _, t in ipairs(types) do
-if t == "inventory" then isInventory = true break end
-end
-if isInventory then
-local p = peripheral.wrap(side)
-if p and p.list then
-local list = p.list()
-for slot, item in pairs(list) do
-if item and missing[item.name] then
-found[item.name] = (found[item.name] or 0) + item.count
-end
-end
-end
-end
-end
-end
-return found
-end
 local function CHECK_REQUIREMENTS(ctx)
 logger.log(ctx, "info", "Checking requirements...")
 local reqs
@@ -3865,7 +3746,7 @@ end
 reqs = calculateRequirements(ctx, strategy)
 end
 end
-local invCounts = getInventoryCounts(ctx)
+local invCounts = inventory.getCounts(ctx)
 local currentFuel = turtle.getFuelLevel()
 if currentFuel == "unlimited" then currentFuel = 999999 end
 if type(currentFuel) ~= "number" then currentFuel = 0 end
@@ -3906,8 +3787,8 @@ end
 end
 if hasMissing then
 print("Checking nearby chests for missing items...")
-if retrieveFromNearby(ctx, missing.materials) then
-invCounts = getInventoryCounts(ctx)
+if inventory.retrieveFromNearby(ctx, missing.materials) then
+invCounts = inventory.getCounts(ctx)
 hasMissing = false
 missing.materials = {}
 for mat, count in pairs(reqs.materials) do
@@ -3930,7 +3811,7 @@ end
 for mat, count in pairs(missing.materials) do
 print(string.format("- %s: %d", mat, count))
 end
-local nearby = checkNearbyChests(ctx, missing.materials)
+local nearby = inventory.checkNearby(ctx, missing.materials)
 local foundNearby = false
 for mat, count in pairs(nearby) do
 if not foundNearby then
@@ -4256,12 +4137,7 @@ local diagnostics = require("lib_diagnostics")
 local world = require("lib_world")
 local startup = require("lib_startup")
 local function localToWorld(ctx, localPos)
-local rotated = world.localToWorld(localPos, ctx.origin.facing)
-return {
-x = ctx.origin.x + rotated.x,
-y = ctx.origin.y + rotated.y,
-z = ctx.origin.z + rotated.z
-}
+return world.localToWorldRelative(ctx.origin, localPos)
 end
 local function selectTorch(ctx)
 local torchItem = ctx.config.torchItem or "minecraft:torch"
@@ -4797,6 +4673,69 @@ os.sleep(3)
 os.reboot()
 end
 install()]=]
+files["lib/lib_cards.lua"] = [[local cards = {}
+cards.SUITS = {"S", "H", "D", "C"}
+cards.RANKS = {"2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"}
+cards.SUIT_COLORS = {S=colors.gray, H=colors.red, D=colors.red, C=colors.gray}
+cards.SUIT_SYMBOLS = {S="\6", H="\3", D="\4", C="\5"}
+function cards.createDeck()
+local deck = {}
+for s=1,4 do
+for r=1,13 do
+table.insert(deck, {suit=cards.SUITS[s], rank=r, rankStr=cards.RANKS[r]})
+end
+end
+return deck
+end
+function cards.shuffle(deck)
+for i = #deck, 2, -1 do
+local j = math.random(i)
+deck[i], deck[j] = deck[j], deck[i]
+end
+end
+function cards.getCardString(card)
+return card.rankStr .. cards.SUIT_SYMBOLS[card.suit]
+end
+function cards.evaluateHand(hand)
+local sorted = {}
+for _, c in ipairs(hand) do table.insert(sorted, c) end
+table.sort(sorted, function(a,b) return a.rank < b.rank end)
+local flush = true
+local suit = sorted[1].suit
+for i=2,5 do
+if sorted[i].suit ~= suit then flush = false break end
+end
+local straight = true
+for i=1,4 do
+if sorted[i+1].rank ~= sorted[i].rank + 1 then
+straight = false
+break
+end
+end
+if not straight and sorted[5].rank == 13 and sorted[1].rank == 1 and sorted[2].rank == 2 and sorted[3].rank == 3 and sorted[4].rank == 4 then
+straight = true
+end
+local counts = {}
+for _, c in ipairs(sorted) do
+counts[c.rank] = (counts[c.rank] or 0) + 1
+end
+local countsArr = {}
+for r, c in pairs(counts) do table.insert(countsArr, {rank=r, count=c}) end
+table.sort(countsArr, function(a,b) return a.count > b.count end)
+if straight and flush and sorted[1].rank == 9 then return "ROYAL_FLUSH", 250 end
+if straight and flush then return "STRAIGHT_FLUSH", 50 end
+if countsArr[1].count == 4 then return "FOUR_OF_A_KIND", 25 end
+if countsArr[1].count == 3 and countsArr[2].count == 2 then return "FULL_HOUSE", 9 end
+if flush then return "FLUSH", 6 end
+if straight then return "STRAIGHT", 4 end
+if countsArr[1].count == 3 then return "THREE_OF_A_KIND", 3 end
+if countsArr[1].count == 2 and countsArr[2].count == 2 then return "TWO_PAIR", 2 end
+if countsArr[1].count == 2 and (countsArr[1].rank >= 10 or countsArr[1].rank == 13) then -- J, Q, K, A (10,11,12,13)
+return "JACKS_OR_BETTER", 1
+end
+return "NONE", 0
+end
+return cards]]
 files["lib/lib_designer.lua"] = [[local ui = require("lib_ui")
 local json = require("lib_json")
 local items = require("lib_items")
@@ -8673,6 +8612,156 @@ if not shown then
 io.print(" - <empty>")
 end
 end
+function inventory.condense(ctx)
+if not turtle then return false, "turtle API unavailable" end
+local state, err = ensureScanned(ctx)
+if not state then return false, err end
+local itemSlots = {}
+for slot, info in pairs(state.slots) do
+if info and info.name then
+if not itemSlots[info.name] then
+itemSlots[info.name] = {}
+end
+table.insert(itemSlots[info.name], slot)
+end
+end
+local changes = false
+for name, slots in pairs(itemSlots) do
+if #slots > 1 then
+table.sort(slots)
+local targetIdx = 1
+while targetIdx < #slots do
+local targetSlot = slots[targetIdx]
+local sourceIdx = targetIdx + 1
+while sourceIdx <= #slots do
+local sourceSlot = slots[sourceIdx]
+local targetInfo = state.slots[targetSlot]
+local sourceInfo = state.slots[sourceSlot]
+if targetInfo and sourceInfo and targetInfo.count < 64 then
+turtle.select(sourceSlot)
+if turtle.transferTo(targetSlot) then
+changes = true
+end
+end
+if turtle.getItemCount(targetSlot) >= 64 then
+break
+end
+sourceIdx = sourceIdx + 1
+end
+targetIdx = targetIdx + 1
+end
+end
+end
+if changes then
+inventory.scan(ctx)
+end
+return true
+end
+function inventory.getCounts(ctx)
+local counts = {}
+for i = 1, 16 do
+local item = turtle.getItemDetail(i)
+if item then
+counts[item.name] = (counts[item.name] or 0) + item.count
+end
+end
+return counts
+end
+function inventory.retrieveFromNearby(ctx, missing)
+local sides = {"front", "top", "bottom", "left", "right", "back"}
+local pulledAny = false
+for _, side in ipairs(sides) do
+if peripheral.isPresent(side) then
+local types = { peripheral.getType(side) }
+local isInventory = false
+for _, t in ipairs(types) do
+if t == "inventory" then isInventory = true break end
+end
+if isInventory then
+local p = peripheral.wrap(side)
+if p and p.list then
+local list = p.list()
+local neededFromChest = {}
+for slot, item in pairs(list) do
+if item and missing[item.name] and missing[item.name] > 0 then
+neededFromChest[item.name] = true
+end
+end
+local hasNeeds = false
+for k,v in pairs(neededFromChest) do hasNeeds = true break end
+if hasNeeds then
+local pullSide = "forward"
+local turned = false
+if side == "top" then pullSide = "up"
+elseif side == "bottom" then pullSide = "down"
+elseif side == "front" then pullSide = "forward"
+elseif side == "left" then
+movement.turnLeft(ctx)
+turned = true
+pullSide = "forward"
+elseif side == "right" then
+movement.turnRight(ctx)
+turned = true
+pullSide = "forward"
+elseif side == "back" then
+movement.turnRight(ctx)
+movement.turnRight(ctx)
+turned = true
+pullSide = "forward"
+end
+for mat, _ in pairs(neededFromChest) do
+local amount = missing[mat]
+if amount > 0 then
+print(string.format("Attempting to pull %s from %s...", mat, side))
+local success, err = inventory.pullMaterial(ctx, mat, amount, { side = pullSide })
+if success then
+pulledAny = true
+missing[mat] = math.max(0, missing[mat] - amount)
+else
+logger.log(ctx, "warn", "Failed to pull " .. mat .. ": " .. tostring(err))
+end
+end
+end
+if turned then
+if side == "left" then movement.turnRight(ctx)
+elseif side == "right" then movement.turnLeft(ctx)
+elseif side == "back" then
+movement.turnRight(ctx)
+movement.turnRight(ctx)
+end
+end
+end
+end
+end
+end
+end
+return pulledAny
+end
+function inventory.checkNearby(ctx, missing)
+local found = {}
+local sides = {"front", "top", "bottom", "left", "right", "back"}
+for _, side in ipairs(sides) do
+if peripheral.isPresent(side) then
+local types = { peripheral.getType(side) }
+local isInventory = false
+for _, t in ipairs(types) do
+if t == "inventory" then isInventory = true break end
+end
+if isInventory then
+local p = peripheral.wrap(side)
+if p and p.list then
+local list = p.list()
+for slot, item in pairs(list) do
+if item and missing[item.name] then
+found[item.name] = (found[item.name] or 0) + item.count
+end
+end
+end
+end
+end
+end
+return found
+end
 return inventory]]
 files["lib/lib_items.lua"] = [[local items = {
 { id = "minecraft:stone", name = "Stone", color = colors.lightGray, sym = "#" },
@@ -10008,6 +10097,9 @@ end
 end
 if canClear and moveFns.dig() then
 handled = true
+if moveFns.suck then
+moveFns.suck()
+end
 if softBlock then
 local foundName = inspectData and inspectData.name or "unknown"
 logger.log(ctx, "debug", string.format(
@@ -10075,6 +10167,7 @@ detect = turtle and turtle.detect or nil,
 dig = turtle and turtle.dig or nil,
 attack = turtle and turtle.attack or nil,
 inspect = turtle and turtle.inspect or nil,
+suck = turtle and turtle.suck or nil,
 }
 if not moveFns.move then
 return false, "turtle API unavailable"
@@ -10088,6 +10181,7 @@ detect = turtle and turtle.detectUp or nil,
 dig = turtle and turtle.digUp or nil,
 attack = turtle and turtle.attackUp or nil,
 inspect = turtle and turtle.inspectUp or nil,
+suck = turtle and turtle.suckUp or nil,
 }
 if not moveFns.move then
 return false, "turtle API unavailable"
@@ -10101,6 +10195,7 @@ detect = turtle and turtle.detectDown or nil,
 dig = turtle and turtle.digDown or nil,
 attack = turtle and turtle.attackDown or nil,
 inspect = turtle and turtle.inspectDown or nil,
+suck = turtle and turtle.suckDown or nil,
 }
 if not moveFns.move then
 return false, "turtle API unavailable"
@@ -12904,6 +12999,11 @@ return ui.runForm(self)
 end
 return self
 end
+function ui.toBlit(color)
+if colors.toBlit then return colors.toBlit(color) end
+local exponent = math.log(color) / math.log(2)
+return string.sub("0123456789abcdef", exponent + 1, exponent + 1)
+end
 return ui]=]
 files["lib/lib_wizard.lua"] = [[local ui = require("lib_ui")
 local movement = require("lib_movement")
@@ -13283,6 +13383,14 @@ return {
 x = rotated.x,
 y = localOffset and localOffset.y or 0,
 z = rotated.z,
+}
+end
+function world.localToWorldRelative(origin, localPos)
+local rotated = world.localToWorld(localPos, origin.facing)
+return {
+x = origin.x + rotated.x,
+y = origin.y + rotated.y,
+z = origin.z + rotated.z
 }
 end
 function world.copyPosition(pos)
@@ -13837,7 +13945,7 @@ files["lib/version.lua"] = [[local version = {}
 version.MAJOR = 2
 version.MINOR = 1
 version.PATCH = 1
-version.BUILD = 28
+version.BUILD = 29
 function version.toString()
 return string.format("v%d.%d.%d (build %d)",
 version.MAJOR, version.MINOR, version.PATCH, version.BUILD)
@@ -14000,7 +14108,7 @@ if fs.exists("arcade") then fs.delete("arcade") end
 if fs.exists("lib") then fs.delete("lib") end
 if fs.exists("factory") then fs.delete("factory") end
 
-print("Unpacking 64 files...")
+print("Unpacking 66 files...")
 for path, content in pairs(files) do
     local dir = fs.getDir(path)
     if dir ~= "" and not fs.exists(dir) then
