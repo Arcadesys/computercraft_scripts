@@ -19,12 +19,16 @@ function startup.runFuelCheck(ctx, chests, threshold, target)
     
     local current = turtle.getFuelLevel()
     if current == "unlimited" then return true end
+    if type(current) ~= "number" then current = 0 end
     
     if current < threshold then
         logger.log(ctx, "warn", "Fuel low (" .. current .. "). Attempting refuel...")
         fuelLib.refuel(ctx, { target = target })
         
         current = turtle.getFuelLevel()
+        if current == "unlimited" then current = math.huge end
+        if type(current) ~= "number" then current = 0 end
+
         if current < threshold then
             if chests and chests.fuel then
                 logger.log(ctx, "info", "Going to fuel chest...")
@@ -36,6 +40,9 @@ function startup.runFuelCheck(ctx, chests, threshold, target)
         end
         
         current = turtle.getFuelLevel()
+        if current == "unlimited" then current = math.huge end
+        if type(current) ~= "number" then current = 0 end
+
         if current < threshold then
              logger.log(ctx, "error", "Critical fuel shortage. Waiting.")
              sleep(10)

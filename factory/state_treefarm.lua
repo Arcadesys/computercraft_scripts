@@ -27,6 +27,7 @@ local function selectSapling(ctx)
 end
 
 local function TREEFARM(ctx)
+    logger.log(ctx, "info", "TREEFARM State (Fix Applied)")
     local tf = ctx.treefarm
     if not tf then return "INITIALIZE" end
 
@@ -60,19 +61,21 @@ local function TREEFARM(ctx)
                 if current == "unlimited" then current = math.huge end
                 if type(current) ~= "number" then current = 0 end
                 
+                logger.log(ctx, "debug", string.format("Fuel check: current=%s needed=%s", tostring(current), tostring(needed)))
+
                 -- 2. Try fuel chest
-                if current < needed and tf.chests and tf.chests.fuel then
+                if current < (needed or 0) and tf.chests and tf.chests.fuel then
                     logger.log(ctx, "info", "Insufficient fuel. Visiting fuel depot.")
                     movement.goTo(ctx, { x=0, y=0, z=0 })
                     movement.face(ctx, tf.chests.fuel)
                     
                     local attempts = 0
-                    while current < needed and attempts < 16 do
+                    while current < (needed or 0) and attempts < 16 do
                         if not turtle.suck() then
                             logger.log(ctx, "warn", "Fuel chest empty or inventory full!")
                             break
                         end
-                        fuelLib.refuel(ctx, { target = needed, excludeItems = { "sapling", "log" } })
+                        fuelLib.refuel(ctx, { target = (needed or 0), excludeItems = { "sapling", "log" } })
                         current = turtle.getFuelLevel()
                         if current == "unlimited" then current = math.huge end
                         if type(current) ~= "number" then current = 0 end

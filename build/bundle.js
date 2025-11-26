@@ -134,7 +134,7 @@ function buildInstaller() {
     files.forEach(file => {
         let content = fs.readFileSync(file.absPath, 'utf8');
         content = minifyLua(content);
-        console.log(`   • ${file.relPath}`);
+        console.log(`   • ${file.relPath} (${content.length} bytes)`);
         lua += `files["${file.relPath}"] = ${toLuaString(content)}\n`;
     });
 

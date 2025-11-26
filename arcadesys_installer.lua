@@ -1,5 +1,5 @@
 -- Arcadesys Unified Installer
--- Auto-generated at 2025-11-26T01:50:03.060Z
+-- Auto-generated at 2025-11-26T02:30:57.438Z
 print("Starting Arcadesys install...")
 local files = {}
 
@@ -3769,6 +3769,7 @@ end
 local invCounts = getInventoryCounts(ctx)
 local currentFuel = turtle.getFuelLevel()
 if currentFuel == "unlimited" then currentFuel = 999999 end
+if type(currentFuel) ~= "number" then currentFuel = 0 end
 local missing = {
 fuel = 0,
 materials = {}
@@ -3780,6 +3781,7 @@ logger.log(ctx, "info", "Attempting to refuel to meet requirements...")
 fuel.refuel(ctx, { target = reqs.fuel, excludeItems = { "minecraft:torch" } })
 currentFuel = turtle.getFuelLevel()
 if currentFuel == "unlimited" then currentFuel = 999999 end
+if type(currentFuel) ~= "number" then currentFuel = 0 end
 end
 if currentFuel < reqs.fuel then
 missing.fuel = reqs.fuel - currentFuel
@@ -4421,7 +4423,10 @@ end
 local limit = turtle.getFuelLimit()
 local target = (type(limit) == "number" and limit < 20000) and limit or 20000
 fuelLib.refuel(ctx, { target = target, excludeItems = { "minecraft:torch" } })
-if turtle.getFuelLevel() > 1000 then
+local level = turtle.getFuelLevel()
+if level == "unlimited" then level = math.huge end
+if type(level) ~= "number" then level = 0 end
+if level > 1000 then
 local resume = ctx.resumeState or "BUILD"
 ctx.resumeState = nil
 return resume
@@ -4506,18 +4511,23 @@ if current ~= "unlimited" and type(current) == "number" and current < needed the
 logger.log(ctx, "warn", string.format("Pre-run fuel check: Have %d, Need %d", current, needed))
 fuelLib.refuel(ctx, { target = needed, excludeItems = { "sapling", "log" } })
 current = turtle.getFuelLevel()
-if current < needed and tf.chests and tf.chests.fuel then
+if current == "unlimited" then current = math.huge end
+if type(current) ~= "number" then current = 0 end
+logger.log(ctx, "debug", string.format("Fuel check: current=%s needed=%s", tostring(current), tostring(needed)))
+if current < (needed or 0) and tf.chests and tf.chests.fuel then
 logger.log(ctx, "info", "Insufficient fuel. Visiting fuel depot.")
 movement.goTo(ctx, { x=0, y=0, z=0 })
 movement.face(ctx, tf.chests.fuel)
 local attempts = 0
-while current < needed and attempts < 16 do
+while current < (needed or 0) and attempts < 16 do
 if not turtle.suck() then
 logger.log(ctx, "warn", "Fuel chest empty or inventory full!")
 break
 end
-fuelLib.refuel(ctx, { target = needed, excludeItems = { "sapling", "log" } })
+fuelLib.refuel(ctx, { target = (needed or 0), excludeItems = { "sapling", "log" } })
 current = turtle.getFuelLevel()
+if current == "unlimited" then current = math.huge end
+if type(current) ~= "number" then current = 0 end
 attempts = attempts + 1
 end
 end
@@ -12173,10 +12183,13 @@ threshold = threshold or 200
 target = target or 1000
 local current = turtle.getFuelLevel()
 if current == "unlimited" then return true end
+if type(current) ~= "number" then current = 0 end
 if current < threshold then
 logger.log(ctx, "warn", "Fuel low (" .. current .. "). Attempting refuel...")
 fuelLib.refuel(ctx, { target = target })
 current = turtle.getFuelLevel()
+if current == "unlimited" then current = math.huge end
+if type(current) ~= "number" then current = 0 end
 if current < threshold then
 if chests and chests.fuel then
 logger.log(ctx, "info", "Going to fuel chest...")
@@ -12187,6 +12200,8 @@ fuelLib.refuel(ctx, { target = target })
 end
 end
 current = turtle.getFuelLevel()
+if current == "unlimited" then current = math.huge end
+if type(current) ~= "number" then current = 0 end
 if current < threshold then
 logger.log(ctx, "error", "Critical fuel shortage. Waiting.")
 sleep(10)
@@ -14038,7 +14053,7 @@ files["lib/version.lua"] = [[local version = {}
 version.MAJOR = 2
 version.MINOR = 1
 version.PATCH = 1
-version.BUILD = 6
+version.BUILD = 9
 function version.toString()
 return string.format("v%d.%d.%d (build %d)",
 version.MAJOR, version.MINOR, version.PATCH, version.BUILD)
