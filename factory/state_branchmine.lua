@@ -288,6 +288,16 @@ local function BRANCHMINE(ctx)
             return "BRANCHMINE" -- Retry
         end
         
+        -- Ensure 2-high spine (and handle falling blocks like gravel)
+        while turtle.detectUp() do
+            if turtle.digUp() then
+                turtle.suckUp()
+            else
+                break
+            end
+            sleep(0.5)
+        end
+        
         bm.currentDist = bm.currentDist + 1
         if isNewGround then
             mining.scanAndMineNeighbors(ctx)

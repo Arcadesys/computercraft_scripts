@@ -40,9 +40,13 @@ local function TREEFARM(ctx)
     -- 2. State Machine
     if tf.state == "SCAN" then
         -- Interpret width/height as number of trees
-        local treeW, treeH = tf.width, tf.height
+        local treeW = tonumber(tf.width) or 8
+        local treeH = tonumber(tf.height) or 8
         local limitX = (treeW * 2) - 1
         local limitZ = (treeH * 2) - 1
+        
+        if type(tf.nextX) ~= "number" then tf.nextX = 0 end
+        if type(tf.nextZ) ~= "number" then tf.nextZ = 0 end
         
         if tf.nextX == 0 and tf.nextZ == 0 then
             logger.log(ctx, "info", "Starting patrol run. Grid: " .. treeW .. "x" .. treeH .. " trees.")
@@ -53,26 +57,26 @@ local function TREEFARM(ctx)
             local needed = (totalSpots * fuelPerSpot) + 200
             if type(needed) ~= "number" then needed = 1000 end
             
-            local current = turtle.getFuelLevel()
-            if current == "unlimited" then current = math.huge end
-            if type(current) ~= "number" then current = 0 end
+            local function getFuel()
+                local l = turtle.getFuelLevel()
+                if l == "unlimited" then return math.huge end
+                if type(l) ~= "number" then return 0 end
+                return l
+            end
             
-            -- Defensive check to prevent "compare number with nil"
-            if type(needed) ~= "number" then needed = 1000 end
+            local current = getFuel()
 
-            if type(current) == "number" and type(needed) == "number" and current < needed then
+            if current < needed then
                 logger.log(ctx, "warn", string.format("Pre-run fuel check: Have %s, Need %s", tostring(current), tostring(needed)))
                 
                 -- 1. Try inventory
                 fuelLib.refuel(ctx, { target = needed, excludeItems = { "sapling", "log" } })
-                current = turtle.getFuelLevel()
-                if current == "unlimited" then current = math.huge end
-                if type(current) ~= "number" then current = 0 end
+                current = getFuel()
                 
                 logger.log(ctx, "debug", string.format("Fuel check: current=%s needed=%s", tostring(current), tostring(needed)))
 
                 -- 2. Try fuel chest
-                if type(current) == "number" and type(needed) == "number" and current < needed and tf.chests and tf.chests.fuel then
+                if current < needed and tf.chests and tf.chests.fuel then
                     logger.log(ctx, "info", "Insufficient fuel. Visiting fuel depot.")
                     movement.goTo(ctx, { x=0, y=0, z=0 })
                     movement.face(ctx, tf.chests.fuel)
@@ -84,9 +88,7 @@ local function TREEFARM(ctx)
                             break
                         end
                         fuelLib.refuel(ctx, { target = needed, excludeItems = { "sapling", "log" } })
-                        current = turtle.getFuelLevel()
-                        if current == "unlimited" then current = math.huge end
-                        if type(current) ~= "number" then current = 0 end
+                        current = getFuel()
                         attempts = attempts + 1
                     end
                 end
