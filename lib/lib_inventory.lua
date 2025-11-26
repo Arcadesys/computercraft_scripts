@@ -1534,4 +1534,68 @@ function inventory.printManifest(io, manifest)
     end
 end
 
+--- Condense inventory by merging stacks of the same item
+function inventory.condense(ctx)
+    if not turtle then return false, "turtle API unavailable" end
+    
+    local state, err = ensureScanned(ctx)
+    if not state then return false, err end
+
+    -- Map item names to list of slots containing them
+    local itemSlots = {}
+    for slot, info in pairs(state.slots) do
+        if info and info.name then
+            if not itemSlots[info.name] then
+                itemSlots[info.name] = {}
+            end
+            table.insert(itemSlots[info.name], slot)
+        end
+    end
+
+    local changes = false
+    for name, slots in pairs(itemSlots) do
+        if #slots > 1 then
+            -- Sort slots to merge into the first available ones
+            table.sort(slots)
+            
+            local targetIdx = 1
+            while targetIdx < #slots do
+                local targetSlot = slots[targetIdx]
+                local sourceIdx = targetIdx + 1
+                
+                while sourceIdx <= #slots do
+                    local sourceSlot = slots[sourceIdx]
+                    
+                    -- Check if target is full (assuming 64 stack size for simplicity, 
+                    -- though some items are 16 or 1. transferTo handles limits)
+                    local targetInfo = state.slots[targetSlot]
+                    local sourceInfo = state.slots[sourceSlot]
+                    
+                    if targetInfo and sourceInfo and targetInfo.count < 64 then
+                        turtle.select(sourceSlot)
+                        if turtle.transferTo(targetSlot) then
+                            changes = true
+                            -- Update local state tracking (approximate)
+                            -- Real update happens on next scan
+                        end
+                    end
+                    
+                    -- If target is now full (or we can't verify), move to next target
+                    if turtle.getItemCount(targetSlot) >= 64 then
+                        break
+                    end
+                    
+                    sourceIdx = sourceIdx + 1
+                end
+                targetIdx = targetIdx + 1
+            end
+        end
+    end
+
+    if changes then
+        inventory.scan(ctx)
+    end
+    return true
+end
+
 return inventory

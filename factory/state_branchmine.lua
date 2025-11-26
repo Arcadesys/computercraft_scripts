@@ -141,6 +141,7 @@ local function placeTorch(ctx)
 end
 
 local function dumpTrash(ctx)
+    inventory.condense(ctx)
     inventory.scan(ctx)
     local state = ctx.inventory
     if not state or not state.slots then return end
@@ -341,23 +342,22 @@ local function BRANCHMINE(ctx)
         end
         
         bm.branchDist = bm.branchDist + 1
-        if isNewGround then
-            mining.scanAndMineNeighbors(ctx)
-        end
+        -- Always scan, even if we moved into air (might be a cave with ores on walls/ceiling)
+        mining.scanAndMineNeighbors(ctx)
         return "BRANCHMINE"
 
     elseif bm.state == "BRANCH_LEFT_UP" then
         -- Go UP 1 to mine upper layer
-        if movement.up(ctx) then
-            -- Air above, skip mining unless we want to be thorough?
-            -- User requested: "if the robot detects air it should assume that it does not have to dig."
-            -- So we skip scanning here.
-        else
+        local moved = movement.up(ctx)
+        if not moved then
             turtle.digUp()
-            if movement.up(ctx) then
-                mining.scanAndMineNeighbors(ctx)
-            end
+            moved = movement.up(ctx)
         end
+
+        if moved then
+            mining.scanAndMineNeighbors(ctx)
+        end
+        
         bm.state = "BRANCH_LEFT_RETURN"
         return "BRANCHMINE"
 
@@ -423,20 +423,21 @@ local function BRANCHMINE(ctx)
         end
         
         bm.branchDist = bm.branchDist + 1
-        if isNewGround then
-            mining.scanAndMineNeighbors(ctx)
-        end
+        -- Always scan
+        mining.scanAndMineNeighbors(ctx)
         return "BRANCHMINE"
 
     elseif bm.state == "BRANCH_RIGHT_UP" then
-        if movement.up(ctx) then
-            -- Air above, skip mining
-        else
+        local moved = movement.up(ctx)
+        if not moved then
             turtle.digUp()
-            if movement.up(ctx) then
-                mining.scanAndMineNeighbors(ctx)
-            end
+            moved = movement.up(ctx)
         end
+
+        if moved then
+            mining.scanAndMineNeighbors(ctx)
+        end
+        
         bm.state = "BRANCH_RIGHT_RETURN"
         return "BRANCHMINE"
 

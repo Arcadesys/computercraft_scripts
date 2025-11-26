@@ -512,6 +512,9 @@ local function moveWithRetries(ctx, opts, moveFns, delta)
 
             if canClear and moveFns.dig() then
                 handled = true
+                if moveFns.suck then
+                    moveFns.suck()
+                end
                 if softBlock then
                     local foundName = inspectData and inspectData.name or "unknown"
                     logger.log(ctx, "debug", string.format(
@@ -583,6 +586,7 @@ function movement.forward(ctx, opts)
         dig = turtle and turtle.dig or nil,
         attack = turtle and turtle.attack or nil,
         inspect = turtle and turtle.inspect or nil,
+        suck = turtle and turtle.suck or nil,
     }
 
     if not moveFns.move then
@@ -599,6 +603,7 @@ function movement.up(ctx, opts)
         dig = turtle and turtle.digUp or nil,
         attack = turtle and turtle.attackUp or nil,
         inspect = turtle and turtle.inspectUp or nil,
+        suck = turtle and turtle.suckUp or nil,
     }
     if not moveFns.move then
         return false, "turtle API unavailable"
@@ -613,6 +618,7 @@ function movement.down(ctx, opts)
         dig = turtle and turtle.digDown or nil,
         attack = turtle and turtle.attackDown or nil,
         inspect = turtle and turtle.inspectDown or nil,
+        suck = turtle and turtle.suckDown or nil,
     }
     if not moveFns.move then
         return false, "turtle API unavailable"
