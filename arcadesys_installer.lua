@@ -1,5 +1,5 @@
 -- Arcadesys Unified Installer
--- Auto-generated at 2025-11-26T02:30:57.438Z
+-- Auto-generated at 2025-11-26T03:51:17.101Z
 print("Starting Arcadesys install...")
 local files = {}
 
@@ -4492,6 +4492,7 @@ end
 return false
 end
 local function TREEFARM(ctx)
+logger.log(ctx, "info", "TREEFARM State (Fix Applied)")
 local tf = ctx.treefarm
 if not tf then return "INITIALIZE" end
 if not startup.runFuelCheck(ctx, tf.chests) then
@@ -14053,7 +14054,7 @@ files["lib/version.lua"] = [[local version = {}
 version.MAJOR = 2
 version.MINOR = 1
 version.PATCH = 1
-version.BUILD = 9
+version.BUILD = 10
 function version.toString()
 return string.format("v%d.%d.%d (build %d)",
 version.MAJOR, version.MINOR, version.PATCH, version.BUILD)
