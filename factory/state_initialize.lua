@@ -146,7 +146,8 @@ local function INITIALIZE(ctx)
             spineY = 0, -- Assuming we start at 0 relative to start
             chests = ctx.chests
         }
-        return "BRANCHMINE"
+        ctx.nextState = "BRANCHMINE"
+        return "CHECK_REQUIREMENTS"
     end
 
     if ctx.config.mode == "tunnel" then

@@ -1,6 +1,6 @@
 --[[
-TurtleOS v2.0
-Graphical launcher for the factory agent.
+TurtleOS - Graphical launcher for the factory agent.
+Version managed by lib/version.lua
 --]]
 
 -- Ensure package path includes lib and arcade
@@ -8,6 +8,7 @@ if not string.find(package.path, "/lib/?.lua") then
     package.path = package.path .. ";/?.lua;/lib/?.lua;/arcade/?.lua;/factory/?.lua"
 end
 
+local version = require("version")
 local ui = require("lib_ui")
 local designer = require("lib_designer")
 local games = require("lib_games")
@@ -488,7 +489,7 @@ end
 
 local function showMainMenu()
     while true do
-        local res = ui.runMenu("TurtleOS v2.1", {
+        local res = ui.runMenu(version.display(), {
             { text = "MINE >", callback = showMineMenu },
             { text = "FARM >", callback = showFarmMenu },
             { text = "BUILD >", callback = showBuildMenu },

@@ -8,6 +8,14 @@ custom sinks. Public methods work with either colon or dot syntax.
 
 local logger = {}
 
+local diagnostics
+local diagnosticsOk, diagnosticsModule = pcall(require, "lib_diagnostics")
+if diagnosticsOk then
+    diagnostics = diagnosticsModule
+end
+
+local DEFAULT_CRASH_FILE = "crashfile"
+
 local DEFAULT_LEVEL = "info"
 local DEFAULT_CAPTURE_LIMIT = 200
 
@@ -32,6 +40,84 @@ local LEVEL_ALIAS = {
     verbose = "debug",
     fatal = "error",
 }
+
+local function isoTimestamp()
+    if os and type(os.date) == "function" then
+        return os.date("!%Y-%m-%dT%H:%M:%SZ")
+    end
+    if os and type(os.clock) == "function" then
+        return string.format("%.03f", os.clock())
+    end
+    return nil
+end
+
+local function getCrashFilePath(ctx)
+    if ctx then
+        local config = ctx.config
+        if config and type(config.crashFile) == "string" and config.crashFile ~= "" then
+            return config.crashFile
+        end
+        if type(ctx.crashFilePath) == "string" and ctx.crashFilePath ~= "" then
+            return ctx.crashFilePath
+        end
+    end
+    return DEFAULT_CRASH_FILE
+end
+
+local function buildCrashPayload(ctx, message, metadata)
+    local payload = {
+        message = message or "Unknown fatal error",
+        metadata = metadata,
+        timestamp = isoTimestamp(),
+    }
+    if diagnostics and ctx then
+        local ok, snapshot = pcall(diagnostics.snapshot, ctx)
+        if ok then
+            payload.context = snapshot
+        end
+    end
+    if ctx and ctx.logger and type(ctx.logger.getLastEntry) == "function" then
+        local ok, entry = pcall(ctx.logger.getLastEntry, ctx.logger)
+        if ok then
+            payload.lastLogEntry = entry
+        end
+    end
+    return payload
+end
+
+local function serializeCrashPayload(payload)
+    if textutils and type(textutils.serializeJSON) == "function" then
+        local ok, serialized = pcall(textutils.serializeJSON, payload, { compact = true })
+        if ok then
+            return serialized
+        end
+    end
+    if textutils and type(textutils.serialize) == "function" then
+        local ok, serialized = pcall(textutils.serialize, payload)
+        if ok then
+            return serialized
+        end
+    end
+    local parts = {}
+    for key, value in pairs(payload or {}) do
+        parts[#parts + 1] = tostring(key) .. "=" .. tostring(value)
+    end
+    table.sort(parts)
+    return table.concat(parts, "\n")
+end
+
+local function writeFile(path, contents)
+    if not fs or type(fs.open) ~= "function" then
+        return false, "fs_unavailable"
+    end
+    local handle, err = fs.open(path, "w")
+    if not handle then
+        return false, err or "open_failed"
+    end
+    handle.write(contents)
+    handle.close()
+    return true
+end
 
 local function copyTable(value, depth, seen)
     if type(value) ~= "table" then
@@ -432,6 +518,7 @@ logger.DEFAULT_CAPTURE_LIMIT = DEFAULT_CAPTURE_LIMIT
 logger.LEVELS = copyTable(LEVEL_VALUE, 1)
 logger.LABELS = copyTable(LEVEL_LABEL, 1)
 logger.resolveLevel = resolveLevel
+logger.DEFAULT_CRASH_FILE = DEFAULT_CRASH_FILE
 
 function logger.log(ctx, level, message)
     if type(ctx) ~= "table" then
@@ -452,6 +539,23 @@ function logger.log(ctx, level, message)
     if (level == "warn" or level == "error") and message then
         print(string.format("[%s] %s", level:upper(), message))
     end
+end
+
+function logger.writeCrashFile(ctx, message, metadata)
+    local path = getCrashFilePath(ctx)
+    local payload = buildCrashPayload(ctx, message, metadata)
+    local body = serializeCrashPayload(payload)
+    if not body or body == "" then
+        body = tostring(message or "Unknown fatal error")
+    end
+    local ok, err = writeFile(path, body .. "\n")
+    if not ok then
+        return false, err
+    end
+    if ctx then
+        ctx.crashFilePath = path
+    end
+    return true, path
 end
 
 return logger

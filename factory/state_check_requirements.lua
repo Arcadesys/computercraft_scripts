@@ -50,6 +50,33 @@ local function calculateRequirements(ctx, strategy)
     return reqs
 end
 
+local function calculateBranchmineRequirements(ctx)
+    local bm = ctx.branchmine or {}
+    local length = tonumber(bm.length or ctx.config.length) or 60
+    local branchInterval = tonumber(bm.branchInterval or ctx.config.branchInterval) or 3
+    local branchLength = tonumber(bm.branchLength or ctx.config.branchLength) or 16
+    local torchInterval = tonumber(bm.torchInterval or ctx.config.torchInterval) or 6
+
+    branchInterval = math.max(branchInterval, 1)
+    torchInterval = math.max(torchInterval, 1)
+    branchLength = math.max(branchLength, 1)
+
+    local branchPairs = math.floor(length / branchInterval)
+    local branchTravel = branchPairs * (4 * branchLength + 4)
+    local totalTravel = length + branchTravel
+
+    local reqs = {
+        fuel = math.ceil(totalTravel * 1.1) + 100,
+        materials = {}
+    }
+
+    local torchItem = ctx.config.torchItem or "minecraft:torch"
+    local torchCount = math.max(1, math.floor(length / torchInterval))
+    reqs.materials[torchItem] = torchCount
+
+    return reqs
+end
+
 local function getInventoryCounts(ctx)
     local counts = {}
     -- Scan all slots
@@ -175,12 +202,33 @@ end
 local function CHECK_REQUIREMENTS(ctx)
     logger.log(ctx, "info", "Checking requirements...")
 
-    local strategy, errMsg = diagnostics.requireStrategy(ctx)
-    if not strategy then
-        return "ERROR"
+    local reqs
+    if ctx.branchmine then
+        reqs = calculateBranchmineRequirements(ctx)
+    else
+        if ctx.config.mode == "mine" then
+            logger.log(ctx, "warn", "Branchmine context missing, re-initializing...")
+            ctx.branchmine = {
+                length = tonumber(ctx.config.length) or 60,
+                branchInterval = tonumber(ctx.config.branchInterval) or 3,
+                branchLength = tonumber(ctx.config.branchLength) or 16,
+                torchInterval = tonumber(ctx.config.torchInterval) or 6,
+                currentDist = 0,
+                state = "SPINE",
+                spineY = 0,
+                chests = ctx.chests
+            }
+            ctx.nextState = "BRANCHMINE"
+            reqs = calculateBranchmineRequirements(ctx)
+        else
+            local strategy, errMsg = diagnostics.requireStrategy(ctx)
+            if not strategy then
+                ctx.lastError = errMsg or "Strategy missing"
+                return "ERROR"
+            end
+            reqs = calculateRequirements(ctx, strategy)
+        end
     end
-
-    local reqs = calculateRequirements(ctx, strategy)
     local invCounts = getInventoryCounts(ctx)
     local currentFuel = turtle.getFuelLevel()
     if currentFuel == "unlimited" then currentFuel = 999999 end

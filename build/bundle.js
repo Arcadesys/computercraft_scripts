@@ -101,7 +101,21 @@ function minifyLua(content) {
         .join('\n');
 }
 
+function incrementBuildCounter() {
+    const versionPath = path.join(PROJECT_ROOT, 'lib', 'version.lua');
+    let content = fs.readFileSync(versionPath, 'utf8');
+    const buildMatch = content.match(/version\.BUILD\s*=\s*(\d+)/);
+    if (buildMatch) {
+        const oldBuild = parseInt(buildMatch[1], 10);
+        const newBuild = oldBuild + 1;
+        content = content.replace(/version\.BUILD\s*=\s*\d+/, `version.BUILD = ${newBuild}`);
+        fs.writeFileSync(versionPath, content, 'utf8');
+        console.log(`🔢 Build counter: ${oldBuild} → ${newBuild}`);
+    }
+}
+
 function buildInstaller() {
+    incrementBuildCounter();
     console.log('📦 Building Arcadesys installer...');
     const files = collectLuaFiles(PROJECT_ROOT)
         .sort((a, b) => a.relPath.localeCompare(b.relPath));

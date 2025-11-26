@@ -12,7 +12,9 @@ local function BLOCKED(ctx)
     sleep(5)
     ctx.retries = (ctx.retries or 0) + 1
     if ctx.retries > 5 then
-        logger.log(ctx, "error", "Too many retries.")
+        local message = string.format("Too many retries while resuming %s", resume)
+        logger.log(ctx, "error", message)
+        ctx.lastError = message
         ctx.resumeState = nil
         return "ERROR"
     end

@@ -12,6 +12,58 @@ local fuelLib = require("lib_fuel")
 local logger = require("lib_logger")
 local startup = require("lib_startup")
 
+local function ensureSpineAnchor(ctx, bm)
+    if not bm then
+        return
+    end
+    if not bm.spineInitialized then
+        local pos = movement.getPosition(ctx)
+        bm.spineY = bm.spineY or pos.y
+        bm.spineFacing = bm.spineFacing or movement.getFacing(ctx)
+        bm.spineInitialized = true
+    end
+end
+
+local function verifyOutputChest(ctx, bm)
+    if not bm or bm.chestVerified then
+        return true
+    end
+
+    local dir = bm.chests and bm.chests.output
+    if not dir then
+        logger.log(ctx, "warn", "Output chest direction missing; skipping verification.")
+        bm.chestVerified = true
+        return true
+    end
+
+    local spineFacing = bm.spineFacing or movement.getFacing(ctx)
+    local ok, err = movement.face(ctx, dir)
+    if not ok then
+        return false, "Unable to face output chest (" .. tostring(err) .. ")"
+    end
+
+    ---@diagnostic disable-next-line: undefined-global
+    sleep(0.1)
+    local hasBlock, data = turtle.inspect()
+    local restoreFacing = spineFacing or movement.getFacing(ctx) or "north"
+    local restored, restoreErr = movement.face(ctx, restoreFacing)
+    if not restored then
+        logger.log(ctx, "warn", "Failed to restore facing after chest verification: " .. tostring(restoreErr))
+    end
+
+    if not hasBlock then
+        return false, "Missing output chest on " .. dir
+    end
+
+    local name = data and data.name or "unknown block"
+    if not name:find("chest") and not name:find("barrel") then
+        return false, string.format("Expected chest on %s but found %s", dir, name)
+    end
+
+    bm.chestVerified = true
+    return true
+end
+
 local function selectTorch(ctx)
     local torchItem = ctx.config.torchItem or "minecraft:torch"
     local ok = inventory.selectMaterial(ctx, torchItem)
@@ -91,6 +143,8 @@ local function BRANCHMINE(ctx)
     local bm = ctx.branchmine
     if not bm then return "INITIALIZE" end
 
+    ensureSpineAnchor(ctx, bm)
+
     -- 1. Fuel Check
     if not startup.runFuelCheck(ctx, bm.chests, 100, 1000) then
         return "BRANCHMINE"
@@ -103,14 +157,27 @@ local function BRANCHMINE(ctx)
             return "BRANCHMINE"
         end
 
+        if not bm.chestVerified then
+            local ok, err = verifyOutputChest(ctx, bm)
+            if not ok then
+                local message = err or "Output chest verification failed"
+                logger.log(ctx, "error", message)
+                ctx.lastError = message
+                return "ERROR"
+            end
+        end
+
         -- Move forward
+        local isNewGround = turtle.detect()
         if not movement.forward(ctx, { dig = true }) then
             logger.log(ctx, "warn", "Blocked on spine.")
             return "BRANCHMINE" -- Retry
         end
         
         bm.currentDist = bm.currentDist + 1
-        mining.scanAndMineNeighbors(ctx)
+        if isNewGround then
+            mining.scanAndMineNeighbors(ctx)
+        end
 
         -- Place Torch
         if bm.currentDist % bm.torchInterval == 0 then
@@ -141,6 +208,7 @@ local function BRANCHMINE(ctx)
             return "BRANCHMINE"
         end
         
+        local isNewGround = turtle.detect()
         if not movement.forward(ctx, { dig = true }) then
              -- If blocked, maybe bedrock? Just return.
              logger.log(ctx, "warn", "Branch blocked. Returning.")
@@ -149,13 +217,17 @@ local function BRANCHMINE(ctx)
         end
         
         bm.branchDist = bm.branchDist + 1
-        mining.scanAndMineNeighbors(ctx)
+        if isNewGround then
+            mining.scanAndMineNeighbors(ctx)
+        end
         return "BRANCHMINE"
 
     elseif bm.state == "BRANCH_LEFT_UP" then
         -- Go UP 1 to mine upper layer
         if movement.up(ctx) then
-            mining.scanAndMineNeighbors(ctx)
+            -- Air above, skip mining unless we want to be thorough?
+            -- User requested: "if the robot detects air it should assume that it does not have to dig."
+            -- So we skip scanning here.
         else
             turtle.digUp()
             if movement.up(ctx) then
@@ -213,6 +285,7 @@ local function BRANCHMINE(ctx)
             return "BRANCHMINE"
         end
         
+        local isNewGround = turtle.detect()
         if not movement.forward(ctx, { dig = true }) then
              logger.log(ctx, "warn", "Branch blocked. Returning.")
              bm.state = "BRANCH_RIGHT_RETURN"
@@ -220,12 +293,14 @@ local function BRANCHMINE(ctx)
         end
         
         bm.branchDist = bm.branchDist + 1
-        mining.scanAndMineNeighbors(ctx)
+        if isNewGround then
+            mining.scanAndMineNeighbors(ctx)
+        end
         return "BRANCHMINE"
 
     elseif bm.state == "BRANCH_RIGHT_UP" then
         if movement.up(ctx) then
-            mining.scanAndMineNeighbors(ctx)
+            -- Air above, skip mining
         else
             turtle.digUp()
             if movement.up(ctx) then

@@ -60,7 +60,11 @@ local function MINE(ctx)
         if not ok then
             logger.log(ctx, "warn", "Mining movement blocked: " .. tostring(err))
             ctx.resumeState = "MINE"
-            return err == "blocked" and "BLOCKED" or "ERROR"
+            if err == "blocked" then
+                return "BLOCKED"
+            end
+            ctx.lastError = "Mining movement failed: " .. tostring(err)
+            return "ERROR"
         end
         
     elseif step.type == "turn" then
@@ -150,7 +154,9 @@ local function MINE(ctx)
         end
 
         if not ok then
-            logger.log(ctx, "error", "Pre-flight check failed: Missing chest")
+            local msg = "Pre-flight check failed: Missing chest"
+            logger.log(ctx, "error", msg)
+            ctx.lastError = msg
             return "ERROR"
         end
         
@@ -158,11 +164,15 @@ local function MINE(ctx)
             if turtle.detectDown() then
                 turtle.digDown()
                 if not turtle.placeDown() then
-                    logger.log(ctx, "error", "Pre-flight check failed: Could not place chest")
+                    local msg = "Pre-flight check failed: Could not place chest"
+                    logger.log(ctx, "error", msg)
+                    ctx.lastError = msg
                     return "ERROR"
                 end
             else
-                logger.log(ctx, "error", "Pre-flight check failed: Could not place chest")
+                local msg = "Pre-flight check failed: Could not place chest"
+                logger.log(ctx, "error", msg)
+                ctx.lastError = msg
                 return "ERROR"
             end
         end

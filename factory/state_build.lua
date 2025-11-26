@@ -81,7 +81,9 @@ local function BUILD(ctx)
         if placeErr == "already_present" then
             -- It's fine
         else
-            logger.log(ctx, "warn", "Placement failed: " .. tostring(placeErr))
+            local failureMsg = "Placement failed: " .. tostring(placeErr)
+            logger.log(ctx, "warn", failureMsg)
+            ctx.lastError = failureMsg
             -- Could be empty inventory (handled above?) or something else.
             -- If it's "out of items", we should restock.
             -- But placeMaterial might not return specific enough error.

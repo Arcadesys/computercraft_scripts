@@ -1,5 +1,5 @@
 -- Arcadesys Unified Installer
--- Auto-generated at 2025-11-25T22:01:39.660Z
+-- Auto-generated at 2025-11-26T01:50:03.060Z
 print("Starting Arcadesys install...")
 local files = {}
 
@@ -3236,7 +3236,9 @@ logger.log(ctx, "warn", string.format("Movement blocked while executing %s. Retr
 sleep(5)
 ctx.retries = (ctx.retries or 0) + 1
 if ctx.retries > 5 then
-logger.log(ctx, "error", "Too many retries.")
+local message = string.format("Too many retries while resuming %s", resume)
+logger.log(ctx, "error", message)
+ctx.lastError = message
 ctx.resumeState = nil
 return "ERROR"
 end
@@ -3251,6 +3253,49 @@ local mining = require("lib_mining")
 local fuelLib = require("lib_fuel")
 local logger = require("lib_logger")
 local startup = require("lib_startup")
+local function ensureSpineAnchor(ctx, bm)
+if not bm then
+return
+end
+if not bm.spineInitialized then
+local pos = movement.getPosition(ctx)
+bm.spineY = bm.spineY or pos.y
+bm.spineFacing = bm.spineFacing or movement.getFacing(ctx)
+bm.spineInitialized = true
+end
+end
+local function verifyOutputChest(ctx, bm)
+if not bm or bm.chestVerified then
+return true
+end
+local dir = bm.chests and bm.chests.output
+if not dir then
+logger.log(ctx, "warn", "Output chest direction missing; skipping verification.")
+bm.chestVerified = true
+return true
+end
+local spineFacing = bm.spineFacing or movement.getFacing(ctx)
+local ok, err = movement.face(ctx, dir)
+if not ok then
+return false, "Unable to face output chest (" .. tostring(err) .. ")"
+end
+sleep(0.1)
+local hasBlock, data = turtle.inspect()
+local restoreFacing = spineFacing or movement.getFacing(ctx) or "north"
+local restored, restoreErr = movement.face(ctx, restoreFacing)
+if not restored then
+logger.log(ctx, "warn", "Failed to restore facing after chest verification: " .. tostring(restoreErr))
+end
+if not hasBlock then
+return false, "Missing output chest on " .. dir
+end
+local name = data and data.name or "unknown block"
+if not name:find("chest") and not name:find("barrel") then
+return false, string.format("Expected chest on %s but found %s", dir, name)
+end
+bm.chestVerified = true
+return true
+end
 local function selectTorch(ctx)
 local torchItem = ctx.config.torchItem or "minecraft:torch"
 local ok = inventory.selectMaterial(ctx, torchItem)
@@ -3311,6 +3356,7 @@ end
 local function BRANCHMINE(ctx)
 local bm = ctx.branchmine
 if not bm then return "INITIALIZE" end
+ensureSpineAnchor(ctx, bm)
 if not startup.runFuelCheck(ctx, bm.chests, 100, 1000) then
 return "BRANCHMINE"
 end
@@ -3319,12 +3365,24 @@ if bm.currentDist >= bm.length then
 bm.state = "RETURN"
 return "BRANCHMINE"
 end
+if not bm.chestVerified then
+local ok, err = verifyOutputChest(ctx, bm)
+if not ok then
+local message = err or "Output chest verification failed"
+logger.log(ctx, "error", message)
+ctx.lastError = message
+return "ERROR"
+end
+end
+local isNewGround = turtle.detect()
 if not movement.forward(ctx, { dig = true }) then
 logger.log(ctx, "warn", "Blocked on spine.")
 return "BRANCHMINE" -- Retry
 end
 bm.currentDist = bm.currentDist + 1
+if isNewGround then
 mining.scanAndMineNeighbors(ctx)
+end
 if bm.currentDist % bm.torchInterval == 0 then
 placeTorch(ctx)
 end
@@ -3345,17 +3403,19 @@ if bm.branchDist >= bm.branchLength then
 bm.state = "BRANCH_LEFT_UP"
 return "BRANCHMINE"
 end
+local isNewGround = turtle.detect()
 if not movement.forward(ctx, { dig = true }) then
 logger.log(ctx, "warn", "Branch blocked. Returning.")
 bm.state = "BRANCH_LEFT_RETURN"
 return "BRANCHMINE"
 end
 bm.branchDist = bm.branchDist + 1
+if isNewGround then
 mining.scanAndMineNeighbors(ctx)
+end
 return "BRANCHMINE"
 elseif bm.state == "BRANCH_LEFT_UP" then
 if movement.up(ctx) then
-mining.scanAndMineNeighbors(ctx)
 else
 turtle.digUp()
 if movement.up(ctx) then
@@ -3400,17 +3460,19 @@ if bm.branchDist >= bm.branchLength then
 bm.state = "BRANCH_RIGHT_UP"
 return "BRANCHMINE"
 end
+local isNewGround = turtle.detect()
 if not movement.forward(ctx, { dig = true }) then
 logger.log(ctx, "warn", "Branch blocked. Returning.")
 bm.state = "BRANCH_RIGHT_RETURN"
 return "BRANCHMINE"
 end
 bm.branchDist = bm.branchDist + 1
+if isNewGround then
 mining.scanAndMineNeighbors(ctx)
+end
 return "BRANCHMINE"
 elseif bm.state == "BRANCH_RIGHT_UP" then
 if movement.up(ctx) then
-mining.scanAndMineNeighbors(ctx)
 else
 turtle.digUp()
 if movement.up(ctx) then
@@ -3506,7 +3568,9 @@ attack = true
 if not placed then
 if placeErr == "already_present" then
 else
-logger.log(ctx, "warn", "Placement failed: " .. tostring(placeErr))
+local failureMsg = "Placement failed: " .. tostring(placeErr)
+logger.log(ctx, "warn", failureMsg)
+ctx.lastError = failureMsg
 return "ERROR" -- For now, fail hard so we can debug.
 end
 end
@@ -3545,6 +3609,27 @@ reqs.materials[mat] = (reqs.materials[mat] or 0) + 1
 end
 end
 end
+return reqs
+end
+local function calculateBranchmineRequirements(ctx)
+local bm = ctx.branchmine or {}
+local length = tonumber(bm.length or ctx.config.length) or 60
+local branchInterval = tonumber(bm.branchInterval or ctx.config.branchInterval) or 3
+local branchLength = tonumber(bm.branchLength or ctx.config.branchLength) or 16
+local torchInterval = tonumber(bm.torchInterval or ctx.config.torchInterval) or 6
+branchInterval = math.max(branchInterval, 1)
+torchInterval = math.max(torchInterval, 1)
+branchLength = math.max(branchLength, 1)
+local branchPairs = math.floor(length / branchInterval)
+local branchTravel = branchPairs * (4 * branchLength + 4)
+local totalTravel = length + branchTravel
+local reqs = {
+fuel = math.ceil(totalTravel * 1.1) + 100,
+materials = {}
+}
+local torchItem = ctx.config.torchItem or "minecraft:torch"
+local torchCount = math.max(1, math.floor(length / torchInterval))
+reqs.materials[torchItem] = torchCount
 return reqs
 end
 local function getInventoryCounts(ctx)
@@ -3654,11 +3739,33 @@ return found
 end
 local function CHECK_REQUIREMENTS(ctx)
 logger.log(ctx, "info", "Checking requirements...")
+local reqs
+if ctx.branchmine then
+reqs = calculateBranchmineRequirements(ctx)
+else
+if ctx.config.mode == "mine" then
+logger.log(ctx, "warn", "Branchmine context missing, re-initializing...")
+ctx.branchmine = {
+length = tonumber(ctx.config.length) or 60,
+branchInterval = tonumber(ctx.config.branchInterval) or 3,
+branchLength = tonumber(ctx.config.branchLength) or 16,
+torchInterval = tonumber(ctx.config.torchInterval) or 6,
+currentDist = 0,
+state = "SPINE",
+spineY = 0,
+chests = ctx.chests
+}
+ctx.nextState = "BRANCHMINE"
+reqs = calculateBranchmineRequirements(ctx)
+else
 local strategy, errMsg = diagnostics.requireStrategy(ctx)
 if not strategy then
+ctx.lastError = errMsg or "Strategy missing"
 return "ERROR"
 end
-local reqs = calculateRequirements(ctx, strategy)
+reqs = calculateRequirements(ctx, strategy)
+end
+end
 local invCounts = getInventoryCounts(ctx)
 local currentFuel = turtle.getFuelLevel()
 if currentFuel == "unlimited" then currentFuel = 999999 end
@@ -3755,6 +3862,12 @@ if ctx.logger then
 ctx.logger:error("Fatal Error: " .. message)
 else
 logger.log(ctx, "error", "Fatal Error: " .. message)
+end
+local crashOk, crashResult = logger.writeCrashFile(ctx, message)
+if crashOk and crashResult then
+print("Crash details saved to " .. crashResult)
+elseif not crashOk and crashResult then
+logger.log(ctx, "warn", "Failed to write crash file: " .. tostring(crashResult))
 end
 print("Press Enter to exit...")
 read()
@@ -3886,7 +3999,8 @@ state = "SPINE",
 spineY = 0, -- Assuming we start at 0 relative to start
 chests = ctx.chests
 }
-return "BRANCHMINE"
+ctx.nextState = "BRANCHMINE"
+return "CHECK_REQUIREMENTS"
 end
 if ctx.config.mode == "tunnel" then
 logger.log(ctx, "info", "Generating tunnel strategy...")
@@ -4053,7 +4167,11 @@ local ok, err = movement.goTo(ctx, dest, { dig = true, attack = true })
 if not ok then
 logger.log(ctx, "warn", "Mining movement blocked: " .. tostring(err))
 ctx.resumeState = "MINE"
-return err == "blocked" and "BLOCKED" or "ERROR"
+if err == "blocked" then
+return "BLOCKED"
+end
+ctx.lastError = "Mining movement failed: " .. tostring(err)
+return "ERROR"
 end
 elseif step.type == "turn" then
 if step.data == "left" then
@@ -4119,18 +4237,24 @@ end
 end
 end
 if not ok then
-logger.log(ctx, "error", "Pre-flight check failed: Missing chest")
+local msg = "Pre-flight check failed: Missing chest"
+logger.log(ctx, "error", msg)
+ctx.lastError = msg
 return "ERROR"
 end
 if not turtle.placeDown() then
 if turtle.detectDown() then
 turtle.digDown()
 if not turtle.placeDown() then
-logger.log(ctx, "error", "Pre-flight check failed: Could not place chest")
+local msg = "Pre-flight check failed: Could not place chest"
+logger.log(ctx, "error", msg)
+ctx.lastError = msg
 return "ERROR"
 end
 else
-logger.log(ctx, "error", "Pre-flight check failed: Could not place chest")
+local msg = "Pre-flight check failed: Could not place chest"
+logger.log(ctx, "error", msg)
+ctx.lastError = msg
 return "ERROR"
 end
 end
@@ -4303,6 +4427,7 @@ ctx.resumeState = nil
 return resume
 end
 logger.log(ctx, "error", "Out of fuel and no fuel items found.")
+ctx.lastError = "Out of fuel and no fuel items found."
 return "ERROR"
 end
 return REFUEL]]
@@ -4516,6 +4641,7 @@ return TREEFARM]]
 files["factory/turtle_os.lua"] = [[if not string.find(package.path, "/lib/?.lua") then
 package.path = package.path .. ";/?.lua;/lib/?.lua;/arcade/?.lua;/factory/?.lua"
 end
+local version = require("version")
 local ui = require("lib_ui")
 local designer = require("lib_designer")
 local games = require("lib_games")
@@ -4904,7 +5030,7 @@ end
 end
 local function showMainMenu()
 while true do
-local res = ui.runMenu("TurtleOS v2.1", {
+local res = ui.runMenu(version.display(), {
 { text = "MINE >", callback = showMineMenu },
 { text = "FARM >", callback = showFarmMenu },
 { text = "BUILD >", callback = showBuildMenu },
@@ -9053,6 +9179,12 @@ return nil, "json_decoder_unavailable"
 end
 return json_utils]]
 files["lib/lib_logger.lua"] = [[local logger = {}
+local diagnostics
+local diagnosticsOk, diagnosticsModule = pcall(require, "lib_diagnostics")
+if diagnosticsOk then
+diagnostics = diagnosticsModule
+end
+local DEFAULT_CRASH_FILE = "crashfile"
 local DEFAULT_LEVEL = "info"
 local DEFAULT_CAPTURE_LIMIT = 200
 local LEVEL_VALUE = {
@@ -9074,6 +9206,79 @@ trace = "debug",
 verbose = "debug",
 fatal = "error",
 }
+local function isoTimestamp()
+if os and type(os.date) == "function" then
+return os.date("!%Y-%m-%dT%H:%M:%SZ")
+end
+if os and type(os.clock) == "function" then
+return string.format("%.03f", os.clock())
+end
+return nil
+end
+local function getCrashFilePath(ctx)
+if ctx then
+local config = ctx.config
+if config and type(config.crashFile) == "string" and config.crashFile ~= "" then
+return config.crashFile
+end
+if type(ctx.crashFilePath) == "string" and ctx.crashFilePath ~= "" then
+return ctx.crashFilePath
+end
+end
+return DEFAULT_CRASH_FILE
+end
+local function buildCrashPayload(ctx, message, metadata)
+local payload = {
+message = message or "Unknown fatal error",
+metadata = metadata,
+timestamp = isoTimestamp(),
+}
+if diagnostics and ctx then
+local ok, snapshot = pcall(diagnostics.snapshot, ctx)
+if ok then
+payload.context = snapshot
+end
+end
+if ctx and ctx.logger and type(ctx.logger.getLastEntry) == "function" then
+local ok, entry = pcall(ctx.logger.getLastEntry, ctx.logger)
+if ok then
+payload.lastLogEntry = entry
+end
+end
+return payload
+end
+local function serializeCrashPayload(payload)
+if textutils and type(textutils.serializeJSON) == "function" then
+local ok, serialized = pcall(textutils.serializeJSON, payload, { compact = true })
+if ok then
+return serialized
+end
+end
+if textutils and type(textutils.serialize) == "function" then
+local ok, serialized = pcall(textutils.serialize, payload)
+if ok then
+return serialized
+end
+end
+local parts = {}
+for key, value in pairs(payload or {}) do
+parts[#parts + 1] = tostring(key) .. "=" .. tostring(value)
+end
+table.sort(parts)
+return table.concat(parts, "\n")
+end
+local function writeFile(path, contents)
+if not fs or type(fs.open) ~= "function" then
+return false, "fs_unavailable"
+end
+local handle, err = fs.open(path, "w")
+if not handle then
+return false, err or "open_failed"
+end
+handle.write(contents)
+handle.close()
+return true
+end
 local function copyTable(value, depth, seen)
 if type(value) ~= "table" then
 return value
@@ -9429,6 +9634,7 @@ logger.DEFAULT_CAPTURE_LIMIT = DEFAULT_CAPTURE_LIMIT
 logger.LEVELS = copyTable(LEVEL_VALUE, 1)
 logger.LABELS = copyTable(LEVEL_LABEL, 1)
 logger.resolveLevel = resolveLevel
+logger.DEFAULT_CRASH_FILE = DEFAULT_CRASH_FILE
 function logger.log(ctx, level, message)
 if type(ctx) ~= "table" then
 return
@@ -9448,6 +9654,22 @@ end
 if (level == "warn" or level == "error") and message then
 print(string.format("[%s] %s", level:upper(), message))
 end
+end
+function logger.writeCrashFile(ctx, message, metadata)
+local path = getCrashFilePath(ctx)
+local payload = buildCrashPayload(ctx, message, metadata)
+local body = serializeCrashPayload(payload)
+if not body or body == "" then
+body = tostring(message or "Unknown fatal error")
+end
+local ok, err = writeFile(path, body .. "\n")
+if not ok then
+return false, err
+end
+if ctx then
+ctx.crashFilePath = path
+end
+return true, path
 end
 return logger]]
 files["lib/lib_menu.lua"] = [[local menu = {}
@@ -13812,6 +14034,20 @@ function Log:warn(message) self:log("warn", message) end
 function Log:info(message) self:log("info", message) end
 function Log:debug(message) self:log("debug", message) end
 return Log]]
+files["lib/version.lua"] = [[local version = {}
+version.MAJOR = 2
+version.MINOR = 1
+version.PATCH = 1
+version.BUILD = 6
+function version.toString()
+return string.format("v%d.%d.%d (build %d)",
+version.MAJOR, version.MINOR, version.PATCH, version.BUILD)
+end
+function version.display()
+return string.format("TurtleOS v%d.%d.%d #%d",
+version.MAJOR, version.MINOR, version.PATCH, version.BUILD)
+end
+return version]]
 files["net_installer.lua"] = [[local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/appify/"
 local files = {
 "arcade/arcade_shell.lua",
@@ -13965,7 +14201,7 @@ if fs.exists("arcade") then fs.delete("arcade") end
 if fs.exists("lib") then fs.delete("lib") end
 if fs.exists("factory") then fs.delete("factory") end
 
-print("Unpacking 64 files...")
+print("Unpacking 65 files...")
 for path, content in pairs(files) do
     local dir = fs.getDir(path)
     if dir ~= "" and not fs.exists(dir) then

@@ -41,6 +41,7 @@ local function REFUEL(ctx)
     end
     
     logger.log(ctx, "error", "Out of fuel and no fuel items found.")
+    ctx.lastError = "Out of fuel and no fuel items found."
     return "ERROR"
 end
 

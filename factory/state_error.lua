@@ -14,6 +14,13 @@ local function ERROR(ctx)
     else
         logger.log(ctx, "error", "Fatal Error: " .. message)
     end
+
+    local crashOk, crashResult = logger.writeCrashFile(ctx, message)
+    if crashOk and crashResult then
+        print("Crash details saved to " .. crashResult)
+    elseif not crashOk and crashResult then
+        logger.log(ctx, "warn", "Failed to write crash file: " .. tostring(crashResult))
+    end
     print("Press Enter to exit...")
     ---@diagnostic disable-next-line: undefined-global
     read()
