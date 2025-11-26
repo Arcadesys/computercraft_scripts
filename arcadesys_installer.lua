@@ -1,5 +1,5 @@
 -- Arcadesys Unified Installer
--- Auto-generated at 2025-11-26T04:22:17.001Z
+-- Auto-generated at 2025-11-26T05:13:43.696Z
 print("Starting Arcadesys install...")
 local files = {}
 
@@ -3201,18 +3201,20 @@ end
 if not ctx.config.schemaPath and ctx.config.mode ~= "mine" then
 ctx.config.schemaPath = "schema.json"
 end
-logger.init(ctx.config.verbose)
-logger.info("Agent starting...")
+ctx.logger = logger.new({
+level = ctx.config.verbose and "debug" or "info"
+})
+ctx.logger:info("Agent starting...")
 while ctx.state ~= "EXIT" do
 local currentStateFunc = states[ctx.state]
 if not currentStateFunc then
-logger.error("Unknown state: " .. tostring(ctx.state))
+ctx.logger:error("Unknown state: " .. tostring(ctx.state))
 break
 end
-logger.debug("Entering state: " .. ctx.state)
+ctx.logger:debug("Entering state: " .. ctx.state)
 local ok, nextStateOrErr = pcall(currentStateFunc, ctx)
 if not ok then
-logger.error("Crash in state " .. ctx.state .. ": " .. tostring(nextStateOrErr))
+ctx.logger:error("Crash in state " .. ctx.state .. ": " .. tostring(nextStateOrErr))
 ctx.lastError = nextStateOrErr
 ctx.state = "ERROR"
 else
@@ -3220,7 +3222,7 @@ ctx.state = nextStateOrErr
 end
 sleep(0) -- Yield to avoid "Too long without yielding"
 end
-logger.info("Agent finished.")
+ctx.logger:info("Agent finished.")
 if ctx.lastError then
 print("Agent finished: " .. tostring(ctx.lastError))
 else
@@ -3243,7 +3245,6 @@ ctx.resumeState = nil
 return "ERROR"
 end
 ctx.resumeState = nil
-ctx.retries = 0
 return resume
 end
 return BLOCKED]]
@@ -3253,6 +3254,12 @@ local mining = require("lib_mining")
 local fuelLib = require("lib_fuel")
 local logger = require("lib_logger")
 local startup = require("lib_startup")
+local OPPOSITE = {
+north = "south",
+south = "north",
+east = "west",
+west = "east"
+}
 local function ensureSpineAnchor(ctx, bm)
 if not bm then
 return
@@ -3284,7 +3291,8 @@ local hasBlock, data = turtle.inspect()
 local restoreFacing = spineFacing or movement.getFacing(ctx) or "north"
 local restored, restoreErr = movement.face(ctx, restoreFacing)
 if not restored then
-logger.log(ctx, "warn", "Failed to restore facing after chest verification: " .. tostring(restoreErr))
+logger.log(ctx, "error", "Failed to restore facing after chest verification: " .. tostring(restoreErr))
+return false, "Failed to restore facing: " .. tostring(restoreErr)
 end
 if not hasBlock then
 return false, "Missing output chest on " .. dir
@@ -3353,9 +3361,74 @@ turtle.drop()
 end
 end
 end
+local function orientByChests(ctx, chests)
+if not chests then return false end
+logger.log(ctx, "info", "Auto-orienting based on chests...")
+local surroundings = {}
+for i = 0, 3 do
+local hasBlock, data = turtle.inspect()
+if hasBlock and (data.name:find("chest") or data.name:find("barrel")) then
+surroundings[i] = true
+else
+surroundings[i] = false
+end
+turtle.turnRight()
+end
+local CARDINALS = {"north", "east", "south", "west"}
+local bestScore = -1
+local bestFacing = nil
+for i, candidate in ipairs(CARDINALS) do
+local score = 0
+for name, dir in pairs(chests) do
+local dirIdx = -1
+for k, v in ipairs(CARDINALS) do if v == dir then dirIdx = k break end end
+local candIdx = i
+if dirIdx ~= -1 then
+local offset = (dirIdx - candIdx) % 4
+if surroundings[offset] then
+score = score + 1
+end
+end
+end
+if score > bestScore then
+bestScore = score
+bestFacing = candidate
+end
+end
+if bestFacing and bestScore > 0 then
+logger.log(ctx, "info", "Oriented to " .. bestFacing .. " (Score: " .. bestScore .. ")")
+ctx.movement = ctx.movement or {}
+ctx.movement.facing = bestFacing
+ctx.origin = ctx.origin or {}
+ctx.origin.facing = bestFacing
+return true
+else
+logger.log(ctx, "warn", "Could not determine orientation from chests.")
+return false
+end
+end
 local function BRANCHMINE(ctx)
 local bm = ctx.branchmine
 if not bm then return "INITIALIZE" end
+if bm.state == "SPINE" and bm.currentDist == 0 then
+if not bm.oriented then
+orientByChests(ctx, bm.chests)
+bm.oriented = true
+bm.spineInitialized = false
+end
+if bm.chests and bm.chests.output then
+local outDir = bm.chests.output
+local mineDir = OPPOSITE[outDir]
+if mineDir then
+local current = movement.getFacing(ctx)
+if current ~= mineDir then
+logger.log(ctx, "info", "Aligning to mine shaft: " .. mineDir)
+movement.faceDirection(ctx, mineDir)
+bm.spineInitialized = false
+end
+end
+end
+end
 ensureSpineAnchor(ctx, bm)
 if not startup.runFuelCheck(ctx, bm.chests, 100, 1000) then
 return "BRANCHMINE"
@@ -3432,9 +3505,15 @@ bm.returnDist = 0
 end
 if bm.returnDist >= bm.branchDist then
 bm.returning = false
+local downRetries = 0
 while movement.getPosition(ctx).y > bm.spineY do
 if not movement.down(ctx) then
 turtle.digDown()
+end
+downRetries = downRetries + 1
+if downRetries > 20 then
+logger.log(ctx, "warn", "Failed to descend to spine level. Aborting return.")
+break
 end
 end
 movement.turnLeft(ctx)
@@ -3489,9 +3568,15 @@ bm.returnDist = 0
 end
 if bm.returnDist >= bm.branchDist then
 bm.returning = false
+local downRetries = 0
 while movement.getPosition(ctx).y > bm.spineY do
 if not movement.down(ctx) then
 turtle.digDown()
+end
+downRetries = downRetries + 1
+if downRetries > 20 then
+logger.log(ctx, "warn", "Failed to descend to spine level. Aborting return.")
+break
 end
 end
 movement.turnRight(ctx)
@@ -4272,6 +4357,7 @@ local fuelLib = require("lib_fuel")
 local logger = require("lib_logger")
 local wizard = require("lib_wizard")
 local startup = require("lib_startup")
+local farming = require("lib_farming")
 local function POTATOFARM(ctx)
 local pf = ctx.potatofarm
 if not pf then return "INITIALIZE" end
@@ -4357,52 +4443,16 @@ if not pf.chests or not pf.chests.output then
 logger.log(ctx, "error", "Missing output chest configuration.")
 return "ERROR"
 end
-logger.log(ctx, "info", "Depositing items...")
-movement.goTo(ctx, { x=0, y=2, z=0 }) -- Return to start, safe height
-while movement.getPosition(ctx).y > 0 do
-if not movement.down(ctx) then
-turtle.digDown()
-end
-end
-movement.face(ctx, pf.chests.output)
-local keptPotatoes = 0
-local keepAmount = 64 -- Keep one stack for replanting
-for i=1, 16 do
-local item = turtle.getItemDetail(i)
-if item then
-if item.name == "minecraft:potato" then
-if keptPotatoes < keepAmount then
-local canKeep = keepAmount - keptPotatoes
-if item.count <= canKeep then
-keptPotatoes = keptPotatoes + item.count
-else
-local toDrop = item.count - canKeep
-turtle.select(i)
-if not turtle.drop(toDrop) then
-logger.log(ctx, "warn", "Output chest full.")
-sleep(5)
-end
-keptPotatoes = keptPotatoes + canKeep
-end
-else
-turtle.select(i)
-if not turtle.drop() then
-logger.log(ctx, "warn", "Output chest full.")
-sleep(5)
-end
-end
-elseif item.name == "minecraft:poisonous_potato" then
-turtle.select(i)
-turtle.drop()
-else
-turtle.select(i)
-if not turtle.refuel(0) and not item.name:find("chest") then
-movement.face(ctx, pf.chests.trash)
-turtle.drop()
-movement.face(ctx, pf.chests.output)
-end
-end
-end
+local ok, err = farming.deposit(ctx, {
+safeHeight = 2,
+chests = pf.chests,
+keepItems = { ["minecraft:potato"] = 64 },
+trashItems = { "minecraft:poisonous_potato" },
+refuel = true
+})
+if not ok then
+logger.log(ctx, "error", "Deposit failed: " .. tostring(err))
+return "ERROR"
 end
 pf.state = "WAIT"
 return "POTATOFARM"
@@ -4485,6 +4535,7 @@ local fuelLib = require("lib_fuel")
 local logger = require("lib_logger")
 local wizard = require("lib_wizard")
 local startup = require("lib_startup")
+local farming = require("lib_farming")
 local function selectSapling(ctx)
 inventory.scan(ctx)
 local state = ctx.inventory
@@ -4598,53 +4649,15 @@ tf.nextZ = tf.nextZ + 1
 end
 return "TREEFARM"
 elseif tf.state == "DEPOSIT" then
-logger.log(ctx, "info", "Inventory full (or scan done). Heading home to unload.")
-movement.goTo(ctx, { x=0, y=6, z=0 })
-while movement.getPosition(ctx).y > 0 do
-local hasDown, dataDown = turtle.inspectDown()
-if hasDown and not dataDown.name:find("air") and not dataDown.name:find("chest") then
-turtle.digDown()
-end
-if not movement.down(ctx) then
-turtle.digDown()
-end
-end
-logger.log(ctx, "info", "Dropping off logs.")
-movement.face(ctx, tf.chests.output)
-for i=1, 16 do
-local item = turtle.getItemDetail(i)
-if item and item.name:find("log") then
-turtle.select(i)
-while not turtle.drop() do
-logger.log(ctx, "warn", "Output chest full. Waiting...")
-sleep(5)
-end
-end
-end
-logger.log(ctx, "info", "Checking fuel reserves.")
-movement.face(ctx, tf.chests.fuel)
-turtle.suck() -- Grab some fuel
-fuelLib.refuel(ctx, { target = 1000, excludeItems = { "sapling", "log" } })
-logger.log(ctx, "info", "Taking out the trash.")
-movement.face(ctx, tf.chests.trash)
-for i=1, 16 do
-local item = turtle.getItemDetail(i)
-if item then
-local isLog = item.name:find("log")
-local isSapling = item.name:find("sapling")
-turtle.select(i)
-if isLog then
-elseif isSapling then
-if turtle.getItemCount(i) > 16 then
-turtle.drop(turtle.getItemCount(i) - 16)
-end
-else
-if turtle.refuel(0) then
-else
-turtle.drop()
-end
-end
-end
+local ok, err = farming.deposit(ctx, {
+safeHeight = 6,
+chests = tf.chests,
+keepItems = { ["sapling"] = 16 },
+refuel = true
+})
+if not ok then
+logger.log(ctx, "error", "Deposit failed: " .. tostring(err))
+return "ERROR"
 end
 tf.state = "WAIT"
 return "TREEFARM"
@@ -4659,415 +4672,6 @@ end
 return "TREEFARM"
 end
 return TREEFARM]]
-files["factory/turtle_os.lua"] = [[if not string.find(package.path, "/lib/?.lua") then
-package.path = package.path .. ";/?.lua;/lib/?.lua;/arcade/?.lua;/factory/?.lua"
-end
-local version = require("version")
-local ui = require("lib_ui")
-local designer = require("lib_designer")
-local games = require("lib_games")
-local parser = require("lib_parser")
-local json = require("lib_json")
-local schema_utils = require("lib_schema")
-_G.__FACTORY_EMBED__ = true
-local factory = require("factory")
-_G.__FACTORY_EMBED__ = nil
-local function pauseAndReturn(retVal)
-print("\nOperation finished.")
-print("Press Enter to continue...")
-read()
-return retVal
-end
-local function runMining(form)
-local length = 64
-local interval = 3
-local branchLength = 16
-local torch = 6
-for _, el in ipairs(form.elements) do
-if el.id == "length" then length = tonumber(el.value) or 64 end
-if el.id == "interval" then interval = tonumber(el.value) or 3 end
-if el.id == "branch_length" then branchLength = tonumber(el.value) or 16 end
-if el.id == "torch" then torch = tonumber(el.value) or 6 end
-end
-ui.clear()
-print("Starting Mining Operation...")
-print(string.format("Length: %d, Interval: %d, Branch: %d", length, interval, branchLength))
-sleep(1)
-factory.run({ "mine", "--length", tostring(length), "--branch-interval", tostring(interval), "--branch-length", tostring(branchLength), "--torch-interval", tostring(torch) })
-return pauseAndReturn("stay")
-end
-local function runTunnel()
-local length = 16
-local width = 1
-local height = 2
-local torch = 6
-local form = ui.Form("Tunnel Configuration")
-form:addInput("length", "Length", tostring(length))
-form:addInput("width", "Width", tostring(width))
-form:addInput("height", "Height", tostring(height))
-form:addInput("torch", "Torch Interval", tostring(torch))
-local result = form:run()
-if result == "cancel" then return "stay" end
-for _, el in ipairs(form.elements) do
-if el.id == "length" then length = tonumber(el.value) or 16 end
-if el.id == "width" then width = tonumber(el.value) or 1 end
-if el.id == "height" then height = tonumber(el.value) or 2 end
-if el.id == "torch" then torch = tonumber(el.value) or 6 end
-end
-ui.clear()
-print("Starting Tunnel Operation...")
-print(string.format("L: %d, W: %d, H: %d", length, width, height))
-sleep(1)
-factory.run({ "tunnel", "--length", tostring(length), "--width", tostring(width), "--height", tostring(height), "--torch-interval", tostring(torch) })
-return pauseAndReturn("stay")
-end
-local function runExcavate()
-local length = 8
-local width = 8
-local depth = 3
-local form = ui.Form("Excavation Configuration")
-form:addInput("length", "Length", tostring(length))
-form:addInput("width", "Width", tostring(width))
-form:addInput("depth", "Depth", tostring(depth))
-local result = form:run()
-if result == "cancel" then return "stay" end
-for _, el in ipairs(form.elements) do
-if el.id == "length" then length = tonumber(el.value) or 8 end
-if el.id == "width" then width = tonumber(el.value) or 8 end
-if el.id == "depth" then depth = tonumber(el.value) or 3 end
-end
-ui.clear()
-print("Starting Excavation Operation...")
-print(string.format("L: %d, W: %d, D: %d", length, width, depth))
-sleep(1)
-factory.run({ "excavate", "--length", tostring(length), "--width", tostring(width), "--depth", tostring(depth) })
-return pauseAndReturn("stay")
-end
-local function runTreeFarm()
-local width = 9
-local height = 9
-local selected = 1 -- 1: Width, 2: Height, 3: FARM
-while true do
-ui.clear()
-ui.drawFrame(2, 2, 26, 12, "Tree Farm Setup")
-ui.label(4, 5, "Width: ")
-if selected == 1 then
-if term.isColor() then term.setTextColor(colors.yellow) end
-term.write("< " .. width .. " >")
-else
-if term.isColor() then term.setTextColor(colors.white) end
-term.write("  " .. width .. "  ")
-end
-ui.label(4, 7, "Height:")
-if selected == 2 then
-if term.isColor() then term.setTextColor(colors.yellow) end
-term.write("< " .. height .. " >")
-else
-if term.isColor() then term.setTextColor(colors.white) end
-term.write("  " .. height .. "  ")
-end
-ui.button(8, 10, "FARM", selected == 3)
-local event, key = os.pullEvent("key")
-if key == keys.up then
-selected = selected - 1
-if selected < 1 then selected = 3 end
-elseif key == keys.down then
-selected = selected + 1
-if selected > 3 then selected = 1 end
-elseif key == keys.left then
-if selected == 1 then width = math.max(1, width - 1) end
-if selected == 2 then height = math.max(1, height - 1) end
-elseif key == keys.right then
-if selected == 1 then width = width + 1 end
-if selected == 2 then height = height + 1 end
-elseif key == keys.enter then
-if selected == 3 then
-ui.clear()
-print("Starting Tree Farm...")
-print(string.format("Size: %d x %d", width, height))
-sleep(1)
-factory.run({ "treefarm", "--width", tostring(width), "--height", tostring(height) })
-return pauseAndReturn("stay")
-end
-elseif key == keys.q then
-return "stay"
-end
-end
-end
-local function runPotatoFarm()
-local width = 9
-local height = 9
-local selected = 1 -- 1: Width, 2: Height, 3: FARM
-while true do
-ui.clear()
-ui.drawFrame(2, 2, 26, 12, "Potato Farm Setup")
-ui.label(4, 5, "Width: ")
-if selected == 1 then
-if term.isColor() then term.setTextColor(colors.yellow) end
-term.write("< " .. width .. " >")
-else
-if term.isColor() then term.setTextColor(colors.white) end
-term.write("  " .. width .. "  ")
-end
-ui.label(4, 7, "Height:")
-if selected == 2 then
-if term.isColor() then term.setTextColor(colors.yellow) end
-term.write("< " .. height .. " >")
-else
-if term.isColor() then term.setTextColor(colors.white) end
-term.write("  " .. height .. "  ")
-end
-ui.button(8, 10, "FARM", selected == 3)
-local event, key = os.pullEvent("key")
-if key == keys.up then
-selected = selected - 1
-if selected < 1 then selected = 3 end
-elseif key == keys.down then
-selected = selected + 1
-if selected > 3 then selected = 1 end
-elseif key == keys.left then
-if selected == 1 then width = math.max(1, width - 1) end
-if selected == 2 then height = math.max(1, height - 1) end
-elseif key == keys.right then
-if selected == 1 then width = width + 1 end
-if selected == 2 then height = height + 1 end
-elseif key == keys.enter then
-if selected == 3 then
-ui.clear()
-print("Starting Potato Farm...")
-print(string.format("Size: %d x %d", width, height))
-sleep(1)
-factory.run({ "potatofarm", "--width", tostring(width), "--height", tostring(height) })
-return pauseAndReturn("stay")
-end
-elseif key == keys.q then
-return "stay"
-end
-end
-end
-local function runBuild(schemaFile)
-ui.clear()
-print("Starting Build Operation...")
-print("Schema: " .. schemaFile)
-sleep(1)
-factory.run({ schemaFile })
-return pauseAndReturn("stay")
-end
-local function runEditSchema(schemaFile)
-ui.clear()
-print("Validating Schema...")
-print("Schema: " .. schemaFile)
-local ctx = {}
-local ok, schema, metadata = parser.parseFile(ctx, schemaFile)
-if not ok then
-print("Failed to parse schema: " .. tostring(schema))
-return pauseAndReturn("stay")
-end
-local editedSchema, exportInfo = designer.run({
-schema = schema,
-metadata = metadata,
-returnSchema = true,
-})
-if not editedSchema then
-local errMsg = exportInfo or "Editor closed without returning a schema."
-print(tostring(errMsg))
-return pauseAndReturn("stay")
-end
-print(string.format("Editor returned %d blocks.", (exportInfo and exportInfo.totalBlocks) or 0))
-local defaultName = schemaFile
-local form = ui.Form("Save Edited Schema")
-form:addInput("filename", "Filename", defaultName)
-local result = form:run()
-if result == "cancel" then return "stay" end
-local filename = defaultName
-for _, el in ipairs(form.elements) do
-if el.id == "filename" then filename = el.value end
-end
-if filename == "" then filename = defaultName end
-if not filename:match("%.json$") then filename = filename .. ".json" end
-if fs.exists(filename) then
-local backup = filename .. ".bak"
-fs.copy(filename, backup)
-print("Existing file backed up to " .. backup)
-end
-local definition = schema_utils.canonicalToVoxelDefinition(editedSchema)
-local f = fs.open(filename, "w")
-f.write(json.encode(definition))
-f.close()
-print("Saved edited schema to " .. filename)
-return pauseAndReturn("stay")
-end
-local function runImportSchema()
-local url = ""
-local filename = "schema.json"
-local form = ui.Form("Import Schema")
-form:addInput("url", "URL/Code", url)
-form:addInput("filename", "Save As", filename)
-local result = form:run()
-if result == "cancel" then return "stay" end
-for _, el in ipairs(form.elements) do
-if el.id == "url" then url = el.value end
-if el.id == "filename" then filename = el.value end
-end
-if url == "" then
-print("URL is required.")
-return pauseAndReturn("stay")
-end
-ui.clear()
-print("Downloading " .. url .. "...")
-if not url:find("http") then
-url = "https://pastebin.com/raw/" .. url
-end
-if not http then
-print("HTTP API not enabled.")
-return pauseAndReturn("stay")
-end
-local response = http.get(url)
-if not response then
-print("Failed to download.")
-return pauseAndReturn("stay")
-end
-local content = response.readAll()
-response.close()
-local f = fs.open(filename, "w")
-f.write(content)
-f.close()
-print("Saved to " .. filename)
-return pauseAndReturn("stay")
-end
-local function runSchemaDesigner()
-ui.clear()
-designer.run()
-return pauseAndReturn("stay")
-end
-local function getSchemaFiles()
-local files = fs.list("")
-local schemas = {}
-for _, file in ipairs(files) do
-if not fs.isDir(file) and (file:match("%.json$") or file:match("%.txt$")) then
-table.insert(schemas, file)
-end
-end
-if fs.exists("disk") and fs.isDir("disk") then
-local diskFiles = fs.list("disk")
-for _, file in ipairs(diskFiles) do
-if file:match("%.json$") or file:match("%.txt$") then
-table.insert(schemas, "disk/" .. file)
-end
-end
-end
-return schemas
-end
-local function showBuildMenu()
-while true do
-local schemas = getSchemaFiles()
-local items = {}
-for _, schema in ipairs(schemas) do
-table.insert(items, {
-text = schema,
-callback = function() return runBuild(schema) end
-})
-end
-table.insert(items, { text = "Back", callback = function() return "back" end })
-local res = ui.runMenu("Select Schema", items)
-if res == "back" then return end
-end
-end
-local function showEditMenu()
-while true do
-local schemas = getSchemaFiles()
-local items = {}
-for _, schema in ipairs(schemas) do
-table.insert(items, {
-text = "Edit " .. schema,
-callback = function() return runEditSchema(schema) end
-})
-end
-table.insert(items, { text = "Back", callback = function() return "back" end })
-local res = ui.runMenu("Validate & Edit Schema", items)
-if res == "back" then return end
-end
-end
-local function showMiningWizard()
-local form = {
-title = "Mining Wizard",
-elements = {
-{ type = "label", x = 2, y = 2, text = "Tunnel Length:" },
-{ type = "input", x = 18, y = 2, width = 5, value = "64", id = "length" },
-{ type = "label", x = 2, y = 4, text = "Branch Interval:" },
-{ type = "input", x = 18, y = 4, width = 5, value = "3", id = "interval" },
-{ type = "label", x = 2, y = 6, text = "Branch Length:" },
-{ type = "input", x = 18, y = 6, width = 5, value = "16", id = "branch_length" },
-{ type = "label", x = 2, y = 8, text = "Torch Interval:" },
-{ type = "input", x = 18, y = 8, width = 5, value = "6", id = "torch" },
-{ type = "button", x = 2, y = 11, text = "Start Mining", callback = runMining },
-{ type = "button", x = 18, y = 11, text = "Cancel", callback = function() return "back" end }
-}
-}
-return ui.runForm(form)
-end
-local function showMineMenu()
-while true do
-local res = ui.runMenu("Mining Operations", {
-{ text = "Branch Mining", callback = showMiningWizard },
-{ text = "Tunnel", callback = runTunnel },
-{ text = "Excavate", callback = runExcavate },
-{ text = "Back", callback = function() return "back" end }
-})
-if res == "back" then return end
-end
-end
-local function showFarmMenu()
-while true do
-local res = ui.runMenu("Farming Operations", {
-{ text = "Tree Farm", callback = runTreeFarm },
-{ text = "Potato Farm", callback = runPotatoFarm },
-{ text = "Back", callback = function() return "back" end }
-})
-if res == "back" then return end
-end
-end
-local function showSystemMenu()
-while true do
-local res = ui.runMenu("System Tools", {
-{ text = "Import Schema", callback = runImportSchema },
-{ text = "Validate & Edit Schema", callback = showEditMenu },
-{ text = "Schema Designer", callback = runSchemaDesigner },
-{ text = "Back", callback = function() return "back" end }
-})
-if res == "back" then return end
-end
-end
-local function showGamesMenu()
-while true do
-local res = ui.runMenu("Games", {
-{ text = "Solitaire", callback = games.solitaire },
-{ text = "Minesweeper", callback = games.minesweeper },
-{ text = "Euchre", callback = games.euchre },
-{ text = "Back", callback = function() return "back" end }
-})
-if res == "back" then return end
-end
-end
-local function showMainMenu()
-while true do
-local res = ui.runMenu(version.display(), {
-{ text = "MINE >", callback = showMineMenu },
-{ text = "FARM >", callback = showFarmMenu },
-{ text = "BUILD >", callback = showBuildMenu },
-{ text = "GAMES >", callback = showGamesMenu },
-{ text = "SYSTEM >", callback = showSystemMenu },
-{ text = "Exit", callback = function() return "exit" end }
-})
-if res == "exit" then return "exit" end
-end
-end
-local function main()
-showMainMenu()
-ui.clear()
-print("Goodbye!")
-end
-main()]]
 files["games/arcade.lua"] = [[local ok, mod = pcall(require, "arcade")
 if ok and mod then
 return mod
@@ -6150,6 +5754,115 @@ end
 diagnostics.snapshot = snapshot
 diagnostics.requireStrategy = requireStrategy
 return diagnostics]]
+files["lib/lib_farming.lua"] = [[local movement = require("lib_movement")
+local inventory = require("lib_inventory")
+local fuelLib = require("lib_fuel")
+local logger = require("lib_logger")
+local farming = {}
+function farming.deposit(ctx, config)
+local chests = config.chests or ctx.chests
+if not chests then
+logger.log(ctx, "error", "No chests defined for deposit.")
+return false
+end
+logger.log(ctx, "info", "Heading home to deposit items...")
+local safeHeight = config.safeHeight or 6
+if not movement.goTo(ctx, { x=0, y=safeHeight, z=0 }) then
+return false, "Failed to go home"
+end
+local descendRetries = 0
+while movement.getPosition(ctx).y > 0 do
+local hasDown, dataDown = turtle.inspectDown()
+if hasDown and not dataDown.name:find("air") and not dataDown.name:find("chest") then
+turtle.digDown()
+end
+if not movement.down(ctx) then
+turtle.digDown()
+end
+descendRetries = descendRetries + 1
+if descendRetries > 50 then
+logger.log(ctx, "error", "Failed to descend to home level.")
+return false, "Failed to descend"
+end
+end
+if chests.output then
+movement.face(ctx, chests.output)
+logger.log(ctx, "info", "Dropping items...")
+for i=1, 16 do
+local item = turtle.getItemDetail(i)
+if item then
+local keepCount = 0
+if config.keepItems then
+for k, v in pairs(config.keepItems) do
+if item.name == k or item.name:find(k) then
+keepCount = v
+break
+end
+end
+end
+if keepCount > 0 then
+if item.count > keepCount then
+turtle.select(i)
+turtle.drop(item.count - keepCount)
+end
+else
+local isFuel = turtle.refuel(0)
+local isTrash = false
+if config.trashItems then
+for _, t in ipairs(config.trashItems) do
+if item.name == t then isTrash = true break end
+end
+end
+if not isFuel and not isTrash then
+turtle.select(i)
+turtle.drop()
+end
+end
+end
+end
+end
+if config.refuel and chests.fuel then
+movement.face(ctx, chests.fuel)
+logger.log(ctx, "info", "Refueling...")
+turtle.suck()
+fuelLib.refuel(ctx, { target = 1000 })
+local item = turtle.getItemDetail()
+if item and turtle.refuel(0) then
+turtle.drop()
+end
+end
+if chests.trash then
+movement.face(ctx, chests.trash)
+logger.log(ctx, "info", "Trashing junk...")
+for i=1, 16 do
+local item = turtle.getItemDetail(i)
+if item then
+local isTrash = false
+if config.trashItems then
+for _, t in ipairs(config.trashItems) do
+if item.name == t then isTrash = true break end
+end
+end
+local keepCount = 0
+if config.keepItems then
+for k, v in pairs(config.keepItems) do
+if item.name == k or item.name:find(k) then
+keepCount = v
+break
+end
+end
+end
+local isFuel = turtle.refuel(0)
+if isTrash or (keepCount == 0 and not isFuel) then
+turtle.select(i)
+turtle.drop()
+end
+end
+end
+end
+return true
+end
+return farming]]
 files["lib/lib_fs.lua"] = [[local fs_utils = {}
 local createdArtifacts = {}
 function fs_utils.stageArtifact(path)
@@ -7534,49 +7247,6 @@ end
 end
 end
 return initialize]]
-files["lib/lib_inventory_utils.lua"] = [[local inventory_utils = {}
-local common = require("harness_common")
-function inventory_utils.hasMaterial(material)
-if not turtle or not turtle.getItemDetail then
-return false
-end
-for slot = 1, 16 do
-local detail = turtle.getItemDetail(slot)
-if detail and detail.name == material and detail.count and detail.count > 0 then
-return true
-end
-end
-return false
-end
-function inventory_utils.ensureMaterialPresent(io, material)
-if not turtle or not turtle.getItemDetail then
-return
-end
-if inventory_utils.hasMaterial(material) then
-return
-end
-if io.print then
-io.print("Turtle is missing " .. material .. ". Load it, then press Enter.")
-end
-repeat
-common.promptEnter(io, "")
-until inventory_utils.hasMaterial(material)
-end
-function inventory_utils.ensureMaterialAbsent(io, material)
-if not turtle or not turtle.getItemDetail then
-return
-end
-if not inventory_utils.hasMaterial(material) then
-return
-end
-if io.print then
-io.print("Remove all " .. material .. " from the turtle inventory, then press Enter.")
-end
-repeat
-common.promptEnter(io, "")
-until not inventory_utils.hasMaterial(material)
-end
-return inventory_utils]]
 files["lib/lib_inventory.lua"] = [[local inventory = {}
 local movement = require("lib_movement")
 local logger = require("lib_logger")
@@ -10276,6 +9946,12 @@ canClear = true
 elseif allowDig then
 plannedMaterial = getPlannedMaterial(ctx, targetPos)
 canClear = true
+if inspectData and inspectData.name and (inspectData.name:find("chest") or inspectData.name:find("barrel")) then
+if not opts or not opts.forceDigChests then
+canClear = false
+logger.log(ctx, "warn", "Refusing to dig chest/barrel at " .. tostring(inspectData.name))
+end
+end
 if plannedMaterial then
 if inspectData and inspectData.name then
 if inspectData.name == plannedMaterial then
@@ -13214,6 +12890,8 @@ print(string.format("- %s: %s", label, req.name))
 end
 print("\nPress [Enter] to verify setup.")
 read()
+print("Aligning to NORTH (Front)...")
+movement.faceDirection(ctx, "north")
 local missing = {}
 for dir, req in pairs(requirements) do
 if not movement.faceDirection(ctx, dir) then
@@ -13237,9 +12915,59 @@ print("\nIssues found:")
 for _, m in ipairs(missing) do
 print("- " .. m)
 end
-print("\nPress [Enter] to try again, or type 'skip' to ignore.")
+print("\nOptions:")
+print("  [Enter] Try again")
+print("  'auto'  Auto-align orientation to chests")
+print("  'skip'  Ignore errors")
 local input = read()
 if input == "skip" then return true end
+if input == "auto" then
+print("Scanning surroundings to auto-align...")
+local surroundings = {}
+for i = 0, 3 do
+local hasBlock, data = turtle.inspect()
+if hasBlock and (data.name:find("chest") or data.name:find("barrel")) then
+surroundings[i] = true
+else
+surroundings[i] = false
+end
+turtle.turnRight()
+end
+local CARDINALS = {"north", "east", "south", "west"}
+local bestScore = -1
+local bestFacing = nil
+for i, candidate in ipairs(CARDINALS) do
+local score = 0
+for dir, req in pairs(requirements) do
+if req.type == "chest" then
+local dirIdx = -1
+for k, v in ipairs(CARDINALS) do if v == dir then dirIdx = k break end end
+local candIdx = i
+if dirIdx ~= -1 then
+local offset = (dirIdx - candIdx) % 4
+if surroundings[offset] then
+score = score + 1
+end
+end
+end
+end
+if score > bestScore then
+bestScore = score
+bestFacing = candidate
+end
+end
+if bestFacing and bestScore > 0 then
+print("Auto-aligned to " .. bestFacing .. " (Score: " .. bestScore .. ")")
+ctx.movement = ctx.movement or {}
+ctx.movement.facing = bestFacing
+ctx.origin = ctx.origin or {}
+ctx.origin.facing = bestFacing
+sleep(1)
+else
+print("Could not determine orientation.")
+sleep(1)
+end
+end
 end
 end
 end
@@ -14065,7 +13793,7 @@ files["lib/version.lua"] = [[local version = {}
 version.MAJOR = 2
 version.MINOR = 1
 version.PATCH = 1
-version.BUILD = 16
+version.BUILD = 22
 function version.toString()
 return string.format("v%d.%d.%d (build %d)",
 version.MAJOR, version.MINOR, version.PATCH, version.BUILD)
@@ -14208,11 +13936,11 @@ end]]
 files["startup.lua"] = [[local platform = turtle and "turtle" or "computer"
 package.path = package.path .. ";/?.lua;/lib/?.lua;/arcade/?.lua;/factory/?.lua"
 if platform == "turtle" then
-local turtle_os = "/factory/turtle_os.lua"
-if fs.exists(turtle_os) then
-shell.run(turtle_os)
+local factory_main = "/factory/main.lua"
+if fs.exists(factory_main) then
+shell.run(factory_main)
 else
-print("Factory TurtleOS not found at " .. turtle_os)
+print("Factory Main not found at " .. factory_main)
 end
 else
 local arcade_shell = "/arcade/arcade_shell.lua"
@@ -14228,7 +13956,7 @@ if fs.exists("arcade") then fs.delete("arcade") end
 if fs.exists("lib") then fs.delete("lib") end
 if fs.exists("factory") then fs.delete("factory") end
 
-print("Unpacking 65 files...")
+print("Unpacking 64 files...")
 for path, content in pairs(files) do
     local dir = fs.getDir(path)
     if dir ~= "" and not fs.exists(dir) then

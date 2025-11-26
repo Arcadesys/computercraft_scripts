@@ -10,6 +10,7 @@ local fuelLib = require("lib_fuel")
 local logger = require("lib_logger")
 local wizard = require("lib_wizard")
 local startup = require("lib_startup")
+local farming = require("lib_farming")
 
 local function POTATOFARM(ctx)
     local pf = ctx.potatofarm
@@ -132,66 +133,18 @@ local function POTATOFARM(ctx)
              logger.log(ctx, "error", "Missing output chest configuration.")
              return "ERROR"
         end
-        logger.log(ctx, "info", "Depositing items...")
-        movement.goTo(ctx, { x=0, y=2, z=0 }) -- Return to start, safe height
         
-        -- Descend to 0 to access chests
-        while movement.getPosition(ctx).y > 0 do
-             if not movement.down(ctx) then
-                 turtle.digDown()
-             end
-        end
-        
-        -- Output (South)
-        movement.face(ctx, pf.chests.output)
-        
-        local keptPotatoes = 0
-        local keepAmount = 64 -- Keep one stack for replanting
-        
-        -- First pass: Count potatoes we already have in "safe" slots? 
-        -- No, just iterate and decide.
-        
-        for i=1, 16 do
-            local item = turtle.getItemDetail(i)
-            if item then
-                if item.name == "minecraft:potato" then
-                    if keptPotatoes < keepAmount then
-                        local canKeep = keepAmount - keptPotatoes
-                        if item.count <= canKeep then
-                            keptPotatoes = keptPotatoes + item.count
-                        else
-                            -- Split stack
-                            local toDrop = item.count - canKeep
-                            turtle.select(i)
-                            if not turtle.drop(toDrop) then
-                                logger.log(ctx, "warn", "Output chest full.")
-                                sleep(5)
-                            end
-                            keptPotatoes = keptPotatoes + canKeep
-                        end
-                    else
-                        -- Dump all
-                        turtle.select(i)
-                        if not turtle.drop() then
-                             logger.log(ctx, "warn", "Output chest full.")
-                             sleep(5)
-                        end
-                    end
-                elseif item.name == "minecraft:poisonous_potato" then
-                    -- Dump to output
-                    turtle.select(i)
-                    turtle.drop()
-                else
-                    -- Check if it is fuel
-                    turtle.select(i)
-                    if not turtle.refuel(0) and not item.name:find("chest") then
-                        -- Trash
-                        movement.face(ctx, pf.chests.trash)
-                        turtle.drop()
-                        movement.face(ctx, pf.chests.output)
-                    end
-                end
-            end
+        local ok, err = farming.deposit(ctx, {
+            safeHeight = 2,
+            chests = pf.chests,
+            keepItems = { ["minecraft:potato"] = 64 },
+            trashItems = { "minecraft:poisonous_potato" },
+            refuel = true
+        })
+
+        if not ok then
+            logger.log(ctx, "error", "Deposit failed: " .. tostring(err))
+            return "ERROR"
         end
         
         pf.state = "WAIT"

@@ -490,6 +490,14 @@ local function moveWithRetries(ctx, opts, moveFns, delta)
             elseif allowDig then
                 plannedMaterial = getPlannedMaterial(ctx, targetPos)
                 canClear = true
+                
+                -- Safety check: Do not dig chests/barrels unless explicitly allowed
+                if inspectData and inspectData.name and (inspectData.name:find("chest") or inspectData.name:find("barrel")) then
+                    if not opts or not opts.forceDigChests then
+                        canClear = false
+                        logger.log(ctx, "warn", "Refusing to dig chest/barrel at " .. tostring(inspectData.name))
+                    end
+                end
 
                 if plannedMaterial then
                     if inspectData and inspectData.name then

@@ -10,6 +10,7 @@ local fuelLib = require("lib_fuel")
 local logger = require("lib_logger")
 local wizard = require("lib_wizard")
 local startup = require("lib_startup")
+local farming = require("lib_farming")
 
 local function selectSapling(ctx)
     inventory.scan(ctx)
@@ -163,70 +164,16 @@ local function TREEFARM(ctx)
         return "TREEFARM"
 
     elseif tf.state == "DEPOSIT" then
-        logger.log(ctx, "info", "Inventory full (or scan done). Heading home to unload.")
+        local ok, err = farming.deposit(ctx, {
+            safeHeight = 6,
+            chests = tf.chests,
+            keepItems = { ["sapling"] = 16 },
+            refuel = true
+        })
         
-        -- Go to above home to avoid obstacles
-        movement.goTo(ctx, { x=0, y=6, z=0 })
-        
-        -- Descend to 0, digging if needed (in case tree grew at 0,0)
-        while movement.getPosition(ctx).y > 0 do
-             local hasDown, dataDown = turtle.inspectDown()
-             if hasDown and not dataDown.name:find("air") and not dataDown.name:find("chest") then
-                 -- Don't dig chests if we somehow are above them (unlikely at 0,0)
-                 turtle.digDown()
-             end
-             if not movement.down(ctx) then
-                 turtle.digDown()
-             end
-        end
-        
-        -- 1. Output Logs (South)
-        logger.log(ctx, "info", "Dropping off logs.")
-        movement.face(ctx, tf.chests.output)
-        for i=1, 16 do
-            local item = turtle.getItemDetail(i)
-            if item and item.name:find("log") then
-                turtle.select(i)
-                while not turtle.drop() do
-                    logger.log(ctx, "warn", "Output chest full. Waiting...")
-                    sleep(5)
-                end
-            end
-        end
-
-        -- 2. Fuel Maintenance (West)
-        logger.log(ctx, "info", "Checking fuel reserves.")
-        movement.face(ctx, tf.chests.fuel)
-        turtle.suck() -- Grab some fuel
-        fuelLib.refuel(ctx, { target = 1000, excludeItems = { "sapling", "log" } })
-        
-        -- 3. Trash (East)
-        logger.log(ctx, "info", "Taking out the trash.")
-        movement.face(ctx, tf.chests.trash)
-        for i=1, 16 do
-            local item = turtle.getItemDetail(i)
-            if item then
-                local isLog = item.name:find("log")
-                local isSapling = item.name:find("sapling")
-                
-                turtle.select(i)
-                if isLog then
-                    -- Skip logs (should be gone)
-                elseif isSapling then
-                    -- Keep 16 saplings, dump rest
-                    if turtle.getItemCount(i) > 16 then
-                        turtle.drop(turtle.getItemCount(i) - 16)
-                    end
-                else
-                    -- Check if it is fuel
-                    if turtle.refuel(0) then
-                        -- Keep fuel
-                    else
-                        -- Not fuel, not log, not sapling. Trash.
-                        turtle.drop()
-                    end
-                end
-            end
+        if not ok then
+            logger.log(ctx, "error", "Deposit failed: " .. tostring(err))
+            return "ERROR"
         end
         
         tf.state = "WAIT"

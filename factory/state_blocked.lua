@@ -19,7 +19,7 @@ local function BLOCKED(ctx)
         return "ERROR"
     end
     ctx.resumeState = nil
-    ctx.retries = 0
+    -- ctx.retries is NOT reset here, so it accumulates if the next attempt fails immediately
     return resume
 end
 

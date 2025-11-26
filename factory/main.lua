@@ -247,23 +247,25 @@ local function main(args)
         ctx.config.schemaPath = "schema.json"
     end
 
-    logger.init(ctx.config.verbose)
-    logger.info("Agent starting...")
+    ctx.logger = logger.new({
+        level = ctx.config.verbose and "debug" or "info"
+    })
+    ctx.logger:info("Agent starting...")
 
     -- State machine loop
     while ctx.state ~= "EXIT" do
         local currentStateFunc = states[ctx.state]
         if not currentStateFunc then
-            logger.error("Unknown state: " .. tostring(ctx.state))
+            ctx.logger:error("Unknown state: " .. tostring(ctx.state))
             break
         end
 
-        logger.debug("Entering state: " .. ctx.state)
+        ctx.logger:debug("Entering state: " .. ctx.state)
         
         local ok, nextStateOrErr = pcall(currentStateFunc, ctx)
         
         if not ok then
-            logger.error("Crash in state " .. ctx.state .. ": " .. tostring(nextStateOrErr))
+            ctx.logger:error("Crash in state " .. ctx.state .. ": " .. tostring(nextStateOrErr))
             ctx.lastError = nextStateOrErr
             ctx.state = "ERROR"
         else
@@ -274,7 +276,7 @@ local function main(args)
         sleep(0) -- Yield to avoid "Too long without yielding"
     end
 
-    logger.info("Agent finished.")
+    ctx.logger:info("Agent finished.")
     
     if ctx.lastError then
         print("Agent finished: " .. tostring(ctx.lastError))
