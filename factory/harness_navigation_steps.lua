@@ -13,19 +13,27 @@ function navigation_steps.checkTurtle()
         return false, "turtle fuel API unavailable"
     end
     local fuel = turtle.getFuelLevel()
-    if fuel ~= "unlimited" and fuel < 20 then
+    if fuel == "unlimited" then fuel = math.huge end
+    if type(fuel) ~= "number" then fuel = 0 end
+
+    if fuel < 20 then
         -- Attempt simple refuel from inventory
         for i=1,16 do
             turtle.select(i)
             if turtle.refuel(0) then
                 turtle.refuel(1)
-                if turtle.getFuelLevel() >= 20 then break end
+                local current = turtle.getFuelLevel()
+                if current == "unlimited" then current = math.huge end
+                if type(current) ~= "number" then current = 0 end
+                if current >= 20 then break end
             end
         end
         fuel = turtle.getFuelLevel()
+        if fuel == "unlimited" then fuel = math.huge end
+        if type(fuel) ~= "number" then fuel = 0 end
     end
 
-    if fuel ~= "unlimited" and fuel < 20 then
+    if fuel < 20 then
         return false, "not enough fuel (need >= 20)"
     end
     return true

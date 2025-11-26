@@ -57,6 +57,8 @@ local function TREEFARM(ctx)
                 -- 1. Try inventory
                 fuelLib.refuel(ctx, { target = needed, excludeItems = { "sapling", "log" } })
                 current = turtle.getFuelLevel()
+                if current == "unlimited" then current = math.huge end
+                if type(current) ~= "number" then current = 0 end
                 
                 -- 2. Try fuel chest
                 if current < needed and tf.chests and tf.chests.fuel then
@@ -72,6 +74,8 @@ local function TREEFARM(ctx)
                         end
                         fuelLib.refuel(ctx, { target = needed, excludeItems = { "sapling", "log" } })
                         current = turtle.getFuelLevel()
+                        if current == "unlimited" then current = math.huge end
+                        if type(current) ~= "number" then current = 0 end
                         attempts = attempts + 1
                     end
                 end

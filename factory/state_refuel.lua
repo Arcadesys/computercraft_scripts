@@ -34,7 +34,11 @@ local function REFUEL(ctx)
     fuelLib.refuel(ctx, { target = target, excludeItems = { "minecraft:torch" } })
     
     ---@diagnostic disable-next-line: undefined-global
-    if turtle.getFuelLevel() > 1000 then
+    local level = turtle.getFuelLevel()
+    if level == "unlimited" then level = math.huge end
+    if type(level) ~= "number" then level = 0 end
+
+    if level > 1000 then
         local resume = ctx.resumeState or "BUILD"
         ctx.resumeState = nil
         return resume

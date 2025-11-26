@@ -232,6 +232,7 @@ local function CHECK_REQUIREMENTS(ctx)
     local invCounts = getInventoryCounts(ctx)
     local currentFuel = turtle.getFuelLevel()
     if currentFuel == "unlimited" then currentFuel = 999999 end
+    if type(currentFuel) ~= "number" then currentFuel = 0 end
 
     local missing = {
         fuel = 0,
@@ -248,6 +249,7 @@ local function CHECK_REQUIREMENTS(ctx)
         
         currentFuel = turtle.getFuelLevel()
         if currentFuel == "unlimited" then currentFuel = 999999 end
+        if type(currentFuel) ~= "number" then currentFuel = 0 end
     end
 
     if currentFuel < reqs.fuel then
