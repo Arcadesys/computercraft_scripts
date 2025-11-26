@@ -77,128 +77,6 @@ local function calculateBranchmineRequirements(ctx)
     return reqs
 end
 
-local function getInventoryCounts(ctx)
-    local counts = {}
-    -- Scan all slots
-    for i = 1, 16 do
-        local item = turtle.getItemDetail(i)
-        if item then
-            counts[item.name] = (counts[item.name] or 0) + item.count
-        end
-    end
-    return counts
-end
-
-local function retrieveFromNearby(ctx, missing)
-    local sides = {"front", "top", "bottom", "left", "right", "back"}
-    local pulledAny = false
-    
-    for _, side in ipairs(sides) do
-        if peripheral.isPresent(side) then
-            local types = { peripheral.getType(side) }
-            local isInventory = false
-            for _, t in ipairs(types) do
-                if t == "inventory" then isInventory = true break end
-            end
-            
-            if isInventory then
-                local p = peripheral.wrap(side)
-                if p and p.list then
-                    local list = p.list()
-                    local neededFromChest = {}
-                    for slot, item in pairs(list) do
-                        if item and missing[item.name] and missing[item.name] > 0 then
-                            neededFromChest[item.name] = true
-                        end
-                    end
-                    
-                    -- Check if we need anything from this chest
-                    local hasNeeds = false
-                    for k,v in pairs(neededFromChest) do hasNeeds = true break end
-                    
-                    if hasNeeds then
-                        local pullSide = "forward"
-                        local turned = false
-                        
-                        -- Turn to face the chest if needed
-                        if side == "top" then pullSide = "up"
-                        elseif side == "bottom" then pullSide = "down"
-                        elseif side == "front" then pullSide = "forward"
-                        elseif side == "left" then
-                            movement.turnLeft(ctx)
-                            turned = true
-                            pullSide = "forward"
-                        elseif side == "right" then
-                            movement.turnRight(ctx)
-                            turned = true
-                            pullSide = "forward"
-                        elseif side == "back" then
-                            movement.turnRight(ctx)
-                            movement.turnRight(ctx)
-                            turned = true
-                            pullSide = "forward"
-                        end
-                        
-                        -- Pull all needed items
-                        for mat, _ in pairs(neededFromChest) do
-                            local amount = missing[mat]
-                            if amount > 0 then
-                                print(string.format("Attempting to pull %s from %s...", mat, side))
-                                local success, err = inventory.pullMaterial(ctx, mat, amount, { side = pullSide })
-                                if success then
-                                    pulledAny = true
-                                    missing[mat] = math.max(0, missing[mat] - amount)
-                                else
-                                     logger.log(ctx, "warn", "Failed to pull " .. mat .. ": " .. tostring(err))
-                                end
-                            end
-                        end
-                        
-                        -- Restore facing
-                        if turned then
-                            if side == "left" then movement.turnRight(ctx)
-                            elseif side == "right" then movement.turnLeft(ctx)
-                            elseif side == "back" then 
-                                movement.turnRight(ctx)
-                                movement.turnRight(ctx)
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return pulledAny
-end
-
-local function checkNearbyChests(ctx, missing)
-    local found = {}
-    local sides = {"front", "top", "bottom", "left", "right", "back"}
-    
-    for _, side in ipairs(sides) do
-        if peripheral.isPresent(side) then
-            local types = { peripheral.getType(side) }
-            local isInventory = false
-            for _, t in ipairs(types) do
-                if t == "inventory" then isInventory = true break end
-            end
-            
-            if isInventory then
-                local p = peripheral.wrap(side)
-                if p and p.list then
-                    local list = p.list()
-                    for slot, item in pairs(list) do
-                        if item and missing[item.name] then
-                            found[item.name] = (found[item.name] or 0) + item.count
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return found
-end
-
 local function CHECK_REQUIREMENTS(ctx)
     logger.log(ctx, "info", "Checking requirements...")
 
@@ -229,7 +107,7 @@ local function CHECK_REQUIREMENTS(ctx)
             reqs = calculateRequirements(ctx, strategy)
         end
     end
-    local invCounts = getInventoryCounts(ctx)
+    local invCounts = inventory.getCounts(ctx)
     local currentFuel = turtle.getFuelLevel()
     if currentFuel == "unlimited" then currentFuel = 999999 end
     if type(currentFuel) ~= "number" then currentFuel = 0 end
@@ -282,9 +160,9 @@ local function CHECK_REQUIREMENTS(ctx)
 
     if hasMissing then
         print("Checking nearby chests for missing items...")
-        if retrieveFromNearby(ctx, missing.materials) then
+        if inventory.retrieveFromNearby(ctx, missing.materials) then
              -- Re-check inventory
-             invCounts = getInventoryCounts(ctx)
+             invCounts = inventory.getCounts(ctx)
              hasMissing = false
              missing.materials = {}
              for mat, count in pairs(reqs.materials) do
@@ -312,7 +190,7 @@ local function CHECK_REQUIREMENTS(ctx)
     end
 
     -- Check nearby
-    local nearby = checkNearbyChests(ctx, missing.materials)
+    local nearby = inventory.checkNearby(ctx, missing.materials)
     local foundNearby = false
     for mat, count in pairs(nearby) do
         if not foundNearby then

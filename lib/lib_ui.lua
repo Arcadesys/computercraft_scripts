@@ -435,4 +435,10 @@ function ui.Form(title)
     return self
 end
 
+function ui.toBlit(color)
+    if colors.toBlit then return colors.toBlit(color) end
+    local exponent = math.log(color) / math.log(2)
+    return string.sub("0123456789abcdef", exponent + 1, exponent + 1)
+end
+
 return ui

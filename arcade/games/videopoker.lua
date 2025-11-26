@@ -2,119 +2,15 @@
 package.loaded["arcade"] = nil
 
 local function setupPaths()
-    local program = shell.getRunningProgram()
-    local dir = fs.getDir(program)
-    local gamesDir = fs.getDir(program)
-    local arcadeDir = fs.getDir(gamesDir)
-    local root = fs.getDir(arcadeDir)
-    
-    local function add(path)
-        local part = fs.combine(root, path)
-        local pattern = "/" .. fs.combine(part, "?.lua")
-        if not string.find(package.path, pattern, 1, true) then
-            package.path = package.path .. ";" .. pattern
-        end
-    end
-    
-    add("lib")
-    add("arcade")
-    if not string.find(package.path, ";/?.lua", 1, true) then
-        package.path = package.path .. ";/?.lua"
-    end
+    local dir = fs.getDir(shell.getRunningProgram())
+    local boot = fs.combine(fs.getDir(dir), "boot.lua")
+    if fs.exists(boot) then dofile(boot) end
 end
 
 setupPaths()
 
 local arcade = require("arcade")
-
--- ==========================================
--- Card Logic
--- ==========================================
-
-local SUITS = {"S", "H", "D", "C"}
-local RANKS = {"2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"}
-local SUIT_COLORS = {S=colors.gray, H=colors.red, D=colors.red, C=colors.gray}
-local SUIT_SYMBOLS = {S="\6", H="\3", D="\4", C="\5"} -- ComputerCraft chars if available, else letters
-
-local function createDeck()
-    local deck = {}
-    for s=1,4 do
-        for r=1,13 do
-            table.insert(deck, {suit=SUITS[s], rank=r, rankStr=RANKS[r]})
-        end
-    end
-    return deck
-end
-
-local function shuffle(deck)
-    for i = #deck, 2, -1 do
-        local j = math.random(i)
-        deck[i], deck[j] = deck[j], deck[i]
-    end
-end
-
-local function getCardString(card)
-    return card.rankStr .. SUIT_SYMBOLS[card.suit]
-end
-
--- ==========================================
--- Hand Evaluation
--- ==========================================
-
-local function evaluateHand(hand)
-    -- Sort by rank
-    local sorted = {}
-    for _, c in ipairs(hand) do table.insert(sorted, c) end
-    table.sort(sorted, function(a,b) return a.rank < b.rank end)
-
-    local flush = true
-    local suit = sorted[1].suit
-    for i=2,5 do
-        if sorted[i].suit ~= suit then flush = false break end
-    end
-
-    local straight = true
-    for i=1,4 do
-        if sorted[i+1].rank ~= sorted[i].rank + 1 then
-            straight = false
-            break
-        end
-    end
-    -- Special case: A, 2, 3, 4, 5 (A is 13)
-    -- Sorted would be 2,3,4,5,A (ranks 1,2,3,4,13)
-    if not straight and sorted[5].rank == 13 and sorted[1].rank == 1 and sorted[2].rank == 2 and sorted[3].rank == 3 and sorted[4].rank == 4 then
-        straight = true
-    end
-
-    local counts = {}
-    for _, c in ipairs(sorted) do
-        counts[c.rank] = (counts[c.rank] or 0) + 1
-    end
-    local countsArr = {}
-    for r, c in pairs(counts) do table.insert(countsArr, {rank=r, count=c}) end
-    table.sort(countsArr, function(a,b) return a.count > b.count end)
-
-    local royal = straight and flush and sorted[1].rank == 9 -- 10,J,Q,K,A (ranks 9,10,11,12,13)
-    -- Wait, my ranks are 1=2... 9=10, 13=A.
-    -- 10 is rank 9.
-    -- If straight and flush and lowest is 9 (10), then Royal.
-    if straight and flush and sorted[1].rank == 9 then return "ROYAL_FLUSH", 250 end
-    if straight and flush then return "STRAIGHT_FLUSH", 50 end
-    if countsArr[1].count == 4 then return "FOUR_OF_A_KIND", 25 end
-    if countsArr[1].count == 3 and countsArr[2].count == 2 then return "FULL_HOUSE", 9 end
-    if flush then return "FLUSH", 6 end
-    if straight then return "STRAIGHT", 4 end
-    if countsArr[1].count == 3 then return "THREE_OF_A_KIND", 3 end
-    if countsArr[1].count == 2 and countsArr[2].count == 2 then return "TWO_PAIR", 2 end
-    if countsArr[1].count == 2 and (countsArr[1].rank >= 10 or countsArr[1].rank == 13) then -- J, Q, K, A (10,11,12,13)
-        -- Wait, rank 10 is J.
-        -- Ranks: 1=2, 2=3, 3=4, 4=5, 5=6, 6=7, 7=8, 8=9, 9=10, 10=J, 11=Q, 12=K, 13=A
-        -- Jacks or Better means rank >= 10.
-        return "JACKS_OR_BETTER", 1
-    end
-    
-    return "NONE", 0
-end
+local cards = require("lib_cards")
 
 -- ==========================================
 -- Game State
@@ -142,8 +38,8 @@ local game = {
     
     init = function(self, a)
         a:setButtons({"Bet One", "Deal", "Quit"})
-        deck = createDeck()
-        shuffle(deck)
+        deck = cards.createDeck()
+        cards.shuffle(deck)
     end,
 
     draw = function(self, a)
@@ -172,8 +68,8 @@ local game = {
             r:fillRect(x, startY, CARD_W, CARD_H, bg, colors.black, " ")
             
             if card then
-                local col = SUIT_COLORS[card.suit]
-                local txt = card.rankStr .. SUIT_SYMBOLS[card.suit]
+                local col = cards.SUIT_COLORS[card.suit]
+                local txt = card.rankStr .. cards.SUIT_SYMBOLS[card.suit]
                 r:drawLabelCentered(x, startY + 2, CARD_W, txt, col, bg)
                 
                 if currentState == STATE_DEAL and held[i] then
@@ -208,13 +104,13 @@ local game = {
             if currentState == STATE_BETTING or currentState == STATE_RESULT then
                 -- Deal
                 if a:consumeCredits(bet) then
-                    deck = createDeck()
-                    shuffle(deck)
+                    deck = cards.createDeck()
+                    cards.shuffle(deck)
                     hand = {}
                     held = {false, false, false, false, false}
                     for i=1,5 do table.insert(hand, table.remove(deck)) end
                     
-                    local name, payout = evaluateHand(hand)
+                    local name, payout = cards.evaluateHand(hand)
                     if payout > 0 then
                         message = "Hand: " .. name .. ". HOLD cards & DRAW."
                     else
@@ -235,7 +131,7 @@ local game = {
                     end
                 end
                 
-                local name, payout = evaluateHand(hand)
+                local name, payout = cards.evaluateHand(hand)
                 local win = payout * bet
                 if name == "ROYAL_FLUSH" and bet == 5 then win = 800 end -- Bonus for max bet
                 

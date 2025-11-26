@@ -4,45 +4,18 @@ package.loaded["arcade"] = nil
 package.loaded["log"] = nil
 
 local function setupPaths()
-    local program = shell.getRunningProgram()
-    local dir = fs.getDir(program)
-    -- slots is in arcade/games/slots.lua
-    -- dir is arcade/games
-    -- root is arcade
-    -- parent of root is installation root
-    local gamesDir = fs.getDir(program)
-    local arcadeDir = fs.getDir(gamesDir)
-    local root = fs.getDir(arcadeDir)
-    
-    local function add(path)
-        local part = fs.combine(root, path)
-        -- fs.combine strips leading slashes, so we force absolute path
-        local pattern = "/" .. fs.combine(part, "?.lua")
-        
-        if not string.find(package.path, pattern, 1, true) then
-            package.path = package.path .. ";" .. pattern
-        end
-    end
-    
-    add("lib")
-    add("arcade")
-
-    -- Ensure root is in path so require("arcade.ui.renderer") works
-    if not string.find(package.path, ";/?.lua", 1, true) then
-        package.path = package.path .. ";/?.lua"
-    end
+    local dir = fs.getDir(shell.getRunningProgram())
+    local boot = fs.combine(fs.getDir(dir), "boot.lua")
+    if fs.exists(boot) then dofile(boot) end
 end
 
 setupPaths()
 
 local arcade = require("arcade")
+local ui = require("lib_ui")
 
 -- Helper to create simple block textures
-local function toBlit(color)
-    if colors.toBlit then return colors.toBlit(color) end
-    local idx = math.floor(math.log(color, 2))
-    return ("0123456789abcdef"):sub(idx + 1, idx + 1)
-end
+local toBlit = ui.toBlit
 
 local function solidTex(char, fg, bg, w, h)
     local f = string.rep(toBlit(fg), w)

@@ -13,14 +13,6 @@ local diagnostics = require("lib_diagnostics")
 local world = require("lib_world")
 local startup = require("lib_startup")
 
-local function localToWorld(localPos, facing)
-    return world.localToWorld(localPos, facing)
-end
-
-local function addPos(p1, p2)
-    return { x = p1.x + p2.x, y = p1.y + p2.y, z = p1.z + p2.z }
-end
-
 local function BUILD(ctx)
     local strategy, errMsg = diagnostics.requireStrategy(ctx)
     if not strategy then
@@ -51,9 +43,7 @@ local function BUILD(ctx)
     -- 3. Move to position
     -- Convert local approach position to world position
     -- We assume ctx.origin is where we started.
-    local origin = ctx.origin
-    local worldOffset = localToWorld(step.approachLocal, origin.facing)
-    local targetPos = addPos(origin, worldOffset)
+    local targetPos = world.localToWorldRelative(ctx.origin, step.approachLocal)
     
     -- Use movement lib to go there
     -- We might want a "travel clearance" (fly high) strategy, but for now direct.

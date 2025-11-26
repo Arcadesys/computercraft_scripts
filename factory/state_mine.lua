@@ -15,12 +15,7 @@ local world = require("lib_world")
 local startup = require("lib_startup")
 
 local function localToWorld(ctx, localPos)
-    local rotated = world.localToWorld(localPos, ctx.origin.facing)
-    return {
-        x = ctx.origin.x + rotated.x,
-        y = ctx.origin.y + rotated.y,
-        z = ctx.origin.z + rotated.z
-    }
+    return world.localToWorldRelative(ctx.origin, localPos)
 end
 
 local function selectTorch(ctx)

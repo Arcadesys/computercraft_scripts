@@ -292,6 +292,15 @@ function world.localToWorld(localOffset, facing)
     }
 end
 
+function world.localToWorldRelative(origin, localPos)
+    local rotated = world.localToWorld(localPos, origin.facing)
+    return {
+        x = origin.x + rotated.x,
+        y = origin.y + rotated.y,
+        z = origin.z + rotated.z
+    }
+end
+
 function world.copyPosition(pos)
     if type(pos) ~= "table" then
         return nil
