@@ -5,6 +5,7 @@
 local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
 local files = {
     "arcade/arcade_shell.lua",
+    "arcade/arcade_arcade.lua",
     "arcade/arcade.lua",
     "arcade/arcadeos.lua",
     "arcade/data/programs.lua",

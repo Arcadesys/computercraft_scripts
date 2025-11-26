@@ -8,9 +8,27 @@ package.loaded["arcade"] = nil
 package.loaded["log"] = nil
 package.loaded["data.programs"] = nil
 
+local function detectProgramPath()
+  if shell and shell.getRunningProgram then
+    return shell.getRunningProgram()
+  end
+  if debug and debug.getinfo then
+    local info = debug.getinfo(1, "S")
+    if info and info.source then
+      local src = info.source
+      if src:sub(1, 1) == "@" then
+        src = src:sub(2)
+      end
+      return src
+    end
+  end
+  return nil
+end
+
 local function setupPaths()
-    local program = shell.getRunningProgram()
-    local dir = fs.getDir(program)
+  local program = detectProgramPath()
+  if not program then return end
+  local dir = fs.getDir(program)
     -- We expect to be in /arcade or /disk/arcade
     -- So parent of dir is the root.
     local root = fs.getDir(dir)
@@ -36,7 +54,7 @@ setupPaths()
 local LicenseStore = require("license_store")
 local version = require("version")
 
-local BASE_DIR = fs.getDir(shell and shell.getRunningProgram and shell.getRunningProgram() or "") or ""
+local BASE_DIR = fs.getDir(detectProgramPath() or "") or ""
 if BASE_DIR == "" then BASE_DIR = "." end
 
 local function resolvePath(rel)
@@ -437,6 +455,33 @@ local function launchProgram(program)
   end
 end
 
+local function launchArcadeArcadeUI()
+  local path = resolvePath("arcade_arcade.lua")
+  if not fs.exists(path) then
+    term.setBackgroundColor(colors.black)
+    term.clear()
+    term.setCursorPos(1,1)
+    print("ArcadeArcade UI missing at " .. path)
+    print("Press Enter to return...")
+    read()
+    return
+  end
+  term.setBackgroundColor(colors.black)
+  term.clear()
+  term.setCursorPos(1,1)
+  local ok, err = pcall(function()
+    shell.run(path)
+  end)
+  if not ok then
+    print("ArcadeArcade error: " .. tostring(err))
+    print("Press Enter to return...")
+    read()
+  else
+    os.sleep(0.4)
+  end
+  initState() -- Reload credits/licenses after returning
+end
+
 local function main()
   initState()
   
@@ -547,19 +592,37 @@ local function main()
     local btnX = winX + 4
     
     if currentMenu == "main" then
-        table.insert(buttons, {text = "Store", y = startY, action = function() 
-            for _, p in ipairs(programs) do
-                if p.id == "store" then launchProgram(p) return end
-            end
-        end})
-        table.insert(buttons, {text = "My Apps", y = startY + 2, action = function() currentMenu = "library" end})
-        table.insert(buttons, {text = "System", y = startY + 4, action = function() currentMenu = "system" end})
-        table.insert(buttons, {text = "Exit", y = startY + 8, action = function() running = false end})
+      local function addButton(label, action)
+        local y = startY + (#buttons * 2)
+        table.insert(buttons, {text = label, y = y, action = action})
+      end
+
+      addButton("ArcadeArcade", function()
+        launchArcadeArcadeUI()
+      end)
+
+      addButton("Store", function()
+        for _, p in ipairs(programs) do
+          if p.id == "store" then launchProgram(p) return end
+        end
+      end)
+
+      addButton("My Apps", function()
+        currentMenu = "library"
+      end)
+
+      addButton("System", function()
+        currentMenu = "system"
+      end)
+
+      addButton("Exit", function()
+        running = false
+      end)
     elseif currentMenu == "library" then
       local list = {}
       for _, p in ipairs(programs) do
         -- Show purchased games/actions
-        if p.id ~= "store" and state.licenseStore:has(p.id) then
+        if p.id ~= "store" and p.category ~= "games" and state.licenseStore:has(p.id) then
           table.insert(list, p)
         end
       end

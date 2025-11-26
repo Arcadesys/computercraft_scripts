@@ -1,3 +1,9 @@
+if type(package) ~= "table" then
+    package = { path = "" }
+elseif type(package.path) ~= "string" then
+    package.path = package.path or ""
+end
+
 -- Determine current program path even if the shell API is unavailable
 local function detectProgramPath()
     if shell and shell.getRunningProgram then

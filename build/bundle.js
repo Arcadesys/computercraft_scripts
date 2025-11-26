@@ -140,9 +140,59 @@ function buildInstaller() {
         return;
     }
 
+    const generatedAt = new Date().toISOString();
     let lua = `-- Arcadesys Unified Installer\n` +
-        `-- Auto-generated at ${new Date().toISOString()}\n` +
+        `-- Auto-generated at ${generatedAt}\n` +
         `print("Starting Arcadesys install ${versionString}...")\n` +
+        `local EXPERIENCE_FILE = "experience.settings"\n\n` +
+        `local function promptChoice(prompt, choices)\n` +
+        `    term.setBackgroundColor(colors.black)\n` +
+        `    term.setTextColor(colors.white)\n` +
+        `    term.clear()\n` +
+        `    term.setCursorPos(1, 1)\n` +
+        `    print(prompt)\n` +
+        `    for i, option in ipairs(choices) do\n` +
+        `        print(string.format("  [%d] %s", i, option.label))\n` +
+        `    end\n` +
+        `    while true do\n` +
+        `        term.setCursorPos(1, #choices + 3)\n` +
+        `        term.clearLine()\n` +
+        `        write("Select option: ")\n` +
+        `        local reply = read()\n` +
+        `        local idx = tonumber(reply)\n` +
+        `        if idx and choices[idx] then\n` +
+        `            return choices[idx].id\n` +
+        `        end\n` +
+        `        print("Invalid selection. Try again.")\n` +
+        `    end\n` +
+        `end\n\n` +
+        `local function detectPlatform()\n` +
+        `    if turtle then return "turtle" end\n` +
+        `    return "computer"\n` +
+        `end\n\n` +
+        `local function persistExperience(mode)\n` +
+        `    local handle = fs.open(EXPERIENCE_FILE, "w")\n` +
+        `    if handle then\n` +
+        `        handle.write(textutils.serialize({ experience = mode }))\n` +
+        `        handle.close()\n` +
+        `    else\n` +
+        `        printError("Failed to save experience settings")\n` +
+        `    end\n` +
+        `end\n\n` +
+        `local platform = detectPlatform()\n` +
+        `local INSTALL_VARIANT = "workstation"\n` +
+        `if platform == "turtle" then\n` +
+        `    INSTALL_VARIANT = "turtle"\n` +
+        `    print("Detected turtle: installing TurtleOS experience.")\n` +
+        `else\n` +
+        `    local choice = promptChoice("Choose installation profile:", {\n` +
+        `        { id = "workstation", label = "Workstation (factory tools)" },\n` +
+        `        { id = "arcade", label = "Arcade (ArcadeOS + games)" },\n` +
+        `    })\n` +
+        `    INSTALL_VARIANT = choice or "workstation"\n` +
+        `    print("Selected profile: " .. INSTALL_VARIANT)\n` +
+        `end\n` +
+        `persistExperience(INSTALL_VARIANT)\n\n` +
         `local files = {}\n\n`;
 
     files.forEach(file => {
