@@ -1,5 +1,5 @@
 -- Arcadesys Unified Installer
--- Auto-generated at 2025-11-26T05:13:43.696Z
+-- Auto-generated at 2025-11-26T06:12:48.303Z
 print("Starting Arcadesys install...")
 local files = {}
 
@@ -3314,41 +3314,47 @@ ctx.missingMaterial = torchItem
 return false, torchItem
 end
 local function placeTorch(ctx)
-local ok = selectTorch(ctx)
+local ok, item = selectTorch(ctx)
 if not ok then
-logger.log(ctx, "warn", "No torches to place.")
+logger.log(ctx, "warn", "No torches to place (missing " .. tostring(item) .. ")")
 return false
 end
 if turtle.placeDown() then return true end
 if turtle.placeUp() then return true end
-movement.turnRight(ctx)
+if turtle.digDown() then
+if turtle.placeDown() then
+return true
+end
+end
 movement.turnRight(ctx)
 if turtle.detect() then
 turtle.dig()
 end
-local placed = false
 if turtle.place() then
-placed = true
-else
+movement.turnLeft(ctx)
+return true
+end
+movement.turnLeft(ctx) -- Restore facing
 movement.turnLeft(ctx)
 if turtle.detect() then
 turtle.dig()
 end
 if turtle.place() then
-placed = true
-movement.turnRight(ctx) -- Restore to facing behind
-else
-movement.turnRight(ctx) -- Restore to facing behind
-if turtle.digDown() then
-if turtle.placeDown() then
-placed = true
+movement.turnRight(ctx)
+return true
 end
-end
-end
+movement.turnRight(ctx) -- Restore facing
+movement.turnRight(ctx)
+movement.turnRight(ctx)
+if turtle.place() then
+movement.turnRight(ctx)
+movement.turnRight(ctx)
+return true
 end
 movement.turnRight(ctx)
 movement.turnRight(ctx)
-return placed
+logger.log(ctx, "warn", "Failed to place torch (all strategies failed).")
+return false
 end
 local function dumpTrash(ctx)
 inventory.scan(ctx)
@@ -3969,6 +3975,14 @@ local strategyExcavate = require("lib_strategy_excavate")
 local strategyFarm = require("lib_strategy_farm")
 local ui = require("lib_ui")
 local startup = require("lib_startup")
+local inventory = require("lib_inventory")
+local function validateSchema(schema)
+if type(schema) ~= "table" then return false, "Schema is not a table" end
+local count = 0
+for _ in pairs(schema) do count = count + 1 end
+if count == 0 then return false, "Schema is empty" end
+return true
+end
 local function getBlock(schema, x, y, z)
 local xLayer = schema[x] or schema[tostring(x)]
 if not xLayer then return nil end
@@ -4131,6 +4145,8 @@ width = tonumber(ctx.config.width) or 9,
 height = tonumber(ctx.config.height) or 9,
 currentX = 0,
 currentZ = 0,
+nextX = 0,
+nextZ = 0,
 state = "SCAN",
 chests = ctx.chests
 }
@@ -4142,6 +4158,11 @@ local farmType = ctx.config.farmType or "tree"
 local width = tonumber(ctx.config.width) or 9
 local length = tonumber(ctx.config.length) or 9
 local schema = strategyFarm.generate(farmType, width, length)
+local valid, err = validateSchema(schema)
+if not valid then
+ctx.lastError = "Generated schema invalid: " .. tostring(err)
+return "ERROR"
+end
 ui.clear()
 ui.drawPreview(schema, 2, 2, 30, 15)
 term.setCursorPos(1, 18)
@@ -4155,13 +4176,17 @@ local minX, maxX, minZ, maxZ = 9999, -9999, 9999, -9999
 local minY, maxY = 0, 1 -- Assuming 2 layers for now
 for sx, row in pairs(schema) do
 local nx = tonumber(sx)
+if nx then
 if nx < minX then minX = nx end
 if nx > maxX then maxX = nx end
 for sy, col in pairs(row) do
 for sz, block in pairs(col) do
 local nz = tonumber(sz)
+if nz then
 if nz < minZ then minZ = nz end
 if nz > maxZ then maxZ = nz end
+end
+end
 end
 end
 end
@@ -4196,6 +4221,11 @@ return "ERROR"
 end
 ctx.schema = schemaOrErr
 ctx.schemaInfo = info
+local valid, err = validateSchema(ctx.schema)
+if not valid then
+ctx.lastError = "Loaded schema invalid: " .. tostring(err)
+return "ERROR"
+end
 logger.log(ctx, "info", "Computing build strategy...")
 local order, boundsOrErr = buildOrder(ctx.schema, ctx.schemaInfo, ctx.config)
 if not order then
@@ -4367,6 +4397,9 @@ end
 if pf.state == "SCAN" then
 local width = tonumber(pf.width) or 9
 local height = tonumber(pf.height) or 9
+if width < 3 then width = 3 end
+if height < 3 then height = 3 end
+logger.log(ctx, "info", "PotatoFarm SCAN: " .. width .. "x" .. height)
 local w, h = width - 2, height - 2
 pf.nextX = tonumber(pf.nextX) or 0
 pf.nextZ = tonumber(pf.nextZ) or 0
@@ -4569,14 +4602,15 @@ if type(needed) ~= "number" then needed = 1000 end
 local current = turtle.getFuelLevel()
 if current == "unlimited" then current = math.huge end
 if type(current) ~= "number" then current = 0 end
-if current < needed then
+if type(needed) ~= "number" then needed = 1000 end
+if type(current) == "number" and type(needed) == "number" and current < needed then
 logger.log(ctx, "warn", string.format("Pre-run fuel check: Have %s, Need %s", tostring(current), tostring(needed)))
 fuelLib.refuel(ctx, { target = needed, excludeItems = { "sapling", "log" } })
 current = turtle.getFuelLevel()
 if current == "unlimited" then current = math.huge end
 if type(current) ~= "number" then current = 0 end
 logger.log(ctx, "debug", string.format("Fuel check: current=%s needed=%s", tostring(current), tostring(needed)))
-if current < needed and tf.chests and tf.chests.fuel then
+if type(current) == "number" and type(needed) == "number" and current < needed and tf.chests and tf.chests.fuel then
 logger.log(ctx, "info", "Insufficient fuel. Visiting fuel depot.")
 movement.goTo(ctx, { x=0, y=0, z=0 })
 movement.face(ctx, tf.chests.fuel)
@@ -12900,7 +12934,7 @@ else
 sleep(0.25)
 local hasBlock, data = turtle.inspect()
 if not hasBlock then
-table.insert(missing, "Missing " .. req.name .. " at " .. dir)
+table.insert(missing, "Missing " .. req.name .. " at " .. dir .. " (Is turtle facing correctly?)")
 elseif req.type == "chest" and not data.name:find("chest") and not data.name:find("barrel") then
 table.insert(missing, "Incorrect block at " .. dir .. " (Found " .. data.name .. ") [Facing: " .. movement.getFacing(ctx) .. "]")
 end
@@ -12916,12 +12950,12 @@ for _, m in ipairs(missing) do
 print("- " .. m)
 end
 print("\nOptions:")
-print("  [Enter] Try again")
-print("  'auto'  Auto-align orientation to chests")
+print("  [Enter] Auto-align orientation (Recommended)")
+print("  'r'     Retry manually")
 print("  'skip'  Ignore errors")
 local input = read()
 if input == "skip" then return true end
-if input == "auto" then
+if input ~= "r" then
 print("Scanning surroundings to auto-align...")
 local surroundings = {}
 for i = 0, 3 do
@@ -13793,7 +13827,7 @@ files["lib/version.lua"] = [[local version = {}
 version.MAJOR = 2
 version.MINOR = 1
 version.PATCH = 1
-version.BUILD = 22
+version.BUILD = 27
 function version.toString()
 return string.format("v%d.%d.%d (build %d)",
 version.MAJOR, version.MINOR, version.PATCH, version.BUILD)

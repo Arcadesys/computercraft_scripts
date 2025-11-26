@@ -27,6 +27,11 @@ local function POTATOFARM(ctx)
         local width = tonumber(pf.width) or 9
         local height = tonumber(pf.height) or 9
         
+        if width < 3 then width = 3 end
+        if height < 3 then height = 3 end
+
+        logger.log(ctx, "info", "PotatoFarm SCAN: " .. width .. "x" .. height)
+
         -- Scan only the crop area (exclude borders)
         local w, h = width - 2, height - 2
         

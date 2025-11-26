@@ -12,6 +12,15 @@ local strategyExcavate = require("lib_strategy_excavate")
 local strategyFarm = require("lib_strategy_farm")
 local ui = require("lib_ui")
 local startup = require("lib_startup")
+local inventory = require("lib_inventory")
+
+local function validateSchema(schema)
+    if type(schema) ~= "table" then return false, "Schema is not a table" end
+    local count = 0
+    for _ in pairs(schema) do count = count + 1 end
+    if count == 0 then return false, "Schema is empty" end
+    return true
+end
 
 local function getBlock(schema, x, y, z)
     local xLayer = schema[x] or schema[tostring(x)]
@@ -199,6 +208,8 @@ local function INITIALIZE(ctx)
             height = tonumber(ctx.config.height) or 9,
             currentX = 0,
             currentZ = 0,
+            nextX = 0,
+            nextZ = 0,
             state = "SCAN",
             chests = ctx.chests
         }
@@ -213,6 +224,12 @@ local function INITIALIZE(ctx)
         
         local schema = strategyFarm.generate(farmType, width, length)
         
+        local valid, err = validateSchema(schema)
+        if not valid then
+            ctx.lastError = "Generated schema invalid: " .. tostring(err)
+            return "ERROR"
+        end
+
         -- Preview
         ui.clear()
         ui.drawPreview(schema, 2, 2, 30, 15)
@@ -231,13 +248,17 @@ local function INITIALIZE(ctx)
         
         for sx, row in pairs(schema) do
             local nx = tonumber(sx)
-            if nx < minX then minX = nx end
-            if nx > maxX then maxX = nx end
-            for sy, col in pairs(row) do
-                for sz, block in pairs(col) do
-                    local nz = tonumber(sz)
-                    if nz < minZ then minZ = nz end
-                    if nz > maxZ then maxZ = nz end
+            if nx then
+                if nx < minX then minX = nx end
+                if nx > maxX then maxX = nx end
+                for sy, col in pairs(row) do
+                    for sz, block in pairs(col) do
+                        local nz = tonumber(sz)
+                        if nz then
+                            if nz < minZ then minZ = nz end
+                            if nz > maxZ then maxZ = nz end
+                        end
+                    end
                 end
             end
         end
@@ -279,6 +300,12 @@ local function INITIALIZE(ctx)
 
     ctx.schema = schemaOrErr
     ctx.schemaInfo = info
+
+    local valid, err = validateSchema(ctx.schema)
+    if not valid then
+        ctx.lastError = "Loaded schema invalid: " .. tostring(err)
+        return "ERROR"
+    end
 
     logger.log(ctx, "info", "Computing build strategy...")
     local order, boundsOrErr = buildOrder(ctx.schema, ctx.schemaInfo, ctx.config)

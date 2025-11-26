@@ -57,7 +57,10 @@ local function TREEFARM(ctx)
             if current == "unlimited" then current = math.huge end
             if type(current) ~= "number" then current = 0 end
             
-            if current < needed then
+            -- Defensive check to prevent "compare number with nil"
+            if type(needed) ~= "number" then needed = 1000 end
+
+            if type(current) == "number" and type(needed) == "number" and current < needed then
                 logger.log(ctx, "warn", string.format("Pre-run fuel check: Have %s, Need %s", tostring(current), tostring(needed)))
                 
                 -- 1. Try inventory
@@ -69,7 +72,7 @@ local function TREEFARM(ctx)
                 logger.log(ctx, "debug", string.format("Fuel check: current=%s needed=%s", tostring(current), tostring(needed)))
 
                 -- 2. Try fuel chest
-                if current < needed and tf.chests and tf.chests.fuel then
+                if type(current) == "number" and type(needed) == "number" and current < needed and tf.chests and tf.chests.fuel then
                     logger.log(ctx, "info", "Insufficient fuel. Visiting fuel depot.")
                     movement.goTo(ctx, { x=0, y=0, z=0 })
                     movement.face(ctx, tf.chests.fuel)
