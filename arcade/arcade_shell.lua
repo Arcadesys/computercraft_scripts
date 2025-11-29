@@ -482,6 +482,36 @@ local function launchArcadeArcadeUI()
   initState() -- Reload credits/licenses after returning
 end
 
+local function runUpdater()
+  -- Try absolute path first so it works no matter where the shell lives.
+  local updaterPath = "/arcadesys_installer.lua"
+  if not fs.exists(updaterPath) then
+    -- Fallback to local directory (e.g., running off a disk)
+    updaterPath = resolvePath("arcadesys_installer.lua")
+  end
+
+  if not fs.exists(updaterPath) then
+    term.setBackgroundColor(colors.black)
+    term.clear()
+    term.setCursorPos(1,1)
+    print("Updater not found (" .. updaterPath .. ")")
+    os.sleep(2)
+    return
+  end
+
+  term.setBackgroundColor(colors.black)
+  term.clear()
+  term.setCursorPos(1,1)
+  print("Launching updater...")
+  local ok, err = pcall(function()
+    shell.run(updaterPath)
+  end)
+  if not ok then
+    print("Update failed: " .. tostring(err))
+    os.sleep(2)
+  end
+end
+
 local function main()
   initState()
   
@@ -518,6 +548,7 @@ local function main()
                           print("Free Space: " .. fs.getFreeSpace(detectDiskMount() or "/"))
                           os.sleep(2)
                       end},
+                      {text = "Update", action = runUpdater},
                       {text = "Back", action = function() end}
                    }
                    local idx, choice = menu.run("System", sysOptions)
@@ -693,7 +724,8 @@ local function main()
             print("Free Space: " .. fs.getFreeSpace(detectDiskMount() or "/"))
             os.sleep(2)
         end})
-        table.insert(buttons, {text = "Back", y = startY + 4, action = function() currentMenu = "main" end})
+        table.insert(buttons, {text = "Update", y = startY + 4, action = runUpdater})
+        table.insert(buttons, {text = "Back", y = startY + 6, action = function() currentMenu = "main" end})
     end
     
     -- Draw Buttons

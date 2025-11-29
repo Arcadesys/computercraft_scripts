@@ -1,3 +1,13 @@
 /.vscode
 *.mp4
 *.ds_store
+
+# Generated installer artifacts
+/arcade_os_install.lua
+/turtle_os_install.lua
+/workstation_install.lua
+/net_installer.lua
+/pocket_os_installer.lua
+/installer_arcade.lua
+/installer_factory.lua
+/installer_kiosk.lua

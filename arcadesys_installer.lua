@@ -36,15 +36,41 @@ local function download(url, dest)
     if not res then
         return false, err or "HTTP get failed"
     end
-    local body = res.readAll()
-    res.close()
+    local headers = res.getResponseHeaders() or {}
+    local expectedSize = tonumber(headers["Content-Length"] or headers["content-length"] or 0)
+    local free = fs.getFreeSpace(fs.getDir(dest) or "/") or 0
+
+    -- Bail out early if we already know there is not enough space.
+    if expectedSize > 0 and expectedSize > free then
+        res.close()
+        return false, string.format("Not enough space (%d needed, %d free)", expectedSize, free)
+    end
 
     local handle = fs.open(dest, "w")
     if not handle then
+        res.close()
         return false, "Cannot write " .. dest
     end
-    handle.write(body)
+
+    -- Stream the body to disk to avoid holding it all in memory and to detect space errors early.
+    while true do
+        local chunk = res.read(8192)
+        if not chunk then break end
+
+        -- Check free space periodically to fail fast if the disk is filling up mid-download.
+        free = fs.getFreeSpace(fs.getDir(dest) or "/") or 0
+        if #chunk > free then
+            handle.close()
+            res.close()
+            fs.delete(dest)
+            return false, "Not enough space while writing (disk full)"
+        end
+
+        handle.write(chunk)
+    end
+
     handle.close()
+    res.close()
     return true
 end
 
