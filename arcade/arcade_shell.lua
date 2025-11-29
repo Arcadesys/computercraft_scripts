@@ -54,6 +54,35 @@ setupPaths()
 local LicenseStore = require("license_store")
 local version = require("version")
 
+local monitorUtil
+do
+  local ok, mod = pcall(require, "lib_monitor")
+  if ok and mod then
+    monitorUtil = mod
+  end
+end
+
+local MONITOR_AUTO_SETTING = "arcadesys.monitor.auto"
+
+local function getMonitorAutoPreference()
+  if settings and type(settings.get) == "function" then
+    local value = settings.get(MONITOR_AUTO_SETTING)
+    if type(value) == "boolean" then
+      return value
+    end
+  end
+  return false
+end
+
+local function setMonitorAutoPreference(value)
+  if settings and type(settings.set) == "function" then
+    settings.set(MONITOR_AUTO_SETTING, value == true)
+    if type(settings.save) == "function" then
+      pcall(settings.save)
+    end
+  end
+end
+
 local BASE_DIR = fs.getDir(detectProgramPath() or "") or ""
 if BASE_DIR == "" then BASE_DIR = "." end
 
@@ -514,6 +543,24 @@ end
 
 local function main()
   initState()
+
+  local autoMonitorDefault = getMonitorAutoPreference()
+
+  local function nowSeconds()
+    if type(os.epoch) == "function" then
+      return os.epoch("utc") / 1000
+    end
+    if type(os.clock) == "function" then
+      return os.clock()
+    end
+    return os.time()
+  end
+
+  local statusMessage, statusUntil = nil, 0
+  local function setStatus(msg)
+    statusMessage = msg
+    statusUntil = nowSeconds() + 2
+  end
   
   if not term.isColor() then
       local menu = require("lib_menu")
@@ -578,6 +625,68 @@ local function main()
   local libraryScrollMax = 0
   local libraryVisibleCount = 0
   local libraryTotalCount = 0
+  local monitorSession = nil
+
+  local function refreshTerminalSize()
+    w, h = term.getSize()
+    lastMenu = "" -- Force redraw state so layout resets.
+  end
+
+  if term and type(term.current) == "function" and type(term.native) == "function" then
+    local native = term.native()
+    local current = term.current()
+    if native and current and native ~= current then
+      monitorSession = {
+        restore = function()
+          pcall(term.redirect, native)
+        end
+      }
+    end
+  end
+
+  local function useMonitor()
+    if not monitorUtil or type(monitorUtil.redirectToMonitor) ~= "function" then
+      setStatus("Monitor API unavailable")
+      return
+    end
+    if monitorSession then
+      setStatus("Already on monitor")
+      return
+    end
+    local session, err = monitorUtil.redirectToMonitor({ textScale = 0.5 })
+    if not session then
+      setStatus(err or "Monitor not found")
+      return
+    end
+    monitorSession = session
+    refreshTerminalSize()
+    setStatus("Now using external monitor")
+  end
+
+  local function useComputerScreen()
+    if not monitorSession then
+      setStatus("Already on computer")
+      return
+    end
+    if monitorSession.restore then
+      monitorSession.restore()
+    elseif term and type(term.native) == "function" then
+      pcall(term.redirect, term.native())
+    end
+    monitorSession = nil
+    refreshTerminalSize()
+    setStatus("Now using computer screen")
+  end
+
+  local function toggleDefaultDisplay()
+    autoMonitorDefault = not autoMonitorDefault
+    setMonitorAutoPreference(autoMonitorDefault)
+    if autoMonitorDefault then
+      setStatus("Will auto-use monitor next launch")
+    else
+      setStatus("Will stay on computer next launch")
+    end
+  end
 
   local function adjustLibraryScroll(delta)
     if delta == 0 or libraryScrollMax <= 0 then
@@ -702,7 +811,13 @@ local function main()
         libraryScrollOffset = 0
       end})
     elseif currentMenu == "system" then
-        table.insert(buttons, {text = "Themes", y = startY, action = function() 
+        local nextY = startY
+        local function addSystemOption(label, fn)
+            table.insert(buttons, {text = label, y = nextY, action = fn})
+            nextY = nextY + 2
+        end
+
+        addSystemOption("Themes", function() 
              local found = false
              for _, p in ipairs(programs) do
                 if p.id == "themes" then 
@@ -716,16 +831,24 @@ local function main()
                 print("Theme app not found")
                 os.sleep(1)
             end
-        end})
-        table.insert(buttons, {text = "Disk Info", y = startY + 2, action = function() 
+        end)
+        addSystemOption("Disk Info", function() 
             term.setBackgroundColor(colors.black)
             term.clear()
             term.setCursorPos(1,1)
             print("Free Space: " .. fs.getFreeSpace(detectDiskMount() or "/"))
             os.sleep(2)
-        end})
-        table.insert(buttons, {text = "Update", y = startY + 4, action = runUpdater})
-        table.insert(buttons, {text = "Back", y = startY + 6, action = function() currentMenu = "main" end})
+        end)
+        addSystemOption("Update", runUpdater)
+        if monitorUtil then
+            if monitorSession then
+                addSystemOption("Use Computer Screen", useComputerScreen)
+            else
+                addSystemOption("Use External Monitor", useMonitor)
+            end
+        end
+        addSystemOption("Default Display: " .. (autoMonitorDefault and "Monitor" or "Computer"), toggleDefaultDisplay)
+        addSystemOption("Back", function() currentMenu = "main" end)
     end
     
     -- Draw Buttons
@@ -745,6 +868,20 @@ local function main()
     term.setTextColor(state.theme.text or colors.white)
     term.setCursorPos(badgeX, h)
     term.write(buildLabel)
+
+    if statusMessage then
+        local nowVal = nowSeconds()
+        if nowVal > statusUntil then
+            statusMessage = nil
+        else
+            local msgX = math.max(1, math.floor((w - #statusMessage) / 2) + 1)
+            local msgY = math.max(1, h - 1)
+            term.setBackgroundColor(state.theme.bg or colors.black)
+            term.setTextColor(state.theme.text or colors.white)
+            term.setCursorPos(msgX, msgY)
+            term.write(statusMessage)
+        end
+    end
     
     -- Event Handling
     local event, p1, p2, p3 = os.pullEvent()
@@ -797,9 +934,13 @@ local function main()
                 btn.action()
             end
         end
-    end
+  end
   end
   
+  if monitorSession and monitorSession.restore then
+    monitorSession.restore()
+  end
+
   term.setBackgroundColor(colors.black)
   term.clear()
   term.setCursorPos(1,1)
@@ -807,9 +948,8 @@ end
 
 
 local function runWithMonitor(fn)
-    local ok, monitorUtil = pcall(require, "lib_monitor")
-    if ok and monitorUtil and monitorUtil.runOnMonitor then
-        return monitorUtil.runOnMonitor(fn, { textScale = 0.5 })
+    if monitorUtil and monitorUtil.runOnMonitor then
+        return monitorUtil.runOnMonitor(fn, { textScale = 0.5, auto = getMonitorAutoPreference() })
     end
     return fn()
 end

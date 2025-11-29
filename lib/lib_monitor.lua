@@ -138,13 +138,26 @@ function monitor.runOnMonitor(fn, opts)
     if type(fn) ~= "function" then
         return nil, "fn_missing"
     end
-    local session = monitor.redirectToMonitor(opts)
+    opts = opts or {}
+    local auto = true
+    if type(opts.auto) == "boolean" then
+        auto = opts.auto
+    end
+    local session = nil
+    if auto ~= false then
+        session = monitor.redirectToMonitor(opts)
+    end
     local handler = (debug and debug.traceback) or function(err) return err end
     local ok, res = xpcall(fn, handler)
     if session and session.restore then
         session.restore()
     end
     if not ok then
+        local msg = tostring(res)
+        -- When user terminates (Ctrl+T), avoid crashing outer shell; just forward nil.
+        if msg == "Terminated" or msg:match("Terminated$") then
+            return nil, "terminated"
+        end
         error(res)
     end
     return res
