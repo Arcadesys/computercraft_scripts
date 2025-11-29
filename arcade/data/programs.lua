@@ -12,7 +12,8 @@ local PRICING = {
     factory_planner = 0,
     inv_manager = 0,
     store = 0,
-    themes = 0
+    themes = 0,
+    video_player = 0
 }
 
 local function configureProgram(def)
@@ -121,6 +122,15 @@ local programs = {
     price = PRICING.themes,
     description = "Change system theme.",
     category = "system",
+  }),
+  configureProgram({
+    id = "video_player",
+    name = "Video Player",
+    path = "video_player.lua",
+    price = PRICING.store,
+    description = "Stream NFP videos from a manifest URL.",
+    category = "tools",
+    remotePath = "arcade/video_player.lua"
   }),
 }
 

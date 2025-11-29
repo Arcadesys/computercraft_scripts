@@ -695,6 +695,19 @@ end
 -- Main Loop
 -- ==========================
 
+-- When a monitor is attached, run apps on it for a big-screen view and restore after.
+local function runOnAttachedMonitor(fn)
+  local native = term.current()
+  local monitor = peripheral.find and peripheral.find("monitor") or nil
+  if monitor then
+    if monitor.setTextScale then monitor.setTextScale(0.5) end
+    term.redirect(monitor)
+  end
+  local ok, err = pcall(fn)
+  if native then term.redirect(native) end
+  return ok, err
+end
+
 local function launchProgram(program)
   if not ensureLicense(program) then
     return
@@ -705,7 +718,7 @@ local function launchProgram(program)
   term.setCursorPos(1,1)
   print("Launching " .. program.name .. "...")
   
-  local ok, err = pcall(function()
+  local ok, err = runOnAttachedMonitor(function()
     shell.run(program.path)
   end)
   

@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
-const OUTPUT_NAME = 'net_installer.lua';
+const OUTPUT_NAME = 'arcade_os_install.lua';
 const OUTPUT_PATH = path.join(PROJECT_ROOT, OUTPUT_NAME);
 const LUA_EXTENSION = '.lua';
 const REPO_BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/";
@@ -17,8 +17,18 @@ const IGNORE_DIRS = new Set([
 ]);
 const IGNORE_FILES = new Set([
     OUTPUT_NAME,
+    'net_installer.lua',
     'package-lock.json',
     'package.json'
+]);
+
+const ALLOWED_PREFIXES = [
+    'arcade/',
+    'lib/',
+];
+const ALLOWED_FILES = new Set([
+    'startup.lua',
+    'kiosk.lua',
 ]);
 
 function normalizePath(p) {
@@ -61,21 +71,30 @@ function collectLuaFiles(dir, base = '') {
     return files;
 }
 
-function buildNetInstaller() {
-    console.log('🌐 Building Network Installer...');
-    const files = collectLuaFiles(PROJECT_ROOT)
+function filterFiles(allFiles) {
+    return allFiles.filter(rel => {
+        if (ALLOWED_FILES.has(rel)) return true;
+        return ALLOWED_PREFIXES.some(prefix => rel.startsWith(prefix));
+    });
+}
+
+function buildInstaller() {
+    console.log('🕹️ Building Arcade OS installer...');
+    const files = filterFiles(collectLuaFiles(PROJECT_ROOT))
         .sort((a, b) => a.localeCompare(b));
 
     if (files.length === 0) {
-        console.error('❌ No Lua files found.');
+        console.error('No Lua files found to bundle.');
         process.exitCode = 1;
         return;
     }
 
-    let lua = `-- Arcadesys Network Installer\n` +
+    let lua = `-- Arcadesys Arcade OS Installer\n` +
         `-- Auto-generated at ${new Date().toISOString()}\n` +
-        `-- Downloads files from GitHub to bypass file size limits\n\n` +
+        `-- Refreshes or installs the arcade experience (button-controlled)\n\n` +
+        `local VARIANT = "arcade"\n` +
         `local BASE_URL = "${REPO_BASE_URL}"\n` +
+        `local ROOTS = { "arcade", "lib", "kiosk.lua" }\n` +
         `local files = {\n`;
 
     files.forEach(file => {
@@ -84,68 +103,68 @@ function buildNetInstaller() {
     });
 
     lua += `}\n\n` +
-        `print("Starting Network Install...")\n` +
-        `print("Source: " .. BASE_URL)\n\n` +
+        `local function persistExperience()\n` +
+        `    local h = fs.open("experience.settings", "w")\n` +
+        `    if h then\n` +
+        `        h.write(textutils.serialize({ experience = VARIANT }))\n` +
+        `        h.close()\n` +
+        `    end\n` +
+        `end\n\n` +
+        `local function cleanup()\n` +
+        `    for _, root in ipairs(ROOTS) do\n` +
+        `        if fs.exists("/" .. root) then\n` +
+        `            fs.delete("/" .. root)\n` +
+        `        end\n` +
+        `    end\n` +
+        `end\n\n` +
         `local function download(path)\n` +
         `    local url = BASE_URL .. path\n` +
-        `    print("Downloading " .. path .. "...")\n` +
         `    local response = http.get(url)\n` +
         `    if not response then\n` +
         `        printError("Failed to download " .. path)\n` +
         `        return false\n` +
         `    end\n` +
-        `    \n` +
         `    local content = response.readAll()\n` +
         `    response.close()\n` +
-        `    \n` +
-        `    local dir = fs.getDir(path)\n` +
+        `    local installPath = "/" .. path\n` +
+        `    local dir = fs.getDir(installPath)\n` +
         `    if dir ~= "" and not fs.exists(dir) then\n` +
         `        fs.makeDir(dir)\n` +
         `    end\n` +
-        `    \n` +
-        `    local file = fs.open(path, "w")\n` +
+        `    local file = fs.open(installPath, "w")\n` +
         `    if not file then\n` +
-        `        printError("Failed to write " .. path)\n` +
+        `        printError("Cannot write " .. installPath)\n` +
         `        return false\n` +
         `    end\n` +
-        `    \n` +
         `    file.write(content)\n` +
         `    file.close()\n` +
         `    return true\n` +
         `end\n\n` +
-        `local successCount = 0\n` +
-        `local failCount = 0\n\n` +
+        `print("Arcadesys Arcade installer")\n` +
+        `persistExperience()\n` +
+        `local existing = fs.exists("/arcade") and fs.exists("/lib")\n` +
+        `if existing then\n` +
+        `    print("Existing install detected. Refreshing...")\n` +
+        `else\n` +
+        `    print("Fresh install.")\n` +
+        `end\n` +
+        `cleanup()\n` +
+        `local success, fail = 0, 0\n` +
         `for _, file in ipairs(files) do\n` +
         `    if download(file) then\n` +
-        `        successCount = successCount + 1\n` +
+        `        success = success + 1\n` +
         `    else\n` +
-        `        failCount = failCount + 1\n` +
+        `        fail = fail + 1\n` +
         `    end\n` +
-        `    sleep(0.1)\n` +
-        `end\n\n` +
-        `print("")\n` +
-        `print("Install Complete!")\n` +
-        `print("Downloaded: " .. successCount)\n` +
-        `print("Failed: " .. failCount)\n` +
-        `\nprint("Verifying installation...")\n` +
-        `local errors = 0\n` +
-        `for _, file in ipairs(files) do\n` +
-        `    if not fs.exists(file) then\n` +
-        `        printError("Missing: " .. file)\n` +
-        `        errors = errors + 1\n` +
-        `    end\n` +
+        `    sleep(0.05)\n` +
         `end\n` +
-        `if failCount == 0 and errors == 0 then\n` +
-        `    print("Verification successful.")\n` +
-        `    print("Reboot or run startup to launch.")\n` +
-        `else\n` +
-        `    print("Installation issues detected.")\n` +
-        `    if failCount > 0 then print("Failed downloads: " .. failCount) end\n` +
-        `    if errors > 0 then print("Missing files: " .. errors) end\n` +
-        `end\n`;
+        `print(string.format("Done. Success: %d, Failed: %d", success, fail))\n` +
+        `print("Rebooting in 2 seconds...")\n` +
+        `sleep(2)\n` +
+        `os.reboot()\n`;
 
     fs.writeFileSync(OUTPUT_PATH, lua, 'utf8');
-    console.log(`✅ Wrote network installer to ${OUTPUT_PATH}`);
+    console.log(`✅ Wrote ${OUTPUT_PATH}`);
 }
 
-buildNetInstaller();
+buildInstaller();

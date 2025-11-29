@@ -31,7 +31,7 @@ local function install()
     
     print("This installer would normally download files from a server.")
     print("Since you are running from a local repo, the files are already here.")
-    print("NOTE: This script DOES NOT update files. Use 'arcadesys_installer' for that.")
+    print("NOTE: This script DOES NOT update files. Use 'net_installer.lua' for that.")
     print("")
     print("Verifying structure...")
     

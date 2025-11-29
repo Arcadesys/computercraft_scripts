@@ -1,30 +1,11 @@
--- Arcadesys Network Installer
--- Auto-generated at 2025-11-29T03:01:20.006Z
--- Downloads files from GitHub to bypass file size limits
+-- Arcadesys Turtle OS Installer
+-- Auto-generated at 2025-11-29T03:15:56.354Z
+-- Refreshes or installs the turtle experience
 
+local VARIANT = "turtle"
 local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
+local ROOTS = { "factory", "lib" }
 local files = {
-    "ae2_drive_monitor.lua",
-    "arcade/arcade_arcade.lua",
-    "arcade/arcade_shell.lua",
-    "arcade/arcade.lua",
-    "arcade/arcadeos.lua",
-    "arcade/boot.lua",
-    "arcade/data/programs.lua",
-    "arcade/data/valhelsia_blocks.lua",
-    "arcade/games/artillery.lua",
-    "arcade/games/blackjack.lua",
-    "arcade/games/cantstop.lua",
-    "arcade/games/idlecraft.lua",
-    "arcade/games/slots.lua",
-    "arcade/games/themes.lua",
-    "arcade/games/videopoker.lua",
-    "arcade/games/warlords.lua",
-    "arcade/license_store.lua",
-    "arcade/store.lua",
-    "arcade/ui/renderer.lua",
-    "arcade/video_player.lua",
-    "factory_planner.lua",
     "factory/factory.lua",
     "factory/main.lua",
     "factory/state_blocked.lua",
@@ -40,12 +21,6 @@ local files = {
     "factory/state_restock.lua",
     "factory/state_treefarm.lua",
     "factory/turtle_os.lua",
-    "games/arcade.lua",
-    "installer_arcade.lua",
-    "installer_factory.lua",
-    "installer_kiosk.lua",
-    "installer.lua",
-    "kiosk.lua",
     "lib/lib_cards.lua",
     "lib/lib_designer.lua",
     "lib/lib_diagnostics.lua",
@@ -84,74 +59,68 @@ local files = {
     "lib/lib_worldstate.lua",
     "lib/log.lua",
     "lib/version.lua",
-    "printer.lua",
     "startup.lua",
-    "tools/install_sender.lua",
-    "tools/receive_schema.lua",
-    "ui/trash_config.lua",
 }
 
-print("Starting Network Install...")
-print("Source: " .. BASE_URL)
+local function persistExperience()
+    local h = fs.open("experience.settings", "w")
+    if h then
+        h.write(textutils.serialize({ experience = VARIANT }))
+        h.close()
+    end
+end
+
+local function cleanup()
+    for _, root in ipairs(ROOTS) do
+        if fs.exists("/" .. root) then
+            fs.delete("/" .. root)
+        end
+    end
+end
 
 local function download(path)
     local url = BASE_URL .. path
-    print("Downloading " .. path .. "...")
     local response = http.get(url)
     if not response then
         printError("Failed to download " .. path)
         return false
     end
-    
     local content = response.readAll()
     response.close()
-    
-    local dir = fs.getDir(path)
+    local installPath = "/" .. path
+    local dir = fs.getDir(installPath)
     if dir ~= "" and not fs.exists(dir) then
         fs.makeDir(dir)
     end
-    
-    local file = fs.open(path, "w")
+    local file = fs.open(installPath, "w")
     if not file then
-        printError("Failed to write " .. path)
+        printError("Cannot write " .. installPath)
         return false
     end
-    
     file.write(content)
     file.close()
     return true
 end
 
-local successCount = 0
-local failCount = 0
-
+print("Arcadesys Turtle installer")
+persistExperience()
+local existing = fs.exists("/factory") and fs.exists("/lib")
+if existing then
+    print("Existing install detected. Refreshing...")
+else
+    print("Fresh install.")
+end
+cleanup()
+local success, fail = 0, 0
 for _, file in ipairs(files) do
     if download(file) then
-        successCount = successCount + 1
+        success = success + 1
     else
-        failCount = failCount + 1
+        fail = fail + 1
     end
-    sleep(0.1)
+    sleep(0.05)
 end
-
-print("")
-print("Install Complete!")
-print("Downloaded: " .. successCount)
-print("Failed: " .. failCount)
-
-print("Verifying installation...")
-local errors = 0
-for _, file in ipairs(files) do
-    if not fs.exists(file) then
-        printError("Missing: " .. file)
-        errors = errors + 1
-    end
-end
-if failCount == 0 and errors == 0 then
-    print("Verification successful.")
-    print("Reboot or run startup to launch.")
-else
-    print("Installation issues detected.")
-    if failCount > 0 then print("Failed downloads: " .. failCount) end
-    if errors > 0 then print("Missing files: " .. errors) end
-end
+print(string.format("Done. Success: %d, Failed: %d", success, fail))
+print("Rebooting in 2 seconds...")
+sleep(2)
+os.reboot()
