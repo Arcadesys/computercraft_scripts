@@ -394,57 +394,69 @@ local function drawUI()
     term.write("Up/Down to select  Enter=Play  Q=Quit")
 end
 
-local running = true
-while running do
-    drawUI()
-    local event, p1, p2, p3 = os.pullEvent()
-    if event == "key" then
-        if p1 == keys.up then
-            selectedIndex = selectedIndex - 1
-            clampSelection()
-            refreshScroll()
-        elseif p1 == keys.down then
-            selectedIndex = selectedIndex + 1
-            clampSelection()
-            refreshScroll()
-        elseif p1 == keys.enter or p1 == keys.numPadEnter then
-            playSelected()
-            initState() -- refresh credits/licenses after potential purchase
-        elseif p1 == keys.q or p1 == keys.backspace then
-            running = false
-        elseif p1 == keys.pageUp then
-            selectedIndex = selectedIndex - 5
-            clampSelection()
-            refreshScroll()
-        elseif p1 == keys.pageDown then
-            selectedIndex = selectedIndex + 5
-            clampSelection()
-            refreshScroll()
-        end
-    elseif event == "mouse_scroll" then
-        if p1 > 0 then
-            selectedIndex = math.min(#games, selectedIndex + 1)
-        else
-            selectedIndex = math.max(1, selectedIndex - 1)
-        end
-        refreshScroll()
-    elseif event == "mouse_click" then
-        if p3 >= 4 then
-            local idx = scrollOffset + (p3 - 4) + 1
-            if games[idx] then
-                selectedIndex = idx
+local function main()
+    local running = true
+    while running do
+        drawUI()
+        local event, p1, p2, p3 = os.pullEvent()
+        if event == "key" then
+            if p1 == keys.up then
+                selectedIndex = selectedIndex - 1
+                clampSelection()
                 refreshScroll()
-                if p1 == 1 then
-                    playSelected()
-                    initState()
+            elseif p1 == keys.down then
+                selectedIndex = selectedIndex + 1
+                clampSelection()
+                refreshScroll()
+            elseif p1 == keys.enter or p1 == keys.numPadEnter then
+                playSelected()
+                initState() -- refresh credits/licenses after potential purchase
+            elseif p1 == keys.q or p1 == keys.backspace then
+                running = false
+            elseif p1 == keys.pageUp then
+                selectedIndex = selectedIndex - 5
+                clampSelection()
+                refreshScroll()
+            elseif p1 == keys.pageDown then
+                selectedIndex = selectedIndex + 5
+                clampSelection()
+                refreshScroll()
+            end
+        elseif event == "mouse_scroll" then
+            if p1 > 0 then
+                selectedIndex = math.min(#games, selectedIndex + 1)
+            else
+                selectedIndex = math.max(1, selectedIndex - 1)
+            end
+            refreshScroll()
+        elseif event == "mouse_click" then
+            if p3 >= 4 then
+                local idx = scrollOffset + (p3 - 4) + 1
+                if games[idx] then
+                    selectedIndex = idx
+                    refreshScroll()
+                    if p1 == 1 then
+                        playSelected()
+                        initState()
+                    end
                 end
             end
         end
     end
+
+    term.setBackgroundColor(colors.black)
+    term.clear()
+    term.setCursorPos(1,1)
+    print("Returning to ArcadeOS...")
+    os.sleep(0.2)
 end
 
-term.setBackgroundColor(colors.black)
-term.clear()
-term.setCursorPos(1,1)
-print("Returning to ArcadeOS...")
-os.sleep(0.2)
+local function runWithMonitor(fn)
+    local ok, monitorUtil = pcall(require, "lib_monitor")
+    if ok and monitorUtil and monitorUtil.runOnMonitor then
+        return monitorUtil.runOnMonitor(fn, { textScale = 0.5 })
+    end
+    return fn()
+end
+
+runWithMonitor(main)

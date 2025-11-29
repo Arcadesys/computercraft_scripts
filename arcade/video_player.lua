@@ -41,7 +41,18 @@ local function readManifest(url)
     return data
 end
 
-local function openTargetTerm()
+local monitorSession = nil
+local function pickTargetTerm()
+    local ok, monitorUtil = pcall(require, "lib_monitor")
+    if ok and monitorUtil and monitorUtil.redirectToMonitor then
+        local opts = { textScale = 0.5 }
+        if monitorName then opts.preferredNames = { monitorName } end
+        monitorSession = monitorUtil.redirectToMonitor(opts)
+        if monitorSession and monitorSession.monitor then
+            return monitorSession.monitor
+        end
+    end
+
     if monitorName and peripheral and peripheral.wrap then
         local mon = peripheral.wrap(monitorName)
         if mon and mon.isColor and mon.isColor() then
@@ -74,8 +85,8 @@ local function readFrame(url)
     return rows
 end
 
-local function play(manifest)
-    local target = openTargetTerm()
+local function play(manifest, target)
+    target = target or term
     local base = manifest.baseUrl or manifest.framesBasePath or ""
     local function resolve(frame)
         if frame:match("^https?://") then return frame end
@@ -110,4 +121,15 @@ if not manifest then
     return
 end
 
-play(manifest)
+local function main()
+    local target = pickTargetTerm()
+    play(manifest, target)
+end
+
+local ok, errMain = xpcall(main, debug and debug.traceback or nil)
+if monitorSession and monitorSession.restore then
+    monitorSession.restore()
+end
+if not ok then
+    error(errMain)
+end

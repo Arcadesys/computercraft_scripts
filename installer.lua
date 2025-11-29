@@ -97,4 +97,12 @@ end
     os.reboot()
 end
 
-install()
+local function runWithMonitor(fn)
+    local ok, monitorUtil = pcall(require, "lib_monitor")
+    if ok and monitorUtil and monitorUtil.runOnMonitor then
+        return monitorUtil.runOnMonitor(fn, { textScale = 0.5 })
+    end
+    return fn()
+end
+
+runWithMonitor(install)

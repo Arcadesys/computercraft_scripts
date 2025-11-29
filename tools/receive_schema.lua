@@ -5,12 +5,6 @@
 local network = require("lib_network")
 
 local saveDir = ""
-if fs.exists("disk") and fs.isDir("disk") then
-    saveDir = "disk/"
-    print("Disk detected. Received files will be written to: " .. saveDir)
-else
-    print("No disk detected. Files will be written to the local filesystem.")
-end
 
 local function writeFile(filename, content)
     local path = filename
@@ -29,19 +23,37 @@ local function writeFile(filename, content)
     return true
 end
 
-print("Opening wireless modem (if present)...")
-if not network.openModem() then
-    print("No wireless modem found or unable to open rednet. Attach a wireless modem and try again.")
-    return
+local function main()
+    if fs.exists("disk") and fs.isDir("disk") then
+        saveDir = "disk/"
+        print("Disk detected. Received files will be written to: " .. saveDir)
+    else
+        print("No disk detected. Files will be written to the local filesystem.")
+    end
+
+    print("Opening wireless modem (if present)...")
+    if not network.openModem() then
+        print("No wireless modem found or unable to open rednet. Attach a wireless modem and try again.")
+        return
+    end
+
+    print("Broadcasting presence and listening for schema sends. Press Ctrl+T to exit.")
+    network.broadcastPresence()
+    network.listen(function(senderId, filename, content)
+        print("Received " .. tostring(filename) .. " from " .. tostring(senderId))
+        local ok, err = pcall(writeFile, filename, content)
+        if not ok then
+            print("Failed to save file: " .. tostring(err))
+        end
+    end)
 end
 
-print("Broadcasting presence and listening for schema sends. Press Ctrl+T to exit.")
-network.broadcastPresence()
-
-network.listen(function(senderId, filename, content)
-    print("Received " .. tostring(filename) .. " from " .. tostring(senderId))
-    local ok, err = pcall(writeFile, filename, content)
-    if not ok then
-        print("Failed to save file: " .. tostring(err))
+local function runWithMonitor(fn)
+    local ok, monitorUtil = pcall(require, "lib_monitor")
+    if ok and monitorUtil and monitorUtil.runOnMonitor then
+        return monitorUtil.runOnMonitor(fn, { textScale = 0.5 })
     end
-end)
+    return fn()
+end
+
+runWithMonitor(main)
