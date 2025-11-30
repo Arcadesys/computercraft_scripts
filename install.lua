@@ -206,6 +206,20 @@ local function installImage(image)
   end
 end
 
+local function summarizeInstall(image)
+  local files = image.files or {}
+  print("")
+  print("Install summary:")
+  print(string.format(" - Name: %s", image.name or "Workstation"))
+  print(string.format(" - Version: %s", image.version or "unknown"))
+  print(string.format(" - Files installed: %d", #files))
+  for _, file in ipairs(files) do
+    if file.path then
+      print("   * " .. file.path)
+    end
+  end
+end
+
 local function main()
   local manifestUrl = tArgs[1] or DEFAULT_MANIFEST_URL
 
@@ -245,7 +259,16 @@ local function main()
   -- Ensure we have data before wiping the disk.
   formatDisk()
   installImage(image)
-  log("Installation complete. Rebooting...")
+  log("Installation complete.")
+  summarizeInstall(image)
+  print("")
+  term.write("Press Enter to reboot (or type 'cancel' to stay): ")
+  local resp = string.lower(read() or "")
+  if resp == "cancel" or resp == "c" or resp == "no" then
+    log("Reboot skipped by user.")
+    return
+  end
+  log("Rebooting...")
   sleep(1)
   os.reboot()
 end
