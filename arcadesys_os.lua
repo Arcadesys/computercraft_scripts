@@ -214,6 +214,79 @@ local function runProgram(path, ui, ...)
     end
 end
 
+local function installMockTurtle()
+    local original = _G.turtle
+    if type(original) == "table" then return function() end end
+
+    local function okReturn()
+        return true
+    end
+
+    local function detectReturn()
+        return false
+    end
+
+    local function inspectReturn()
+        return true, { name = "minecraft:air", state = {}, tags = {} }
+    end
+
+    local stub = {
+        forward = okReturn,
+        back = okReturn,
+        up = okReturn,
+        down = okReturn,
+        turnLeft = okReturn,
+        turnRight = okReturn,
+        dig = okReturn,
+        digUp = okReturn,
+        digDown = okReturn,
+        place = okReturn,
+        placeUp = okReturn,
+        placeDown = okReturn,
+        attack = okReturn,
+        attackUp = okReturn,
+        attackDown = okReturn,
+        select = okReturn,
+        getSelectedSlot = function() return 1 end,
+        compare = okReturn,
+        compareUp = okReturn,
+        compareDown = okReturn,
+        compareTo = okReturn,
+        transferTo = okReturn,
+        drop = okReturn,
+        dropUp = okReturn,
+        dropDown = okReturn,
+        suck = okReturn,
+        suckUp = okReturn,
+        suckDown = okReturn,
+        detect = detectReturn,
+        detectUp = detectReturn,
+        detectDown = detectReturn,
+        inspect = inspectReturn,
+        inspectUp = inspectReturn,
+        inspectDown = inspectReturn,
+        getItemDetail = function() return nil end,
+        getItemCount = function() return 0 end,
+        getItemSpace = function() return 64 end,
+        getItemLimit = function() return 64 end,
+        getFuelLevel = function() return math.huge end,
+        getFuelLimit = function() return math.huge end,
+        refuel = okReturn,
+        craft = okReturn,
+        equipLeft = okReturn,
+        equipRight = okReturn,
+    }
+
+    setmetatable(stub, { __index = function()
+        return okReturn
+    end })
+
+    _G.turtle = stub
+    return function()
+        _G.turtle = original
+    end
+end
+
 local function maybe(label, path, hint)
     if not fs.exists(path) then return nil end
     return {
@@ -238,6 +311,17 @@ if not isTurtle then
     if ae2Drive then table.insert(computerItems, ae2Drive) end
     local ae2Me = maybe("AE2 ME Bridge Monitor", "ae2_me_bridge_monitor.lua", "ME Bridge + Modem")
     if ae2Me then table.insert(computerItems, ae2Me) end
+    local mockTurtleUi = {
+        label = "TurtleOS (mock turtle)",
+        hint = "Preview Turtle UI on CraftOS-PC",
+        action = function(_, ui)
+            ui:notify("Mocking turtle API... Launching TurtleOS UI.")
+            local cleanup = installMockTurtle()
+            runProgram("factory/turtle_os.lua", ui)
+            if cleanup then cleanup() end
+        end
+    }
+    table.insert(computerItems, mockTurtleUi)
     if #computerItems > 0 then
         table.insert(sections, { label = "Computer", items = computerItems })
     end
