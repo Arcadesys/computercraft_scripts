@@ -45,7 +45,12 @@ local function ensureFarmland(ctx, blockBelow)
     end
 
     turtle.select(hoeSlot)
-    turtle.placeDown()
+    local placed = turtle.placeDown()
+    if not placed then
+        logger.log(ctx, "warn", "Failed to till soil with hoe in slot " .. tostring(hoeSlot))
+        return false
+    end
+
     local ok, data = turtle.inspectDown()
     return ok and data and data.name == "minecraft:farmland"
 end
@@ -142,28 +147,43 @@ local function POTATOFARM(ctx)
                     end
 
                     sleep(0.2) -- Wait for drops
+                    local pulled = false
                     while turtle.suckDown() do
+                        pulled = true
                         sleep(0.1)
+                    end
+
+                    if pulled then
+                        inventory.invalidate(ctx)
                     end
                     
                     -- Replant if needed
                     local hPost, dPost = turtle.inspectDown()
                     if not hPost or dPost.name == "minecraft:air" then
+                        inventory.invalidate(ctx)
                         if inventory.selectMaterial(ctx, "minecraft:potato") then
-                            turtle.placeDown()
+                            if turtle.placeDown() then
+                                inventory.invalidate(ctx)
+                            end
                         end
                     end
                 end
             elseif not hasDown or dataDown.name == "minecraft:air" then
                  -- Empty spot, plant
+                 inventory.invalidate(ctx)
                  if inventory.selectMaterial(ctx, "minecraft:potato") then
-                    turtle.placeDown()
+                    if turtle.placeDown() then
+                        inventory.invalidate(ctx)
+                    end
                 end
             else
                 -- Ground block exists but isn't farmland; try to till then plant.
                 if ensureFarmland(ctx, dataDown) then
+                    inventory.invalidate(ctx)
                     if inventory.selectMaterial(ctx, "minecraft:potato") then
-                        turtle.placeDown()
+                        if turtle.placeDown() then
+                            inventory.invalidate(ctx)
+                        end
                     end
                 end
             end
