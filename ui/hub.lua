@@ -160,6 +160,7 @@ local function safeCall(action, ctx, ui)
     local ok, err = pcall(action, ctx, ui)
     if not ok then
         ui:notify("Action failed: " .. tostring(err))
+        ui:pause()
     end
 end
 
