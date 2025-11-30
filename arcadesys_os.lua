@@ -9,30 +9,40 @@ Goals:
 
 ---@diagnostic disable: undefined-global
 
-local VERSION = "2.0.0"
+local VERSION = "2.0.2"
+
+if type(package) ~= "table" then package = { path = "" } end
+if type(package.path) ~= "string" then package.path = package.path or "" end
 
 local DEFAULT_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/manifest.json"
 
 local function ensurePackagePaths(baseDir)
+    local root = baseDir == "" and "/" or baseDir
     local paths = {
-        fs.combine(baseDir, "?.lua"),
-        fs.combine(baseDir, "lib/?.lua"),
-        fs.combine(baseDir, "arcade/?.lua"),
-        fs.combine(baseDir, "arcade/ui/?.lua"),
-        fs.combine(baseDir, "factory/?.lua"),
-        fs.combine(baseDir, "ui/?.lua"),
-        fs.combine(baseDir, "tools/?.lua"),
         "/?.lua",
         "/lib/?.lua",
+        fs.combine(root, "?.lua"),
+        fs.combine(root, "lib/?.lua"),
+        fs.combine(root, "arcade/?.lua"),
+        fs.combine(root, "arcade/ui/?.lua"),
+        fs.combine(root, "factory/?.lua"),
+        fs.combine(root, "ui/?.lua"),
+        fs.combine(root, "tools/?.lua"),
     }
 
-    for _, pattern in ipairs(paths) do
-        local needle = ";" .. pattern
-        if not string.find(package.path, needle, 1, true) then
-            package.path = package.path .. needle
+    -- Rebuild path with guaranteed leading entries, plus any existing paths.
+    local current = package.path or ""
+    if current ~= "" then table.insert(paths, current) end
+    -- Deduplicate while preserving order.
+    local seen, final = {}, {}
+    for _, p in ipairs(paths) do
+        if p and p ~= "" and not seen[p] then
+            seen[p] = true
+            table.insert(final, p)
         end
     end
+    package.path = table.concat(final, ";")
 end
 
 local function detectBaseDir()
@@ -204,14 +214,12 @@ print(string.format("Arcadesys %s - launching Turtle UI", VERSION))
 local function runProgram(path, ui, ...)
     local args = { ... }
     local function go()
-        if shell and shell.run then
-            shell.run(path, table.unpack(args))
-        elseif dofile then
-            _G.arg = args
-            dofile(path)
-        else
-            error("No shell available to run " .. path)
+        local fn, loadErr = loadfile(path)
+        if not fn then
+            error("Unable to load " .. path .. ": " .. tostring(loadErr))
         end
+        _G.arg = args
+        return fn(table.unpack(args))
     end
 
     local ok, err = pcall(go)
