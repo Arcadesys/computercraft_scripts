@@ -1,5 +1,279 @@
 {
-  "version": "1.0.0",
-  "description": "Manifest downloaded by install.lua from the main GitHub branch.",
-  "files": []
+    "name":  "Arcadesys Workstation",
+    "version":  "1.0.0",
+    "description":  "Manifest downloaded by install.lua from the main GitHub branch.",
+    "files":  [
+                  {
+                      "path":  "arcade/data/programs.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/arcade/data/programs.lua"
+                  },
+                  {
+                      "path":  "arcade/data/valhelsia_blocks.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/arcade/data/valhelsia_blocks.lua"
+                  },
+                  {
+                      "path":  "arcade/ui/renderer.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/arcade/ui/renderer.lua"
+                  },
+                  {
+                      "path":  "arcade/boot.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/arcade/boot.lua"
+                  },
+                  {
+                      "path":  "factory/dist/factory.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory/dist/factory.lua"
+                  },
+                  {
+                      "path":  "factory/factory.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory/factory.lua"
+                  },
+                  {
+                      "path":  "factory/main.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory/main.lua"
+                  },
+                  {
+                      "path":  "factory/state_blocked.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory/state_blocked.lua"
+                  },
+                  {
+                      "path":  "factory/state_branchmine.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory/state_branchmine.lua"
+                  },
+                  {
+                      "path":  "factory/state_build.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory/state_build.lua"
+                  },
+                  {
+                      "path":  "factory/state_check_requirements.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory/state_check_requirements.lua"
+                  },
+                  {
+                      "path":  "factory/state_done.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory/state_done.lua"
+                  },
+                  {
+                      "path":  "factory/state_error.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory/state_error.lua"
+                  },
+                  {
+                      "path":  "factory/state_initialize.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory/state_initialize.lua"
+                  },
+                  {
+                      "path":  "factory/state_mine.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory/state_mine.lua"
+                  },
+                  {
+                      "path":  "factory/state_potatofarm.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory/state_potatofarm.lua"
+                  },
+                  {
+                      "path":  "factory/state_refuel.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory/state_refuel.lua"
+                  },
+                  {
+                      "path":  "factory/state_restock.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory/state_restock.lua"
+                  },
+                  {
+                      "path":  "factory/state_treefarm.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory/state_treefarm.lua"
+                  },
+                  {
+                      "path":  "factory/turtle_os.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory/turtle_os.lua"
+                  },
+                  {
+                      "path":  "lib/lib_cards.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_cards.lua"
+                  },
+                  {
+                      "path":  "lib/lib_designer.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_designer.lua"
+                  },
+                  {
+                      "path":  "lib/lib_diagnostics.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_diagnostics.lua"
+                  },
+                  {
+                      "path":  "lib/lib_farming.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_farming.lua"
+                  },
+                  {
+                      "path":  "lib/lib_fs.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_fs.lua"
+                  },
+                  {
+                      "path":  "lib/lib_fuel.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_fuel.lua"
+                  },
+                  {
+                      "path":  "lib/lib_games.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_games.lua"
+                  },
+                  {
+                      "path":  "lib/lib_gps.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_gps.lua"
+                  },
+                  {
+                      "path":  "lib/lib_initialize.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_initialize.lua"
+                  },
+                  {
+                      "path":  "lib/lib_inventory.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_inventory.lua"
+                  },
+                  {
+                      "path":  "lib/lib_items.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_items.lua"
+                  },
+                  {
+                      "path":  "lib/lib_json.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_json.lua"
+                  },
+                  {
+                      "path":  "lib/lib_license.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_license.lua"
+                  },
+                  {
+                      "path":  "lib/lib_logger.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_logger.lua"
+                  },
+                  {
+                      "path":  "lib/lib_menu.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_menu.lua"
+                  },
+                  {
+                      "path":  "lib/lib_mining.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_mining.lua"
+                  },
+                  {
+                      "path":  "lib/lib_monitor.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_monitor.lua"
+                  },
+                  {
+                      "path":  "lib/lib_movement.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_movement.lua"
+                  },
+                  {
+                      "path":  "lib/lib_navigation.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_navigation.lua"
+                  },
+                  {
+                      "path":  "lib/lib_network.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_network.lua"
+                  },
+                  {
+                      "path":  "lib/lib_orientation.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_orientation.lua"
+                  },
+                  {
+                      "path":  "lib/lib_parser.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_parser.lua"
+                  },
+                  {
+                      "path":  "lib/lib_placement.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_placement.lua"
+                  },
+                  {
+                      "path":  "lib/lib_reporter.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_reporter.lua"
+                  },
+                  {
+                      "path":  "lib/lib_schema.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_schema.lua"
+                  },
+                  {
+                      "path":  "lib/lib_startup.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_startup.lua"
+                  },
+                  {
+                      "path":  "lib/lib_strategy.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_strategy.lua"
+                  },
+                  {
+                      "path":  "lib/lib_strategy_branchmine.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_strategy_branchmine.lua"
+                  },
+                  {
+                      "path":  "lib/lib_strategy_excavate.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_strategy_excavate.lua"
+                  },
+                  {
+                      "path":  "lib/lib_strategy_farm.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_strategy_farm.lua"
+                  },
+                  {
+                      "path":  "lib/lib_strategy_tunnel.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_strategy_tunnel.lua"
+                  },
+                  {
+                      "path":  "lib/lib_string.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_string.lua"
+                  },
+                  {
+                      "path":  "lib/lib_table.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_table.lua"
+                  },
+                  {
+                      "path":  "lib/lib_ui.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_ui.lua"
+                  },
+                  {
+                      "path":  "lib/lib_wizard.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_wizard.lua"
+                  },
+                  {
+                      "path":  "lib/lib_world.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_world.lua"
+                  },
+                  {
+                      "path":  "lib/lib_worldstate.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_worldstate.lua"
+                  },
+                  {
+                      "path":  "lib/log.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/log.lua"
+                  },
+                  {
+                      "path":  "lib/version.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/version.lua"
+                  },
+                  {
+                      "path":  "ui/hub.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/ui/hub.lua"
+                  },
+                  {
+                      "path":  "ui/trash_config.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/ui/trash_config.lua"
+                  },
+                  {
+                      "path":  "ae2_drive_monitor.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/ae2_drive_monitor.lua"
+                  },
+                  {
+                      "path":  "ae2_me_bridge_monitor.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/ae2_me_bridge_monitor.lua"
+                  },
+                  {
+                      "path":  "arcadesys_os.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/arcadesys_os.lua"
+                  },
+                  {
+                      "path":  "factory_planner.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory_planner.lua"
+                  },
+                  {
+                      "path":  "install.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/install.lua"
+                  },
+                  {
+                      "path":  "printer.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/printer.lua"
+                  },
+                  {
+                      "path":  "startup.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/startup.lua"
+                  }
+              ]
 }
