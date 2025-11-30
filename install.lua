@@ -28,7 +28,7 @@ local tArgs = { ... }
 
 -- Change this to point at your canonical Workstation manifest.
 local DEFAULT_MANIFEST_URL =
-  "https://raw.githubusercontent.com/example/workstation/main/manifest.json"
+  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/manifest.json"
 
 -- Minimal offline image that keeps the computer usable even if remote
 -- downloads fail.
