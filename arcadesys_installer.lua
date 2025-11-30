@@ -4,10 +4,7 @@
 local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
 
 local PROFILES = {
-    { name = "Arcade OS (PC)", script = "arcade_os_install.lua" },
-    { name = "Workstation OS", script = "workstation_install.lua" },
-    { name = "Turtle/Factory OS", script = "turtle_os_install.lua" },
-    { name = "Pocket Arcade OS", script = "pocket_os_installer.lua" },
+    { name = "Essentials (AE2 Monitor + Factory Planner)", script = "workstation_install.lua" },
 }
 
 local function clear()

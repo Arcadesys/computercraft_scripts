@@ -6,21 +6,9 @@ local VARIANT = "turtle"
 local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
 local ROOTS = { "factory", "lib" }
 local files = {
-    "factory/factory.lua",
-    "factory/main.lua",
-    "factory/state_blocked.lua",
-    "factory/state_branchmine.lua",
-    "factory/state_build.lua",
-    "factory/state_check_requirements.lua",
-    "factory/state_done.lua",
-    "factory/state_error.lua",
-    "factory/state_initialize.lua",
-    "factory/state_mine.lua",
-    "factory/state_potatofarm.lua",
-    "factory/state_refuel.lua",
-    "factory/state_restock.lua",
-    "factory/state_treefarm.lua",
-    "factory/turtle_os.lua",
+    "ae2_me_bridge_monitor.lua",
+    "factory_planner.lua",
+    "installer.lua",
     "lib/lib_cards.lua",
     "lib/lib_designer.lua",
     "lib/lib_diagnostics.lua",
@@ -60,6 +48,8 @@ local files = {
     "lib/lib_worldstate.lua",
     "lib/log.lua",
     "lib/version.lua",
+    "arcadesys_installer.lua",
+    "pocket_os_install.lua",
     "startup.lua",
 }
 

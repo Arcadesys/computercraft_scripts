@@ -11,6 +11,13 @@ local monUtil = require("lib_monitor")
 
 local APPS = {
     {
+        id = "update",
+        label = "Update / Install",
+        path = "/installer.lua",
+        mode = "active",
+        desc = "Pull latest Arcadesys build from GitHub",
+    },
+    {
         id = "ae2_monitor",
         label = "AE2 Storage Monitor",
         path = "/ae2_me_bridge_monitor.lua",
@@ -19,33 +26,11 @@ local APPS = {
         desc = "Passive monitor for ME storage via meBridge",
     },
     {
-        id = "ae2_drive_legacy",
-        label = "AE2 Drive Monitor (legacy)",
-        path = "/ae2_drive_monitor.lua",
-        mode = "passive",
-        monitor = { textScale = 0.5 },
-        desc = "Legacy drive usage view",
-    },
-    {
         id = "factory_planner",
         label = "Factory Planner",
         path = "/factory_planner.lua",
         mode = "active",
         desc = "Interactive planning tool",
-    },
-    {
-        id = "arcade",
-        label = "Arcade",
-        path = "/arcade/arcade_shell.lua",
-        mode = "active",
-        desc = "Arcade shell",
-    },
-    {
-        id = "kiosk",
-        label = "Kiosk",
-        path = "/kiosk.lua",
-        mode = "active",
-        desc = "Kiosk launcher",
     },
 }
 

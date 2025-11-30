@@ -1,10 +1,9 @@
--- Arcadesys Arcade OS Installer
--- Auto-generated at 2025-11-29T04:37:05.527Z
--- Refreshes or installs the arcade experience (button-controlled)
+-- Arcadesys Pocket OS Installer
+-- Refreshes or installs the pocket experience (terminal-friendly)
 
-local VARIANT = "arcade"
+local VARIANT = "pocket"
 local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
-local ROOTS = { "arcade", "lib", "kiosk.lua" }
+local ROOTS = { "arcade", "factory", "lib", "tools", "ui", "kiosk.lua", "games" }
 local files = {
     "ae2_me_bridge_monitor.lua",
     "factory_planner.lua",
@@ -48,9 +47,9 @@ local files = {
     "lib/lib_worldstate.lua",
     "lib/log.lua",
     "lib/version.lua",
-    "arcadesys_installer.lua",
-    "pocket_os_install.lua",
+    "pocket_menu.lua",
     "startup.lua",
+    "arcadesys_installer.lua",
 }
 
 local function persistExperience()
@@ -93,9 +92,9 @@ local function download(path)
     return true
 end
 
-print("Arcadesys Arcade installer")
+print("Arcadesys Pocket installer")
 persistExperience()
-local existing = fs.exists("/arcade") and fs.exists("/lib")
+local existing = fs.exists("/arcade") or fs.exists("/factory") or fs.exists("/lib")
 if existing then
     print("Existing install detected. Refreshing...")
 else

@@ -6,11 +6,13 @@
 local EXPERIENCE_FILE = "experience.settings"
 local DEFAULT_COMPUTER_EXPERIENCE = "workstation"
 
-local platform = turtle and "turtle" or "computer"
+local platform = (turtle and "turtle") or (pocket and "pocket") or "computer"
 
 local function loadExperience()
     if platform == "turtle" then
         return "turtle"
+    elseif platform == "pocket" then
+        return "pocket"
     end
 
     if not fs.exists(EXPERIENCE_FILE) then
@@ -54,6 +56,8 @@ elseif experience == "arcade" then
     runProgram("/arcade/arcade_arcade.lua", "ArcadeArcade")
 elseif experience == "workstation" then
     runProgram("/workstation_menu.lua", "Workstation Menu")
+elseif experience == "pocket" then
+    runProgram("/pocket_menu.lua", "Pocket Menu")
 else
     runProgram("/arcade/arcade_shell.lua", "Arcade Shell")
 end

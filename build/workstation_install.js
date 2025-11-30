@@ -36,6 +36,7 @@ const ALLOWED_FILES = new Set([
     'ae2_drive_monitor.lua',
     'ae2_me_bridge_monitor.lua',
     'workstation_menu.lua',
+    'pocket_menu.lua',
     'kiosk.lua',
 ]);
 
