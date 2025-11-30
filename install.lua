@@ -2,8 +2,8 @@
 -- Usage: install <owner> <repo> [branch] [manifestPath]
 -- Defaults: owner/repo from constants below, branch="main", manifestPath="manifest.json"
 
-local DEFAULT_OWNER = "CHANGE_ME_OWNER" -- e.g., "your-username"
-local DEFAULT_REPO = "CHANGE_ME_REPO"   -- e.g., "your-repo"
+local DEFAULT_OWNER = "Austen Tucker" -- e.g., "your-username"
+local DEFAULT_REPO = "arcadesys"   -- e.g., "your-repo"
 local DEFAULT_BRANCH = "main"
 local DEFAULT_MANIFEST_PATH = "manifest.json"
 
