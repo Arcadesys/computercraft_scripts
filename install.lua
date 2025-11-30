@@ -2,8 +2,8 @@
 -- Usage: install <owner> <repo> [branch] [manifestPath]
 -- Defaults: owner/repo from constants below, branch="main", manifestPath="manifest.json"
 
-local DEFAULT_OWNER = "tailorswift"
-local DEFAULT_REPO = "tailorswift"
+local DEFAULT_OWNER = "CHANGE_ME_OWNER" -- e.g., "your-username"
+local DEFAULT_REPO = "CHANGE_ME_REPO"   -- e.g., "your-repo"
 local DEFAULT_BRANCH = "main"
 local DEFAULT_MANIFEST_PATH = "manifest.json"
 
@@ -34,6 +34,10 @@ local function fetch(url)
 end
 
 local function writeFile(path, content)
+  local dir = fs.getDir(path)
+  if dir and dir ~= "" then
+    fs.makeDir(dir)
+  end
   local file = fs.open(path, "w")
   if not file then
     error(string.format("Unable to open %s for writing", path))
@@ -46,9 +50,11 @@ local manifestUrl = buildManifestUrl()
 print("Downloading manifest from " .. manifestUrl)
 
 local manifestBody = fetch(manifestUrl)
-local manifest = textutils.unserializeJSON(manifestBody)
-if not manifest then
+local ok, manifest = pcall(textutils.unserializeJSON, manifestBody)
+if not ok then
   error("Downloaded manifest is not valid JSON")
+elseif type(manifest) ~= "table" then
+  error("Downloaded manifest is valid JSON but not a valid manifest (expected a table)")
 end
 
 writeFile(manifestPath, manifestBody)
