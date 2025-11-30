@@ -34,9 +34,15 @@ const ALLOWED_FILES = new Set([
     'factory_planner.lua',
     'printer.lua',
     'ae2_drive_monitor.lua',
-    'games/arcade.lua',
+    'ae2_me_bridge_monitor.lua',
+    'workstation_menu.lua',
     'kiosk.lua',
 ]);
+
+const DISALLOWED_PREFIXES = [
+    'arcade/games/',
+    'games/',
+];
 
 function normalizePath(p) {
     return p.replace(/\\/g, '/');
@@ -80,6 +86,9 @@ function collectLuaFiles(dir, base = '') {
 
 function filterFiles(allFiles) {
     return allFiles.filter(rel => {
+        if (DISALLOWED_PREFIXES.some(prefix => rel.startsWith(prefix))) {
+            return false;
+        }
         if (ALLOWED_FILES.has(rel)) return true;
         return ALLOWED_PREFIXES.some(prefix => rel.startsWith(prefix));
     });

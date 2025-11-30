@@ -1,5 +1,5 @@
 -- Arcadesys Workstation Installer
--- Auto-generated at 2025-11-29T04:37:05.587Z
+-- Auto-generated at 2025-11-29T05:28:56.674Z
 -- Refreshes or installs the workstation experience (computer)
 
 local VARIANT = "workstation"
@@ -7,6 +7,7 @@ local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scri
 local ROOTS = { "arcade", "factory", "lib", "tools", "ui", "kiosk.lua", "games" }
 local files = {
     "ae2_drive_monitor.lua",
+    "ae2_me_bridge_monitor.lua",
     "arcade/arcade_arcade.lua",
     "arcade/arcade_shell.lua",
     "arcade/arcade.lua",
@@ -14,14 +15,6 @@ local files = {
     "arcade/boot.lua",
     "arcade/data/programs.lua",
     "arcade/data/valhelsia_blocks.lua",
-    "arcade/games/artillery.lua",
-    "arcade/games/blackjack.lua",
-    "arcade/games/cantstop.lua",
-    "arcade/games/idlecraft.lua",
-    "arcade/games/slots.lua",
-    "arcade/games/themes.lua",
-    "arcade/games/videopoker.lua",
-    "arcade/games/warlords.lua",
     "arcade/license_store.lua",
     "arcade/store.lua",
     "arcade/ui/renderer.lua",
@@ -42,7 +35,6 @@ local files = {
     "factory/state_restock.lua",
     "factory/state_treefarm.lua",
     "factory/turtle_os.lua",
-    "games/arcade.lua",
     "kiosk.lua",
     "lib/lib_cards.lua",
     "lib/lib_designer.lua",
@@ -88,6 +80,7 @@ local files = {
     "tools/install_sender.lua",
     "tools/receive_schema.lua",
     "ui/trash_config.lua",
+    "workstation_menu.lua",
 }
 
 local function persistExperience()

@@ -162,6 +162,15 @@ end
 package.loaded["data.programs"] = nil -- Force reload
 local programs = require("data.programs")
 
+local function hasGames()
+  for _, program in ipairs(programs) do
+    if program.category == "games" then
+      return true
+    end
+  end
+  return false
+end
+
 -- ==========================
 -- Package Manager
 -- ==========================
@@ -737,9 +746,11 @@ local function main()
         table.insert(buttons, {text = label, y = y, action = action})
       end
 
-      addButton("ArcadeArcade", function()
-        launchArcadeArcadeUI()
-      end)
+      if hasGames() then
+        addButton("ArcadeArcade", function()
+          launchArcadeArcadeUI()
+        end)
+      end
 
       addButton("Store", function()
         for _, p in ipairs(programs) do

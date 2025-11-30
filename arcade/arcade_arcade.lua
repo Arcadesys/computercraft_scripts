@@ -195,6 +195,15 @@ table.sort(games, function(a, b)
     return a.name < b.name
 end)
 
+local function showNoGamesMessage()
+    term.setBackgroundColor(colors.black)
+    term.clear()
+    term.setCursorPos(1, 1)
+    print("No games are installed for this experience.")
+    print("Press any key to return.")
+    os.pullEvent("key")
+end
+
 local function downloadFile(url, path)
     if not http then
         return false, "HTTP disabled"
@@ -395,6 +404,11 @@ local function drawUI()
 end
 
 local function main()
+    if #games == 0 then
+        showNoGamesMessage()
+        return
+    end
+
     local running = true
     while running do
         drawUI()

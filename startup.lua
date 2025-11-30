@@ -52,6 +52,8 @@ if experience == "turtle" then
     runProgram("/factory/main.lua", "Factory Main")
 elseif experience == "arcade" then
     runProgram("/arcade/arcade_arcade.lua", "ArcadeArcade")
+elseif experience == "workstation" then
+    runProgram("/workstation_menu.lua", "Workstation Menu")
 else
     runProgram("/arcade/arcade_shell.lua", "Arcade Shell")
 end

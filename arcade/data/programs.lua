@@ -1,4 +1,35 @@
 local REPO_ROOT = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
+local EXPERIENCE_FILE = "experience.settings"
+local DEFAULT_EXPERIENCE = "arcade"
+
+local function loadExperience()
+    if not fs or type(fs.exists) ~= "function" or type(fs.open) ~= "function" then
+        return nil
+    end
+
+    if not fs.exists(EXPERIENCE_FILE) then
+        return nil
+    end
+
+    local handle = fs.open(EXPERIENCE_FILE, "r")
+    if not handle then
+        return nil
+    end
+
+    local ok, data = pcall(function()
+        local contents = handle.readAll()
+        handle.close()
+        return textutils.unserialize(contents)
+    end)
+
+    if ok and type(data) == "table" and type(data.experience) == "string" then
+        return data.experience
+    end
+
+    return nil
+end
+
+local experience = loadExperience() or DEFAULT_EXPERIENCE
 
 -- Pricing Configuration
 -- Adjust prices here. Set to 0 for free downloads.
@@ -112,7 +143,7 @@ local programs = {
     name = "App Store",
     path = "store.lua",
     price = PRICING.store,
-    description = "Download new games.",
+    description = "Download and update apps.",
     category = "system",
   }),
   configureProgram({
@@ -134,4 +165,18 @@ local programs = {
   }),
 }
 
-return programs
+local function shouldInclude(program)
+  if experience == "workstation" and program.category == "games" then
+    return false
+  end
+  return true
+end
+
+local filtered = {}
+for _, program in ipairs(programs) do
+  if shouldInclude(program) then
+    table.insert(filtered, program)
+  end
+end
+
+return filtered
