@@ -12,6 +12,44 @@ local wizard = require("lib_wizard")
 local startup = require("lib_startup")
 local farming = require("lib_farming")
 
+-- Till dirt/grass into farmland using any hoe found in inventory.
+local function ensureFarmland(ctx, blockBelow)
+    if not turtle or not turtle.placeDown then
+        return true -- Assume farmland is already prepared in non-turtle environments.
+    end
+    if not blockBelow or blockBelow.name == "minecraft:farmland" then
+        return true
+    end
+
+    local tillable = {
+        ["minecraft:dirt"] = true,
+        ["minecraft:coarse_dirt"] = true,
+        ["minecraft:rooted_dirt"] = true,
+        ["minecraft:grass_block"] = true,
+    }
+    if not tillable[blockBelow.name] then
+        return false
+    end
+
+    inventory.scan(ctx)
+    local hoeSlot
+    for slot, info in pairs(ctx.inventoryState.slots or {}) do
+        if info and info.name and info.count > 0 and info.name:find("hoe") then
+            hoeSlot = slot
+            break
+        end
+    end
+    if not hoeSlot then
+        logger.log(ctx, "warn", "No hoe in inventory; cannot till soil.")
+        return false
+    end
+
+    turtle.select(hoeSlot)
+    turtle.placeDown()
+    local ok, data = turtle.inspectDown()
+    return ok and data and data.name == "minecraft:farmland"
+end
+
 local function POTATOFARM(ctx)
     local pf = ctx.potatofarm
     if not pf then return "INITIALIZE" end
@@ -120,6 +158,13 @@ local function POTATOFARM(ctx)
                  -- Empty spot, plant
                  if inventory.selectMaterial(ctx, "minecraft:potato") then
                     turtle.placeDown()
+                end
+            else
+                -- Ground block exists but isn't farmland; try to till then plant.
+                if ensureFarmland(ctx, dataDown) then
+                    if inventory.selectMaterial(ctx, "minecraft:potato") then
+                        turtle.placeDown()
+                    end
                 end
             end
         end
