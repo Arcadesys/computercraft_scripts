@@ -188,7 +188,7 @@ end
 
 local hub = require("ui.hub")
 
-local function runProgram(path, ...)
+local function runProgram(path, ui, ...)
     local args = { ... }
     local function go()
         if shell and shell.run then
@@ -200,10 +200,17 @@ local function runProgram(path, ...)
             error("No shell available to run " .. path)
         end
     end
+
     local ok, err = pcall(go)
     if not ok then
-        print("Failed to run " .. path .. ": " .. tostring(err))
-        if _G.sleep then sleep(1) end
+        local msg = "Failed to run " .. path .. ": " .. tostring(err)
+        if ui and ui.notify then
+            ui:notify(msg)
+            ui:pause("(Press Enter to return)")
+        else
+            print(msg)
+            if _G.sleep then sleep(1) end
+        end
     end
 end
 
@@ -214,7 +221,7 @@ local function maybe(label, path, hint)
         hint = hint,
         action = function(_, ui)
             ui:notify("Launching " .. label .. "...")
-            runProgram(path)
+            runProgram(path, ui)
         end
     }
 end
