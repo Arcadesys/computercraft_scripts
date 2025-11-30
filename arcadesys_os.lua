@@ -13,6 +13,38 @@ local VERSION = "2.0.2"
 
 if type(package) ~= "table" then package = { path = "" } end
 if type(package.path) ~= "string" then package.path = package.path or "" end
+package.loaded = package.loaded or {}
+
+local function requireCompat(name)
+    if package.loaded[name] ~= nil then return package.loaded[name] end
+    if _G.require then
+        local result = _G.require(name)
+        package.loaded[name] = result
+        return result
+    end
+
+    local lastErr
+    for pattern in string.gmatch(package.path or "", "([^;]+)") do
+        local candidate = pattern:gsub("%?", name)
+        if fs.exists(candidate) and not fs.isDir(candidate) then
+            local fn, err = loadfile(candidate)
+            if not fn then
+                lastErr = err
+            else
+                local ok, res = pcall(fn)
+                if not ok then
+                    lastErr = res
+                else
+                    package.loaded[name] = res
+                    return res
+                end
+            end
+        end
+    end
+    error(string.format("module '%s' not found%s", name, lastErr and (": " .. tostring(lastErr)) or ""))
+end
+
+_G.require = _G.require or requireCompat
 
 local DEFAULT_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/manifest.json"
