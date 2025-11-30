@@ -20,6 +20,12 @@ The installer autodetects whether it is running on a turtle or a computer.
 * **Shared UI**: Both turtles and computers launch `arcadesys_os.lua`, a unified menu that links factory jobs, games, and tools.
 * **Factory Designer**: Run `factory_planner.lua` (optionally `--load path/to/schema.json`) for the graphical designer powered by `lib_designer`.
 
+## CraftOS-PC workflow (no in-game testing)
+
+1. Stage the repo into your CraftOS-PC data folder: `pwsh tools/craftos_sync.ps1 -ComputerId 0 -TurtleId 1`. It writes into `%APPDATA%\CraftOS-PC\computer\<id>\arcadesys`.
+2. Launch CraftOS-PC pointing at that data directory (CLI: `craftos --computers-dir "%APPDATA%\CraftOS-PC\computer"`). Open computer `<ComputerId>` for the PC profile and turtle `<TurtleId>` (create one in CraftOS-PC if it does not exist yet) for the turtle profile.
+3. Both profiles boot into `arcadesys_os.lua`; pick the program you want to exercise. Turtle state machine files are unchanged; this simply wires in a launcher.
+
 ## Building Installers
 
 Legacy per-experience installers can still be produced with the Node scripts below (optional):

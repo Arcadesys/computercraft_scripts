@@ -1,270 +1,139 @@
+--[[
+Arcadesys launcher
+
+Goals:
+- Run on CraftOS-PC for both computer and turtle profiles.
+- Keep the turtle state machine untouched; we just dispatch to existing entrypoints.
+- Avoid in-game testing by making it easy to start common programs from one menu.
+]]
+
 ---@diagnostic disable: undefined-global
 
--- arcadesys_os.lua
--- Unified launcher for turtles and computers with a shared, low-dependency UX.
+local function ensurePackagePaths(baseDir)
+    local paths = {
+        fs.combine(baseDir, "?.lua"),
+        fs.combine(baseDir, "lib/?.lua"),
+        fs.combine(baseDir, "arcade/?.lua"),
+        fs.combine(baseDir, "arcade/ui/?.lua"),
+        fs.combine(baseDir, "factory/?.lua"),
+        fs.combine(baseDir, "ui/?.lua"),
+        fs.combine(baseDir, "tools/?.lua"),
+        "/?.lua",
+        "/lib/?.lua",
+    }
 
-package.path = package.path .. ";/?.lua;/lib/?.lua;/factory/?.lua;/arcade/?.lua;/arcade/games/?.lua"
+    for _, pattern in ipairs(paths) do
+        local needle = ";" .. pattern
+        if not string.find(package.path, needle, 1, true) then
+            package.path = package.path .. needle
+        end
+    end
+end
+
+local function detectBaseDir()
+    if shell and shell.getRunningProgram then
+        return fs.getDir(shell.getRunningProgram())
+    end
+    if debug and debug.getinfo then
+        local info = debug.getinfo(1, "S")
+        if info and info.source then
+            local src = info.source
+            if src:sub(1, 1) == "@" then src = src:sub(2) end
+            return fs.getDir(src)
+        end
+    end
+    return ""
+end
+
+local baseDir = detectBaseDir()
+ensurePackagePaths(baseDir == "" and "/" or baseDir)
+
+local okBoot, boot = pcall(require, "arcade.boot")
+if okBoot and type(boot) == "table" and boot.setupPaths then
+    pcall(boot.setupPaths)
+end
 
 local hub = require("ui.hub")
 
-local function detectEnv()
-    local hasTerm = type(term) == "table" and type(term.clear) == "function"
-    local hasShell = type(shell) == "table" and type(shell.run) == "function"
-    local hasFS = type(fs) == "table" and type(fs.exists) == "function"
-    local isTurtle = type(_G.turtle) == "table"
-    local isPocket = type(_G.pocket) == "table"
-    local headless = not hasTerm
+local function runProgram(path, ...)
+    local args = { ... }
+    local function go()
+        if shell and shell.run then
+            shell.run(path, table.unpack(args))
+        elseif dofile then
+            _G.arg = args
+            dofile(path)
+        else
+            error("No shell available to run " .. path)
+        end
+    end
+    local ok, err = pcall(go)
+    if not ok then
+        print("Failed to run " .. path .. ": " .. tostring(err))
+        if _G.sleep then sleep(1) end
+    end
+end
+
+local function maybe(label, path, hint)
+    if not fs.exists(path) then return nil end
     return {
-        hasTerm = hasTerm,
-        hasShell = hasShell,
-        hasFS = hasFS,
-        isTurtle = isTurtle,
-        isPocket = isPocket,
-        isComputer = not isTurtle,
-        headless = headless,
+        label = label,
+        hint = hint,
+        action = function(_, ui)
+            ui:notify("Launching " .. label .. "...")
+            runProgram(path)
+        end
     }
 end
 
-local function promptNumber(ui, label, default)
-    local resp = ui:prompt(label, default)
-    local num = tonumber(resp)
-    if not num then return default end
-    return num
-end
+local isTurtle = type(_G.turtle) == "table"
 
-local function ensureFactory(env, ui)
-    local ok, factory = pcall(require, "factory")
-    if not ok then
-        ui:notify("Factory module unavailable: " .. tostring(factory))
-        return nil
-    end
-    if not env.isTurtle then
-        ui:notify("Factory actions require a turtle.")
-        return nil
-    end
-    return factory
-end
+local sections = {}
 
-local function runFactory(factory, args, ui)
-    local ok, err = pcall(function()
-        factory.run(args)
-    end)
-    if not ok then
-        ui:notify("Factory error: " .. tostring(err))
+if not isTurtle then
+    local computerItems = {}
+    local planner = maybe("Factory Planner", "factory_planner.lua", "Design schemas")
+    if planner then table.insert(computerItems, planner) end
+    local ae2Drive = maybe("AE2 Drive Monitor", "ae2_drive_monitor.lua", "Requires ME Bridge")
+    if ae2Drive then table.insert(computerItems, ae2Drive) end
+    local ae2Me = maybe("AE2 ME Bridge Monitor", "ae2_me_bridge_monitor.lua", "ME Bridge + Modem")
+    if ae2Me then table.insert(computerItems, ae2Me) end
+    if #computerItems > 0 then
+        table.insert(sections, { label = "Computer", items = computerItems })
     end
 end
 
-local function actionBranchMine(ctx, ui)
-    local factory = ensureFactory(ctx.env, ui)
-    if not factory then return end
-    local length = promptNumber(ui, "Length", 64)
-    local branch = promptNumber(ui, "Branch interval", 3)
-    local torch = promptNumber(ui, "Torch interval", 6)
-    ui:notify("Starting branch mine...")
-    runFactory(factory, { "mine", "--length", tostring(length), "--branch-interval", tostring(branch), "--torch-interval", tostring(torch) }, ui)
-    ui:pause("Mining complete.")
+local shared = {
+    maybe("Receive Schemas", "tools/receive_schema.lua", "Keep running to listen"),
+    maybe("Install Sender", "tools/install_sender.lua", "Push payloads over rednet"),
+}
+
+local filteredShared = {}
+for _, item in ipairs(shared) do
+    if item then table.insert(filteredShared, item) end
+end
+if #filteredShared > 0 then
+    table.insert(sections, { label = "Network Tools", items = filteredShared })
 end
 
-local function actionTunnel(ctx, ui)
-    local factory = ensureFactory(ctx.env, ui)
-    if not factory then return end
-    local length = promptNumber(ui, "Length", 16)
-    local width = promptNumber(ui, "Width", 1)
-    local height = promptNumber(ui, "Height", 2)
-    local torch = promptNumber(ui, "Torch interval", 6)
-    ui:notify("Starting tunnel...")
-    runFactory(factory, { "tunnel", "--length", tostring(length), "--width", tostring(width), "--height", tostring(height), "--torch-interval", tostring(torch) }, ui)
-    ui:pause("Tunnel complete.")
-end
-
-local function actionExcavate(ctx, ui)
-    local factory = ensureFactory(ctx.env, ui)
-    if not factory then return end
-    local length = promptNumber(ui, "Length", 8)
-    local width = promptNumber(ui, "Width", 8)
-    local depth = promptNumber(ui, "Depth", 3)
-    ui:notify("Starting excavation...")
-    runFactory(factory, { "excavate", "--length", tostring(length), "--width", tostring(width), "--depth", tostring(depth) }, ui)
-    ui:pause("Excavation complete.")
-end
-
-local function actionTreeFarm(ctx, ui)
-    local factory = ensureFactory(ctx.env, ui)
-    if not factory then return end
-    ui:notify("Starting tree farm...")
-    runFactory(factory, { "treefarm" }, ui)
-    ui:pause("Tree farm done.")
-end
-
-local function actionPotatoFarm(ctx, ui)
-    local factory = ensureFactory(ctx.env, ui)
-    if not factory then return end
-    local width = promptNumber(ui, "Width", 9)
-    local length = promptNumber(ui, "Length", 9)
-    ui:notify("Building potato farm...")
-    runFactory(factory, { "farm", "--farm-type", "potato", "--width", tostring(width), "--length", tostring(length) }, ui)
-    ui:pause("Potato farm complete.")
-end
-
-local function actionBuildSchema(ctx, ui)
-    local factory = ensureFactory(ctx.env, ui)
-    if not factory then return end
-    local path = ui:prompt("Schema file", "schema.json")
-    if not path or path == "" then
-        ui:notify("No schema provided.")
-        return
-    end
-    ui:notify("Starting build for " .. path .. "...")
-    runFactory(factory, { path }, ui)
-    ui:pause("Build complete.")
-end
-
-local function actionRefuel(ctx, ui)
-    if not ctx.env.isTurtle then
-        ui:notify("Requires turtle fuel tank.")
-        return
-    end
-    if not _G.turtle or type(turtle.getItemDetail) ~= "function" then
-        ui:notify("Turtle API unavailable.")
-        return
-    end
-    local before = type(turtle.getFuelLevel) == "function" and turtle.getFuelLevel() or nil
-    local consumed = 0
-    for slot = 1, 16 do
-        local detail = turtle.getItemDetail(slot)
-        if detail then
-            turtle.select(slot)
-            while true do
-                local ok = turtle.refuel(1)
-                if not ok then break end
-                consumed = consumed + 1
-            end
-        end
-    end
-    pcall(turtle.select, 1)
-    if before ~= nil and type(turtle.getFuelLevel) == "function" then
-        local after = turtle.getFuelLevel()
-        ui:writeLine(string.format("Fuel: %s -> %s", tostring(before), tostring(after)))
-    end
-    ui:writeLine("Consumed items (units): " .. tostring(consumed))
-    ui:pause()
-end
-
-local function runProgram(ctx, ui, path, args)
-    if ctx.env.headless or not ctx.env.hasShell then
-        ui:notify("Would run: " .. path)
-        return
-    end
-    local cmd = { path }
-    if args then
-        for _, a in ipairs(args) do table.insert(cmd, a) end
-    end
-    local ok, err = pcall(function()
-        shell.run(table.unpack(cmd))
-    end)
-    if not ok then
-        ui:notify("Program error: " .. tostring(err))
+if isTurtle then
+    local turtleItems = {}
+    local turtleUi = maybe("TurtleOS UI", "factory/turtle_os.lua", "Full menu")
+    if turtleUi then table.insert(turtleItems, turtleUi) end
+    local turtleAgent = maybe("Factory Agent (headless)", "factory/main.lua", "State machine")
+    if turtleAgent then table.insert(turtleItems, turtleAgent) end
+    if #turtleItems > 0 then
+        table.insert(sections, { label = "Turtle", items = turtleItems })
     end
 end
 
-local function actionDesigner(ctx, ui)
-    runProgram(ctx, ui, "factory_planner.lua")
-    ui:pause()
+if #sections == 0 then
+    print("Nothing to run. Are the files synced?")
+    return
 end
 
-local function actionVideo(ctx, ui)
-    runProgram(ctx, ui, "arcade/video_player.lua")
-    ui:pause()
-end
-
-local function actionGame(path)
-    return function(ctx, ui)
-        runProgram(ctx, ui, path)
-        ui:pause()
-    end
-end
-
-local function actionInstaller(ctx, ui)
-    runProgram(ctx, ui, "install.lua")
-    ui:pause("Update requested.")
-end
-
-local function actionReboot(ctx, ui)
-    if type(os) == "table" and type(os.reboot) == "function" and not ctx.env.headless then
-        os.reboot()
-    else
-        ui:notify("Reboot not available in this environment.")
-    end
-end
-
-local function fileExists(path, env)
-    if not env.hasFS then return true end
-    return fs.exists(path)
-end
-
-local function buildSections(env)
-    local sections = {}
-
-    if env.isTurtle then
-        table.insert(sections, {
-            label = "Factory",
-            items = {
-                { label = "Branch Mine", hint = "Length/branch/torch prompts", action = actionBranchMine },
-                { label = "Tunnel", hint = "Length/width/height", action = actionTunnel },
-                { label = "Excavate", hint = "Box dig", action = actionExcavate },
-                { label = "Tree Farm", action = actionTreeFarm },
-                { label = "Potato Farm", action = actionPotatoFarm },
-                { label = "Build Schema", action = actionBuildSchema },
-                { label = "Refuel", action = actionRefuel },
-            }
-        })
-    else
-        table.insert(sections, {
-            label = "Factory",
-            items = {
-                { label = "Factory Planner", hint = "Design builds", action = actionDesigner },
-            }
-        })
-    end
-
-    table.insert(sections, {
-        label = "Arcade",
-        items = {
-            { label = "Slots", action = actionGame("arcade/games/slots.lua") },
-            { label = "Blackjack", action = actionGame("arcade/games/blackjack.lua") },
-            { label = "Video Player", action = fileExists("arcade/video_player.lua", env) and actionVideo or function(_, ui) ui:notify("Video player missing.") end },
-        }
-    })
-
-    table.insert(sections, {
-        label = "Tools",
-        items = {
-            { label = "Factory Planner", action = actionDesigner },
-            { label = "Update from GitHub", action = actionInstaller },
-        }
-    })
-
-    table.insert(sections, {
-        label = "System",
-        items = {
-            { label = "Reboot/Exit", action = actionReboot },
-        }
-    })
-
-    return sections
-end
-
-local function main()
-    local env = detectEnv()
-    local subtitle = env.isTurtle and "Turtle mode" or "Computer mode"
-    if env.headless then subtitle = subtitle .. " (headless UI)" end
-
-    hub.run({
-        title = "Arcadesys",
-        subtitle = subtitle,
-        sections = buildSections(env),
-        ctx = { env = env },
-    })
-end
-
-main()
+hub.run({
+    title = "Arcadesys",
+    subtitle = isTurtle and "Turtle profile" or "Computer profile",
+    sections = sections,
+})
