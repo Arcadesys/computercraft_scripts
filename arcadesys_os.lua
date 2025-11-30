@@ -186,8 +186,6 @@ if okBoot and type(boot) == "table" and boot.setupPaths then
     pcall(boot.setupPaths)
 end
 
-local hub = require("ui.hub")
-
 local function runProgram(path, ui, ...)
     local args = { ... }
     local function go()
@@ -209,7 +207,12 @@ local function runProgram(path, ui, ...)
             ui:pause("(Press Enter to return)")
         else
             print(msg)
-            if _G.sleep then sleep(1) end
+            if _G.read then
+                print("(Press Enter to continue)")
+                pcall(read)
+            elseif _G.sleep then
+                sleep(2)
+            end
         end
     end
 end
@@ -301,74 +304,27 @@ end
 
 local isTurtle = type(_G.turtle) == "table"
 
-local sections = {}
-
-if not isTurtle then
-    local computerItems = {}
-    local planner = maybe("Factory Planner", "factory_planner.lua", "Design schemas")
-    if planner then table.insert(computerItems, planner) end
-    local ae2Drive = maybe("AE2 Drive Monitor", "ae2_drive_monitor.lua", "Requires ME Bridge")
-    if ae2Drive then table.insert(computerItems, ae2Drive) end
-    local ae2Me = maybe("AE2 ME Bridge Monitor", "ae2_me_bridge_monitor.lua", "ME Bridge + Modem")
-    if ae2Me then table.insert(computerItems, ae2Me) end
-    local mockTurtleUi = {
-        label = "TurtleOS (mock turtle)",
-        hint = "Preview Turtle UI on CraftOS-PC",
-        action = function(_, ui)
-            ui:notify("Mocking turtle API... Launching TurtleOS UI.")
-            local cleanup = installMockTurtle()
-            runProgram("factory/turtle_os.lua", ui)
-            if cleanup then cleanup() end
-        end
-    }
-    table.insert(computerItems, mockTurtleUi)
-    if #computerItems > 0 then
-        table.insert(sections, { label = "Computer", items = computerItems })
+local function launchTurtleUi()
+    local cleanup
+    if not isTurtle then
+        cleanup = installMockTurtle()
     end
-end
 
-local shared = {
-    maybe("Receive Schemas", "tools/receive_schema.lua", "Keep running to listen"),
-    maybe("Install Sender", "tools/install_sender.lua", "Push payloads over rednet"),
-}
-
-local filteredShared = {}
-for _, item in ipairs(shared) do
-    if item then table.insert(filteredShared, item) end
-end
-if #filteredShared > 0 then
-    table.insert(sections, { label = "Network Tools", items = filteredShared })
-end
-
-local systemItems = {
-    {
-        label = "Update Arcadesys",
-        hint = "Reinstall without wiping designs",
-        action = function(_, ui)
-            performUpdate(ui)
+    if fs.exists("factory/turtle_os.lua") then
+        runProgram("factory/turtle_os.lua")
+    elseif fs.exists("/factory/turtle_os.lua") then
+        runProgram("/factory/turtle_os.lua")
+    else
+        print("Turtle UI missing. Try running 'Update Arcadesys' or reinstall.")
+        if _G.read then
+            print("(Press Enter to continue)")
+            pcall(read)
+        elseif _G.sleep then
+            sleep(2)
         end
-    },
-}
-table.insert(sections, { label = "System", items = systemItems })
-
-if isTurtle then
-    local turtleItems = {}
-    local turtleUi = maybe("TurtleOS UI", "factory/turtle_os.lua", "Full menu")
-    if turtleUi then table.insert(turtleItems, turtleUi) end
-    local turtleAgent = maybe("Factory Agent (headless)", "factory/main.lua", "State machine")
-    if turtleAgent then table.insert(turtleItems, turtleAgent) end
-    if #turtleItems > 0 then
-        table.insert(sections, { label = "Turtle", items = turtleItems })
     end
+
+    if cleanup then cleanup() end
 end
 
-if #sections == 0 then
-    print("Nothing to run. Are the files synced?")
-    return
-end
-
-hub.run({
-    title = "Arcadesys",
-    subtitle = isTurtle and "Turtle profile" or "Computer profile",
-    sections = sections,
-})
+launchTurtleUi()
