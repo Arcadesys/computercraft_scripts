@@ -1,5 +1,5 @@
 -- Arcadesys Installer Launcher
--- Lets you install or update any Arcadesys OS profile from GitHub.
+-- Pulls the latest essentials installer from GitHub (AE2 monitor + Factory Planner).
 
 local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
 

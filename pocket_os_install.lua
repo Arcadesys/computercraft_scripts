@@ -1,7 +1,5 @@
--- Arcadesys Pocket OS Installer
--- Refreshes or installs the pocket experience (terminal-friendly)
-
-local VARIANT = "pocket"
+-- Arcadesys Essentials Installer (Pocket)
+-- Refreshes or installs only the essentials (AE2 monitor + Factory Planner)
 local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
 local ROOTS = { "arcade", "factory", "lib", "tools", "ui", "kiosk.lua", "games" }
 local files = {
@@ -52,14 +50,6 @@ local files = {
     "arcadesys_installer.lua",
 }
 
-local function persistExperience()
-    local h = fs.open("experience.settings", "w")
-    if h then
-        h.write(textutils.serialize({ experience = VARIANT }))
-        h.close()
-    end
-end
-
 local function cleanup()
     for _, root in ipairs(ROOTS) do
         if fs.exists("/" .. root) then
@@ -92,8 +82,7 @@ local function download(path)
     return true
 end
 
-print("Arcadesys Pocket installer")
-persistExperience()
+print("Arcadesys Essentials installer (Pocket)")
 local existing = fs.exists("/arcade") or fs.exists("/factory") or fs.exists("/lib")
 if existing then
     print("Existing install detected. Refreshing...")

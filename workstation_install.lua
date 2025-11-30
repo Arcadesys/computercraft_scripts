@@ -1,8 +1,5 @@
--- Arcadesys Workstation Installer
--- Auto-generated at 2025-11-29T05:28:56.674Z
--- Refreshes or installs the workstation experience (computer)
-
-local VARIANT = "workstation"
+-- Arcadesys Essentials Installer (Computer)
+-- Installs AE2 monitor + Factory Planner
 local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
 local ROOTS = { "arcade", "factory", "lib", "tools", "ui", "kiosk.lua", "games" }
 local files = {
@@ -55,14 +52,6 @@ local files = {
     "workstation_menu.lua",
 }
 
-local function persistExperience()
-    local h = fs.open("experience.settings", "w")
-    if h then
-        h.write(textutils.serialize({ experience = VARIANT }))
-        h.close()
-    end
-end
-
 local function cleanup()
     for _, root in ipairs(ROOTS) do
         if fs.exists("/" .. root) then
@@ -95,8 +84,7 @@ local function download(path)
     return true
 end
 
-print("Arcadesys Workstation installer")
-persistExperience()
+print("Arcadesys Essentials installer (Computer)")
 local existing = fs.exists("/arcade") or fs.exists("/factory")
 if existing then
     print("Existing install detected. Refreshing...")

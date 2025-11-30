@@ -1,8 +1,5 @@
--- Arcadesys Turtle OS Installer
--- Auto-generated at 2025-11-29T04:37:05.465Z
--- Refreshes or installs the turtle experience
-
-local VARIANT = "turtle"
+-- Arcadesys Essentials Installer (Turtle)
+-- Refreshes or installs only the essentials (AE2 monitor + Factory Planner)
 local BASE_URL = "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/"
 local ROOTS = { "factory", "lib" }
 local files = {
@@ -53,14 +50,6 @@ local files = {
     "startup.lua",
 }
 
-local function persistExperience()
-    local h = fs.open("experience.settings", "w")
-    if h then
-        h.write(textutils.serialize({ experience = VARIANT }))
-        h.close()
-    end
-end
-
 local function cleanup()
     for _, root in ipairs(ROOTS) do
         if fs.exists("/" .. root) then
@@ -93,8 +82,7 @@ local function download(path)
     return true
 end
 
-print("Arcadesys Turtle installer")
-persistExperience()
+print("Arcadesys Essentials installer (Turtle)")
 local existing = fs.exists("/factory") and fs.exists("/lib")
 if existing then
     print("Existing install detected. Refreshing...")
