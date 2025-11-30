@@ -9,6 +9,9 @@ Goals:
 
 ---@diagnostic disable: undefined-global
 
+local DEFAULT_MANIFEST_URL =
+    "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/manifest.json"
+
 local function ensurePackagePaths(baseDir)
     local paths = {
         fs.combine(baseDir, "?.lua"),
@@ -43,6 +46,136 @@ local function detectBaseDir()
         end
     end
     return ""
+end
+
+local function readAll(handle)
+    local content = handle.readAll()
+    handle.close()
+    return content
+end
+
+local function fetch(url)
+    if not http then
+        return nil, "HTTP API is disabled"
+    end
+
+    local response, err = http.get(url)
+    if not response then
+        return nil, err or "unknown HTTP error"
+    end
+
+    return readAll(response)
+end
+
+local function decodeJson(payload)
+    local ok, result = pcall(textutils.unserializeJSON, payload)
+    if not ok then
+        return nil, "Invalid JSON: " .. tostring(result)
+    end
+    return result
+end
+
+local function sanitizeManifest(manifest)
+    if type(manifest) ~= "table" then
+        return nil, "Manifest is not a table"
+    end
+    if type(manifest.files) ~= "table" or #manifest.files == 0 then
+        return nil, "Manifest contains no files"
+    end
+    return manifest
+end
+
+local function loadManifest(url)
+    if not url then
+        return nil, "No manifest URL provided"
+    end
+
+    local body, err = fetch(url)
+    if not body then
+        return nil, err
+    end
+
+    local manifest, decodeErr = decodeJson(body)
+    if not manifest then
+        return nil, decodeErr
+    end
+
+    local valid, reason = sanitizeManifest(manifest)
+    if not valid then
+        return nil, reason
+    end
+
+    return manifest
+end
+
+local function downloadFiles(manifest)
+    local bundle = {
+        name = manifest.name or "Arcadesys",
+        version = manifest.version or "unknown",
+        files = {},
+    }
+
+    for _, file in ipairs(manifest.files) do
+        if not file.path then
+            return nil, "File entry missing 'path'"
+        end
+
+        if file.content then
+            table.insert(bundle.files, { path = file.path, content = file.content })
+        elseif file.url then
+            local data, err = fetch(file.url)
+            if not data then
+                return nil, err or ("Failed to download " .. file.url)
+            end
+            table.insert(bundle.files, { path = file.path, content = data })
+        else
+            return nil, "File entry for " .. file.path .. " needs 'url' or 'content'"
+        end
+    end
+
+    return bundle
+end
+
+local function writeFile(path, content)
+    local dir = fs.getDir(path)
+    if dir ~= "" then
+        fs.makeDir(dir)
+    end
+
+    local handle = fs.open(path, "wb") or fs.open(path, "w")
+    if not handle then
+        error("Unable to write to " .. path)
+    end
+
+    handle.write(content or "")
+    handle.close()
+end
+
+local function performUpdate(ui)
+    if not http then
+        ui:notify("Update requires HTTP; enable it in the ComputerCraft config.")
+        return
+    end
+
+    ui:notify("Checking for updates...")
+    local manifest, err = loadManifest(DEFAULT_MANIFEST_URL)
+    if not manifest then
+        ui:notify("Manifest error: " .. tostring(err))
+        return
+    end
+
+    local bundle, downloadErr = downloadFiles(manifest)
+    if not bundle then
+        ui:notify("Download failed: " .. tostring(downloadErr))
+        return
+    end
+
+    ui:notify(string.format("Installing %s (%s)...", bundle.name, bundle.version))
+    for _, file in ipairs(bundle.files) do
+        writeFile(file.path, file.content)
+    end
+
+    ui:notify("Update complete. Designs and saved work were left untouched.")
 end
 
 local baseDir = detectBaseDir()
@@ -115,6 +248,17 @@ end
 if #filteredShared > 0 then
     table.insert(sections, { label = "Network Tools", items = filteredShared })
 end
+
+local systemItems = {
+    {
+        label = "Update Arcadesys",
+        hint = "Reinstall without wiping designs",
+        action = function(_, ui)
+            performUpdate(ui)
+        end
+    },
+}
+table.insert(sections, { label = "System", items = systemItems })
 
 if isTurtle then
     local turtleItems = {}
