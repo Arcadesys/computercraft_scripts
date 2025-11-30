@@ -9,6 +9,8 @@ Goals:
 
 ---@diagnostic disable: undefined-global
 
+local VERSION = "2.0.0"
+
 local DEFAULT_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/manifest.json"
 
@@ -178,6 +180,17 @@ local function performUpdate(ui)
     ui:notify("Update complete. Designs and saved work were left untouched.")
 end
 
+local function logError(msg)
+    local stamp = textutils and textutils.formatTime and textutils.formatTime(os.epoch and os.epoch("utc") / 1000 or 0, true)
+        or tostring(os.time and os.time() or "")
+    local line = string.format("[%s] %s", stamp, msg)
+    local f = fs.open("/arcadesys_error.log", "a")
+    if f then
+        f.writeLine(line)
+        f.close()
+    end
+end
+
 local baseDir = detectBaseDir()
 ensurePackagePaths(baseDir == "" and "/" or baseDir)
 
@@ -185,6 +198,8 @@ local okBoot, boot = pcall(require, "arcade.boot")
 if okBoot and type(boot) == "table" and boot.setupPaths then
     pcall(boot.setupPaths)
 end
+
+print(string.format("Arcadesys %s - launching Turtle UI", VERSION))
 
 local function runProgram(path, ui, ...)
     local args = { ... }
@@ -202,6 +217,7 @@ local function runProgram(path, ui, ...)
     local ok, err = pcall(go)
     if not ok then
         local msg = "Failed to run " .. path .. ": " .. tostring(err)
+        logError(msg)
         if ui and ui.notify then
             ui:notify(msg)
             ui:pause("(Press Enter to return)")
