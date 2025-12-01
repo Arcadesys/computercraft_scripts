@@ -313,7 +313,7 @@ function worldstate.configureWalkway(ctx, cfg)
   walkway.offset = cfg.offset
     or walkway.offset
     or ctx.config and (ctx.config.walkwayOffsetX)
-    or -world.grid.spacingX
+    or world.grid.spacingX
   walkway.candidates = cloneTable(cfg.candidates) or walkway.candidates or {}
   if #walkway.candidates == 0 then
     insertUnique(walkway.candidates, world.grid.origin.x + (walkway.offset or -1))

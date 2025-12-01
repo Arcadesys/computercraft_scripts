@@ -186,6 +186,10 @@ local function CHECK_REQUIREMENTS(ctx)
         if mat == "minecraft:water_bucket" then
             invCounts[mat] = count
         end
+        -- Assume dirt is already available in the world (don't require the turtle to carry it).
+        if mat == "minecraft:dirt" then
+            invCounts[mat] = count
+        end
 
         local have = countWithAliases(invCounts, mat)
         
@@ -214,6 +218,12 @@ local function CHECK_REQUIREMENTS(ctx)
         if inventory.retrieveFromNearby(ctx, pullList) then
              -- Re-check inventory
              invCounts = inventory.getCounts(ctx)
+             -- Re-apply assumptions (water/dirt) after re-check
+             for mat, count in pairs(reqs.materials) do
+                if mat == "minecraft:water_bucket" or mat == "minecraft:dirt" then
+                    invCounts[mat] = count
+                end
+             end
              hasMissing = false
              missing.materials = {}
              for mat, count in pairs(reqs.materials) do
@@ -239,6 +249,11 @@ local function CHECK_REQUIREMENTS(ctx)
                 for _, alias in ipairs(aliases) do
                     total = total + (nearby[alias] or 0)
                 end
+            end
+
+            -- If the material is dirt, assume it's available in-world and treat as satisfied.
+            if mat == "minecraft:dirt" then
+                total = reqs.materials[mat] or total
             end
 
             if total >= (reqs.materials[mat] or 0) then

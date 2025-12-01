@@ -265,6 +265,7 @@ local function main(args)
         level = ctx.config.verbose and "debug" or "info"
     })
     ctx.logger:info("Agent starting...")
+    movement.forward(ctx)
 
     -- State machine loop
     while ctx.state ~= "EXIT" do
