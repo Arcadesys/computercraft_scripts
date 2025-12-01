@@ -222,4 +222,42 @@ local function runBuild(schemaFile)
     print("Schema: " .. schemaFile)
 end
 
+local function main()
+    while true do
+        ui.clear()
+        print("TurtleOS v2.0")
+        print("-------------")
+        
+        local options = {
+            { text = "Tree Farm", action = runTreeFarm },
+            { text = "Potato Farm", action = runPotatoFarm },
+            { text = "Excavate", action = runExcavate },
+            { text = "Tunnel", action = runTunnel },
+            { text = "Mine", action = runMining },
+            { text = "Farm Designer", action = function()
+                local sub = ui.Menu("Farm Designer")
+                sub:addOption("Tree Farm Design", function()
+                    ui.clear()
+                    shell.run("factory_planner.lua", "--farm", "tree")
+                end)
+                sub:addOption("Potato Farm Design", function()
+                    ui.clear()
+                    shell.run("factory_planner.lua", "--farm", "potato")
+                end)
+                sub:addOption("Back", function() return "back" end)
+                sub:run()
+            end },
+            { text = "Exit", action = function() return "exit" end }
+        }
+        
+        local menu = ui.Menu("Main Menu")
+        for _, opt in ipairs(options) do
+            menu:addOption(opt.text, opt.action)
+        end
+        
+        local result = menu:run()
+        if result == "exit" then break end
+    end
+end
+
 main()

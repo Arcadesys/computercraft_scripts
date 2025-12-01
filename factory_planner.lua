@@ -23,7 +23,7 @@ local args = { ... }
 
 local function printUsage()
     print([[Factory Designer
-Usage: factory_planner.lua [--load <schema-file>] [--help]
+Usage: factory_planner.lua [--load <schema-file>] [--farm <tree|potato>] [--help]
 
 Controls are available inside the designer (press M for menu).]])
 end
@@ -35,42 +35,6 @@ local function resolveSchemaPath(rawPath)
     if fs.exists(rawPath .. ".json") then
         return rawPath .. ".json"
     end
-    if fs.exists(rawPath .. ".txt") then
-        return rawPath .. ".txt"
-    end
-    return rawPath
-end
-
-local function parseArgs()
-    local config = {}
-    local i = 1
-    while i <= #args do
-        local arg = args[i]
-        if arg == "--load" or arg == "-l" then
-            i = i + 1
-            local path = args[i]
-            if not path then
-                print("Missing value for " .. arg)
-                return nil, true
-            end
-            config.loadPath = path
-        elseif arg == "--help" or arg == "-h" then
-            printUsage()
-            return nil, true
-        else
-            print("Unknown argument: " .. tostring(arg))
-            printUsage()
-            return nil, true
-        end
-        i = i + 1
-    end
-    return config
-end
-
-local function loadInitialSchema(path)
-    local resolved = resolveSchemaPath(path)
-    if not fs.exists(resolved) then
-        print("Warning: schema file not found: " .. resolved)
         return nil
     end
 
@@ -97,6 +61,31 @@ local function main()
         if initial then
             runOpts.schema = initial.schema
             runOpts.metadata = initial.metadata
+        end
+    end
+
+    if config and config.farmType then
+        if config.farmType == "tree" then
+            runOpts.meta = { mode = "treefarm" }
+            runOpts.palette = {
+                { id = "minecraft:stone_bricks", color = colors.gray, sym = "#" },
+                { id = "minecraft:dirt", color = colors.brown, sym = "D" },
+                { id = "minecraft:oak_sapling", color = colors.green, sym = "S" },
+                { id = "minecraft:torch", color = colors.yellow, sym = "i" },
+                { id = "minecraft:chest", color = colors.orange, sym = "C" },
+            }
+        elseif config.farmType == "potato" then
+            runOpts.meta = { mode = "potatofarm" }
+            runOpts.palette = {
+                { id = "minecraft:stone_bricks", color = colors.gray, sym = "#" },
+                { id = "minecraft:dirt", color = colors.brown, sym = "D" },
+                { id = "minecraft:water_bucket", color = colors.blue, sym = "W" },
+                { id = "minecraft:potato", color = colors.yellow, sym = "P" },
+                { id = "minecraft:chest", color = colors.orange, sym = "C" },
+            }
+        else
+            print("Unknown farm type: " .. config.farmType)
+            return
         end
     end
 

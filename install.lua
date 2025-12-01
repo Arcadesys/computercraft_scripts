@@ -72,6 +72,59 @@ print()
 shell.run("shell")
 ]],
     },
+    {
+      path = "factory/schema_farm_tree.txt",
+      content = [[legend:
+. = minecraft:air
+D = minecraft:dirt
+S = minecraft:oak_sapling
+# = minecraft:stone_bricks
+
+meta:
+mode = treefarm
+
+layer:0
+#####
+#DDD#
+#DDD#
+#DDD#
+#####
+
+layer:1
+.....
+.S.S.
+.....
+.S.S.
+.....
+]]
+    },
+    {
+      path = "factory/schema_farm_potato.txt",
+      content = [[legend:
+. = minecraft:air
+D = minecraft:dirt
+W = minecraft:water_bucket
+P = minecraft:potatoes
+# = minecraft:stone_bricks
+
+meta:
+mode = potatofarm
+
+layer:0
+#####
+#DDD#
+#DWD#
+#DDD#
+#####
+
+layer:1
+.....
+.PPP.
+.P.P.
+.PPP.
+.....
+]]
+    }
   },
 }
 

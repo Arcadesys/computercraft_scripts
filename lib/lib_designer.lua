@@ -58,6 +58,7 @@ local function resetState()
     state.d = 5
     state.data = {} -- [x][y][z] = material_index (0 or nil for air)
     state.meta = {} -- [x][y][z] = meta table
+    state.fileMeta = nil -- Global file metadata
     state.palette = {}
     state.paletteEditMode = false
     state.offset = { x = 0, y = 0, z = 0 }
@@ -243,6 +244,10 @@ local function loadCanonical(schema, metadata)
     state.status = string.format("Loaded %d blocks", blockCount)
     if metadata and metadata.path then
         state.status = state.status .. " from " .. metadata.path
+    end
+
+    if metadata and metadata.meta then
+        state.fileMeta = metadata.meta
     end
 
     return true
@@ -750,7 +755,12 @@ local function saveSchema()
     if name == "" then return end
     if not name:find("%.json$") then name = name .. ".json" end
     
-    local exportDef = exportVoxelDefinition()
+    local exportDef, info = exportVoxelDefinition()
+    
+    -- Inject file metadata if present
+    if state.fileMeta then
+        exportDef.meta = state.fileMeta
+    end
 
     local f = fs.open(name, "w")
     f.write(json.encode(exportDef))
@@ -852,6 +862,21 @@ end
 function designer.run(opts)
     opts = opts or {}
     resetState()
+
+    if opts.palette then
+        state.palette = {}
+        for i, item in ipairs(opts.palette) do
+            table.insert(state.palette, {
+                id = item.id,
+                color = item.color,
+                sym = item.sym
+            })
+        end
+    end
+
+    if opts.meta then
+        state.fileMeta = opts.meta
+    end
 
     if opts.schema then
         local ok, err = loadCanonical(opts.schema, opts.metadata)

@@ -276,6 +276,14 @@
                       "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/printer.lua"
                   },
                   {
+                      "path":  "factory/schema_farm_tree.txt",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory/schema_farm_tree.txt"
+                  },
+                  {
+                      "path":  "factory/schema_farm_potato.txt",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/factory/schema_farm_potato.txt"
+                  },
+                  {
                       "path":  "startup.lua",
                       "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/startup.lua"
                   }
