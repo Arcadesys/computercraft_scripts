@@ -15,10 +15,12 @@ if type(package) ~= "table" then package = { path = "" } end
 if type(package.path) ~= "string" then package.path = package.path or "" end
 package.loaded = package.loaded or {}
 
+local upstreamRequire = _G.require
+
 local function requireCompat(name)
     if package.loaded[name] ~= nil then return package.loaded[name] end
-    if _G.require then
-        local result = _G.require(name)
+    if upstreamRequire and upstreamRequire ~= requireCompat then
+        local result = upstreamRequire(name)
         package.loaded[name] = result
         return result
     end
