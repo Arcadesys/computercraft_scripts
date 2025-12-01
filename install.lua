@@ -259,6 +259,14 @@ local function main()
   -- Ensure we have data before wiping the disk.
   formatDisk()
   installImage(image)
+  -- Persist the installed manifest/image so users can verify what was applied.
+  pcall(function()
+    if type(textutils) == "table" and textutils.serializeJSON then
+      writeFile("/arcadesys_installed_manifest.json", textutils.serializeJSON(image))
+    else
+      writeFile("/arcadesys_installed_manifest.json", "{ \"name\": \"" .. tostring(image.name) .. "\", \"version\": \"" .. tostring(image.version) .. "\" }")
+    end
+  end)
   log("Installation complete.")
   summarizeInstall(image)
   print("")
