@@ -3885,6 +3885,530 @@ end
 return CHECK_REQUIREMENTS
 ]=])
 
+addEmbeddedFile("lib/lib_world.lua", [=[local world = {}
+
+function world.getInspect(side)
+    if side == "forward" then
+        return turtle.inspect
+    elseif side == "up" then
+        return turtle.inspectUp
+    elseif side == "down" then
+        return turtle.inspectDown
+    end
+    return nil
+end
+
+local SIDE_ALIASES = {
+    forward = "forward",
+    front = "forward",
+    down = "down",
+    bottom = "down",
+    up = "up",
+    top = "up",
+    left = "left",
+    right = "right",
+    back = "back",
+    behind = "back",
+}
+
+function world.normaliseSide(side)
+    if type(side) ~= "string" then
+        return nil
+    end
+    return SIDE_ALIASES[string.lower(side)]
+end
+
+function world.toPeripheralSide(side)
+    local normalised = world.normaliseSide(side) or side
+    if normalised == "forward" then
+        return "front"
+    elseif normalised == "up" then
+        return "top"
+    elseif normalised == "down" then
+        return "bottom"
+    elseif normalised == "back" then
+        return "back"
+    elseif normalised == "left" then
+        return "left"
+    elseif normalised == "right" then
+        return "right"
+    end
+    return normalised
+end
+
+function world.inspectSide(side)
+    local normalised = world.normaliseSide(side)
+    if normalised == "forward" then
+        return turtle and turtle.inspect and turtle.inspect()
+    elseif normalised == "up" then
+        return turtle and turtle.inspectUp and turtle.inspectUp()
+    elseif normalised == "down" then
+        return turtle and turtle.inspectDown and turtle.inspectDown()
+    end
+    return false
+end
+
+function world.isContainer(detail)
+    if type(detail) ~= "table" then
+        return false
+    end
+    local name = string.lower(detail.name or "")
+    if name:find("chest", 1, true) or name:find("barrel", 1, true) or name:find("drawer", 1, true) then
+        return true
+    end
+    if type(detail.tags) == "table" then
+        for tag in pairs(detail.tags) do
+            local lowered = string.lower(tag)
+            if lowered:find("inventory", 1, true) or lowered:find("chest", 1, true) or lowered:find("barrel", 1, true) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function world.normalizeSide(value)
+    if type(value) ~= "string" then
+        return nil
+    end
+    local lower = value:lower()
+    if lower == "forward" or lower == "front" or lower == "fwd" then
+        return "forward"
+    end
+    if lower == "up" or lower == "top" or lower == "above" then
+        return "up"
+    end
+    if lower == "down" or lower == "bottom" or lower == "below" then
+        return "down"
+    end
+    return nil
+end
+
+function world.resolveSide(ctx, opts)
+    if type(opts) == "string" then
+        local direct = world.normalizeSide(opts)
+        return direct or "forward"
+    end
+
+    local candidate
+    if type(opts) == "table" then
+        candidate = opts.side or opts.direction or opts.facing or opts.containerSide or opts.defaultSide
+        if not candidate and type(opts.location) == "string" then
+            candidate = opts.location
+        end
+    end
+
+    if not candidate and type(ctx) == "table" then
+        local cfg = ctx.config
+        if type(cfg) == "table" then
+            candidate = cfg.inventorySide or cfg.materialSide or cfg.supplySide or cfg.defaultInventorySide
+        end
+        if not candidate and type(ctx.inventoryState) == "table" then
+            candidate = ctx.inventoryState.defaultSide
+        end
+    end
+
+    local normalised = world.normalizeSide(candidate)
+    if normalised then
+        return normalised
+    end
+
+    return "forward"
+end
+
+function world.isContainerBlock(name, tags)
+    if type(name) ~= "string" then
+        return false
+    end
+    local lower = name:lower()
+    for _, keyword in ipairs(CONTAINER_KEYWORDS) do
+        if lower:find(keyword, 1, true) then
+            return true
+        end
+    end
+    return world.hasContainerTag(tags)
+end
+
+function world.inspectForwardForContainer()
+    if not turtle or type(turtle.inspect) ~= "function" then
+        return false
+    end
+    local ok, data = turtle.inspect()
+    if not ok or type(data) ~= "table" then
+        return false
+    end
+    if world.isContainerBlock(data.name, data.tags) then
+        return true, data
+    end
+    return false
+end
+
+function world.inspectUpForContainer()
+    if not turtle or type(turtle.inspectUp) ~= "function" then
+        return false
+    end
+    local ok, data = turtle.inspectUp()
+    if not ok or type(data) ~= "table" then
+        return false
+    end
+    if world.isContainerBlock(data.name, data.tags) then
+        return true, data
+    end
+    return false
+end
+
+function world.inspectDownForContainer()
+    if not turtle or type(turtle.inspectDown) ~= "function" then
+        return false
+    end
+    local ok, data = turtle.inspectDown()
+    if not ok or type(data) ~= "table" then
+        return false
+    end
+    if world.isContainerBlock(data.name, data.tags) then
+        return true, data
+    end
+    return false
+end
+
+function world.peripheralSideForDirection(side)
+    if side == "forward" or side == "front" then
+        return "front"
+    end
+    if side == "up" or side == "top" then
+        return "top"
+    end
+    if side == "down" or side == "bottom" then
+        return "bottom"
+    end
+    return side
+end
+
+function world.computePrimaryPushDirection(ctx, periphSide)
+    if periphSide == "front" then
+        local facing = movement.getFacing(ctx)
+        if facing then
+            return OPPOSITE_FACING[facing]
+        end
+    elseif periphSide == "top" then
+        return "down"
+    elseif periphSide == "bottom" then
+        return "up"
+    end
+    return nil
+end
+
+function world.normaliseCoordinate(value)
+    local number = tonumber(value)
+    if number == nil then
+        return nil
+    end
+    if number >= 0 then
+        return math.floor(number + 0.5)
+    end
+    return math.ceil(number - 0.5)
+end
+
+function world.normalisePosition(pos)
+    if type(pos) ~= "table" then
+        return nil, "invalid_position"
+    end
+    local xRaw = pos.x
+    if xRaw == nil then
+        xRaw = pos[1]
+    end
+    local yRaw = pos.y
+    if yRaw == nil then
+        yRaw = pos[2]
+    end
+    local zRaw = pos.z
+    if zRaw == nil then
+        zRaw = pos[3]
+    end
+    local x = world.normaliseCoordinate(xRaw)
+    local y = world.normaliseCoordinate(yRaw)
+    local z = world.normaliseCoordinate(zRaw)
+    if not x or not y or not z then
+        return nil, "invalid_position"
+    end
+    return { x = x, y = y, z = z }
+end
+
+function world.normaliseFacing(facing)
+    facing = type(facing) == "string" and facing:lower() or "north"
+    if facing ~= "north" and facing ~= "east" and facing ~= "south" and facing ~= "west" then
+        return "north"
+    end
+    return facing
+end
+
+function world.facingVectors(facing)
+    facing = world.normaliseFacing(facing)
+    if facing == "north" then
+        return { forward = { x = 0, z = -1 }, right = { x = 1, z = 0 } }
+    elseif facing == "east" then
+        return { forward = { x = 1, z = 0 }, right = { x = 0, z = 1 } }
+    elseif facing == "south" then
+        return { forward = { x = 0, z = 1 }, right = { x = -1, z = 0 } }
+    else -- west
+        return { forward = { x = -1, z = 0 }, right = { x = 0, z = -1 } }
+    end
+end
+
+function world.rotateLocalOffset(localOffset, facing)
+    local vectors = world.facingVectors(facing)
+    local dx = localOffset.x or 0
+    local dz = localOffset.z or 0
+    local right = vectors.right
+    local forward = vectors.forward
+    return {
+        x = (right.x * dx) + (forward.x * dz),
+        z = (right.z * dx) + (forward.z * dz),
+    }
+end
+
+function world.localToWorld(localOffset, facing)
+    facing = world.normaliseFacing(facing)
+    local dx = localOffset and localOffset.x or 0
+    local dz = localOffset and localOffset.z or 0
+    local rotated = world.rotateLocalOffset({ x = dx, z = dz }, facing)
+    return {
+        x = rotated.x,
+        y = localOffset and localOffset.y or 0,
+        z = rotated.z,
+    }
+end
+
+function world.localToWorldRelative(origin, localPos)
+    local rotated = world.localToWorld(localPos, origin.facing)
+    return {
+        x = origin.x + rotated.x,
+        y = origin.y + rotated.y,
+        z = origin.z + rotated.z
+    }
+end
+
+function world.copyPosition(pos)
+    if type(pos) ~= "table" then
+        return nil
+    end
+    return {
+        x = pos.x or 0,
+        y = pos.y or 0,
+        z = pos.z or 0,
+    }
+end
+
+function world.detectContainers(io)
+    local found = {}
+    local sides = { "forward", "down", "up" }
+    local labels = {
+        forward = "front",
+        down = "below",
+        up = "above",
+    }
+    for _, side in ipairs(sides) do
+        local inspect
+        if side == "forward" then
+            inspect = turtle.inspect
+        elseif side == "up" then
+            inspect = turtle.inspectUp
+        else
+            inspect = turtle.inspectDown
+        end
+        if type(inspect) == "function" then
+            local ok, detail = inspect()
+            if ok then
+                local name = type(detail.name) == "string" and detail.name or "unknown"
+                found[#found + 1] = string.format(" %s: %s", labels[side] or side, name)
+            end
+        end
+    end
+    if io.print then
+        if #found == 0 then
+            io.print("Detected containers: <none>")
+        else
+            io.print("Detected containers:")
+            for _, line in ipairs(found) do
+                io.print(" -" .. line)
+            end
+        end
+    end
+end
+
+return world
+]=])
+
+addEmbeddedFile("lib/lib_gps.lua", [=[--[[
+GPS library for CC:Tweaked turtles.
+Provides helpers for using the GPS API.
+--]]
+
+---@diagnostic disable: undefined-global
+
+local gps_utils = {}
+
+function gps_utils.detectFacingWithGps(logger)
+    if not gps or type(gps.locate) ~= "function" then
+        return nil, "gps_unavailable"
+    end
+    if not turtle or type(turtle.forward) ~= "function" or type(turtle.back) ~= "function" then
+        return nil, "turtle_api_unavailable"
+    end
+
+    local function locate(timeout)
+        local ok, x, y, z = pcall(gps.locate, timeout)
+        if ok and x then
+            return x, y, z
+        end
+        return nil, nil, nil
+    end
+
+    local x1, _, z1 = locate(0.5)
+    if not x1 then
+        x1, _, z1 = locate(1)
+        if not x1 then
+            return nil, "gps_initial_failed"
+        end
+    end
+
+    if not turtle.forward() then
+        return nil, "forward_blocked"
+    end
+
+    local x2, _, z2 = locate(0.5)
+    if not x2 then
+        x2, _, z2 = locate(1)
+    end
+
+    local returned = turtle.back()
+    if not returned then
+        local attempts = 0
+        while attempts < 5 and not returned do
+            returned = turtle.back()
+            attempts = attempts + 1
+            if not returned and sleep then
+                sleep(0)
+            end
+        end
+        if not returned then
+            if logger then
+                logger:warn("Facing detection failed to restore the turtle's start position; adjust the turtle manually and rerun.")
+            end
+            return nil, "return_failed"
+        end
+    end
+
+    if not x2 then
+        return nil, "gps_second_failed"
+    end
+
+    local dx = x2 - x1
+    local dz = z2 - z1
+    local threshold = 0.2
+
+    if math.abs(dx) < threshold and math.abs(dz) < threshold then
+        return nil, "gps_delta_small"
+    end
+
+    if math.abs(dx) >= math.abs(dz) then
+        if dx > threshold then
+            return "east"
+        elseif dx < -threshold then
+            return "west"
+        end
+    else
+        if dz > threshold then
+            return "south"
+        elseif dz < -threshold then
+            return "north"
+        end
+    end
+
+    return nil, "gps_delta_small"
+end
+
+return gps_utils
+]=])
+
+addEmbeddedFile("lib/lib_orientation.lua", [=[--[[
+Orientation library for CC:Tweaked turtles.
+Provides helpers for facing, orientation, and coordinate transformations.
+--]]
+
+---@diagnostic disable: undefined-global
+
+local movement = require("lib_movement")
+local world = require("lib_world")
+local gps_utils = require("lib_gps")
+
+local orientation = {}
+
+local START_ORIENTATIONS = {
+    [1] = { label = "Forward + Left", key = "forward_left" },
+    [2] = { label = "Forward + Right", key = "forward_right" },
+}
+local DEFAULT_ORIENTATION = 1
+
+function orientation.resolveOrientationKey(raw)
+    if type(raw) == "string" then
+        local key = raw:lower()
+        if key == "forward_left" or key == "forward-left" or key == "left" or key == "l" then
+            return "forward_left"
+        elseif key == "forward_right" or key == "forward-right" or key == "right" or key == "r" then
+            return "forward_right"
+        end
+    elseif type(raw) == "number" and START_ORIENTATIONS[raw] then
+        return START_ORIENTATIONS[raw].key
+    end
+    return START_ORIENTATIONS[DEFAULT_ORIENTATION].key
+end
+
+function orientation.orientationLabel(key)
+    local resolved = orientation.resolveOrientationKey(key)
+    for _, entry in pairs(START_ORIENTATIONS) do
+        if entry.key == resolved then
+            return entry.label
+        end
+    end
+    return START_ORIENTATIONS[DEFAULT_ORIENTATION].label
+end
+
+function orientation.normaliseFacing(facing)
+    return world.normaliseFacing(facing)
+end
+
+function orientation.facingVectors(facing)
+    return world.facingVectors(facing)
+end
+
+function orientation.rotateLocalOffset(localOffset, facing)
+    return world.rotateLocalOffset(localOffset, facing)
+end
+
+function orientation.localToWorld(localOffset, facing)
+    return world.localToWorld(localOffset, facing)
+end
+
+function orientation.detectFacingWithGps(logger)
+    return gps_utils.detectFacingWithGps(logger)
+end
+
+function orientation.turnLeftOf(facing)
+    return movement.turnLeftOf(facing)
+end
+
+function orientation.turnRightOf(facing)
+    return movement.turnRightOf(facing)
+end
+
+function orientation.turnBackOf(facing)
+    return movement.turnBackOf(facing)
+end
+
+return orientation
+]=])
+
 -- END_EMBEDDED_FILES
 
 local function log(msg)
