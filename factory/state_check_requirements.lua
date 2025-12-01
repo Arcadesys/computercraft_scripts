@@ -155,6 +155,8 @@ local function CHECK_REQUIREMENTS(ctx)
     -- Assume dirt is already placed in the world; do not require the turtle to carry dirt.
     if reqs and reqs.materials then
         reqs.materials["minecraft:dirt"] = nil
+        -- Do not require water buckets for farm strategies; assume water is pre-placed in the world.
+        reqs.materials["minecraft:water_bucket"] = nil
     end
 
     local invCounts = inventory.getCounts(ctx)

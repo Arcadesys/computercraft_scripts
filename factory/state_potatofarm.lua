@@ -11,6 +11,7 @@ local logger = require("lib_logger")
 local wizard = require("lib_wizard")
 local startup = require("lib_startup")
 local farming = require("lib_farming")
+local world = require("lib_world")
 
 -- Till dirt/grass into farmland using any hoe found in inventory.
 local function ensureFarmland(ctx, blockBelow)
@@ -93,7 +94,10 @@ local function POTATOFARM(ctx)
         -- Fly over (height 1 is directly above crops)
         local hoverHeight = 1
         -- Apply 1x1 offset for safety (start at 1,1 relative to home)
-        local target = { x = x + 1, y = hoverHeight, z = -(z + 1) }
+        local localTarget = { x = x + 1, y = hoverHeight, z = -(z + 1) }
+        local facing = (ctx.origin and ctx.origin.facing) or ((movement and movement.getFacing) and movement.getFacing(ctx)) or "north"
+        local origin = ctx.origin or { x = 0, y = 0, z = 0, facing = facing }
+        local target = world.localToWorldRelative(origin, localTarget)
         
         -- Move Y first to avoid hitting chests at origin perimeter
         if not movement.goTo(ctx, target, { axisOrder = { "y", "x", "z" } }) then
