@@ -87,7 +87,7 @@ inventory.DEFAULT_TRASH = {
     ["minecraft:pointed_dripstone"] = true,
     ["minecraft:bedrock"] = true,
     ["minecraft:lava"] = true,
-    ["minecraft:water"] = true,
+    ["minecraft:water_bucket"] = true,
 }
 
 local function noop()

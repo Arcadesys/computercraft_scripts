@@ -57,7 +57,7 @@ mining.loadConfig()
 -- Blocks that should NEVER be placed to fill holes (liquids, gravity blocks, etc)
 mining.FILL_BLACKLIST = {
     ["minecraft:air"] = true,
-    ["minecraft:water"] = true,
+    ["minecraft:water_bucket"] = true,
     ["minecraft:lava"] = true,
     ["minecraft:sand"] = true,
     ["minecraft:gravel"] = true,

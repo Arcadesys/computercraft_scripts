@@ -13,7 +13,7 @@ local movement = require("lib_movement")
 
 local MATERIAL_ALIASES = {
     ["minecraft:potatoes"] = { "minecraft:potato" }, -- Blocks vs. item name
-    ["minecraft:water"] = { "minecraft:water_bucket" }, -- Allow buckets to satisfy water needs
+    ["minecraft:water_bucket"] = { "minecraft:water_bucket_bucket" }, -- Allow buckets to satisfy water needs
 }
 
 local function countWithAliases(invCounts, material)
@@ -183,7 +183,7 @@ local function CHECK_REQUIREMENTS(ctx)
     -- Check materials
     for mat, count in pairs(reqs.materials) do
         -- Assume water is pre-placed; treat requirement as satisfied.
-        if mat == "minecraft:water" then
+        if mat == "minecraft:water_bucket" then
             invCounts[mat] = count
         end
 

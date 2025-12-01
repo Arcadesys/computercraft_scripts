@@ -3010,7 +3010,7 @@ inventory.DEFAULT_TRASH = {
     ["minecraft:pointed_dripstone"] = true,
     ["minecraft:bedrock"] = true,
     ["minecraft:lava"] = true,
-    ["minecraft:water"] = true,
+    ["minecraft:water_bucket"] = true,
     ["minecraft:torch"] = true,
 }
 
@@ -5241,7 +5241,7 @@ mining.TRASH_BLOCKS = inventory.DEFAULT_TRASH
 -- Blocks that should NEVER be placed to fill holes (liquids, gravity blocks, etc)
 mining.FILL_BLACKLIST = {
     ["minecraft:air"] = true,
-    ["minecraft:water"] = true,
+    ["minecraft:water_bucket"] = true,
     ["minecraft:lava"] = true,
     ["minecraft:sand"] = true,
     ["minecraft:gravel"] = true,
@@ -8356,7 +8356,7 @@ local strategy = {}
 local MATERIALS = {
     dirt = "minecraft:dirt",
     sand = "minecraft:sand",
-    water = "minecraft:water",
+    water = "minecraft:water_bucket",
     log = "minecraft:oak_log",
     sapling = "minecraft:oak_sapling",
     cane = "minecraft:sugar_cane",
