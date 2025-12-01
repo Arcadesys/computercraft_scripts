@@ -199,8 +199,8 @@ local function runPotatoFarm()
     local length = 9
     
     local form = ui.Form("Potato Farm Configuration")
-    form:addInput("width", "Width", tostring(width))
-    form:addInput("length", "Length", tostring(length))
+    form:addStepper("width", "Width", width, { min = 3, max = 25 })
+    form:addStepper("length", "Length", length, { min = 3, max = 25 })
     
     local result = form:run()
     if result == "cancel" then return "stay" end

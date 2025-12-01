@@ -253,14 +253,31 @@ function ui.runForm(form)
             end
             
         elseif event == "char" and activeInput then
-            activeInput.value = (activeInput.value or "") .. p1
+            if not activeInput.stepper then
+                activeInput.value = (activeInput.value or "") .. p1
+            end
         elseif event == "key" then
             local key = p1
+            local focusedEl = (#focusableIndices > 0) and form.elements[focusableIndices[currentFocusIndex]] or nil
+            local function adjustStepper(el, delta)
+                if not el or not el.stepper then return end
+                local step = el.step or 1
+                local current = tonumber(el.value) or 0
+                local nextVal = current + (delta * step)
+                if el.min then nextVal = math.max(el.min, nextVal) end
+                if el.max then nextVal = math.min(el.max, nextVal) end
+                el.value = tostring(nextVal)
+            end
+
             if key == keys.backspace and activeInput then
                 local val = activeInput.value or ""
                 if #val > 0 then
                     activeInput.value = val:sub(1, -2)
                 end
+            elseif (key == keys.left or key == keys.right) and focusedEl and focusedEl.stepper then
+                local delta = key == keys.left and -1 or 1
+                adjustStepper(focusedEl, delta)
+                activeInput = nil
             elseif key == keys.tab or key == keys.down then
                 if #focusableIndices > 0 then
                     currentFocusIndex = currentFocusIndex + 1
@@ -403,23 +420,45 @@ end
 function ui.Form(title)
     local self = {
         title = title,
-        elements = {}
+        elements = {},
+        _row = 0,
     }
     
     function self:addInput(id, label, value)
-        local y = 2 + (#self.elements * 2)
+        local y = 2 + self._row
         table.insert(self.elements, { type = "label", x = 2, y = y, text = label })
         table.insert(self.elements, { type = "input", x = 15, y = y, width = 20, value = value, id = id })
+        self._row = self._row + 1
+    end
+
+    function self:addStepper(id, label, value, opts)
+        opts = opts or {}
+        local y = 2 + self._row
+        table.insert(self.elements, { type = "label", x = 2, y = y, text = label })
+        table.insert(self.elements, {
+            type = "input",
+            x = 15,
+            y = y,
+            width = 12,
+            value = tostring(value or 0),
+            id = id,
+            stepper = true,
+            step = opts.step or 1,
+            min = opts.min,
+            max = opts.max,
+        })
+        self._row = self._row + 1
     end
     
     function self:addButton(id, label, callback)
-         local y = 2 + (#self.elements * 2)
+         local y = 2 + self._row
          table.insert(self.elements, { type = "button", x = 2, y = y, text = label, id = id, callback = callback })
+         self._row = self._row + 1
     end
 
     function self:run()
         -- Add OK/Cancel buttons
-        local y = 2 + (#self.elements * 2) + 2
+        local y = 2 + self._row + 2
         table.insert(self.elements, { 
             type = "button", x = 2, y = y, text = "OK", 
             callback = function(form) return "ok" end 
