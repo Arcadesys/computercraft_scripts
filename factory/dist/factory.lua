@@ -10283,7 +10283,8 @@ local function BUILD(ctx)
     -- We assume ctx.origin is where we started.
     local origin = ctx.origin
     local worldOffset = localToWorld(step.approachLocal, origin.facing)
-    local offset = (ctx.config and ctx.config.buildOffset) or { x = 1, y = 0, z = -1 } -- hop northeast of chests by default
+    -- Start one block forward and one to the right of the origin to avoid starting chests.
+    local offset = (ctx.config and ctx.config.buildOffset) or { x = 1, y = 0, z = 1 }
     local targetPos = addPos(origin, {
         x = (worldOffset.x or 0) + (offset.x or 0),
         y = (worldOffset.y or 0) + (offset.y or 0),
