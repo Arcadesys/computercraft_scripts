@@ -60,6 +60,11 @@ local function POTATOFARM(ctx)
     local pf = ctx.potatofarm
     if not pf then return "INITIALIZE" end
 
+    -- Ensure chests are linked (in case of resume)
+    if not pf.chests and ctx.chests then
+        pf.chests = ctx.chests
+    end
+
     -- 1. Fuel Check
     if not startup.runFuelCheck(ctx, pf.chests) then
         return "POTATOFARM"

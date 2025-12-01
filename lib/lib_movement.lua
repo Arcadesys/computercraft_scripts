@@ -294,6 +294,7 @@ function movement.setFacing(ctx, facing)
     end
     state.facing = canonical
     logger.log(ctx, "debug", "Set facing to " .. canonical)
+    if ctx.save then ctx.save() end
     return true
 end
 
@@ -342,6 +343,7 @@ local function turn(ctx, direction)
 
     state.facing = CARDINALS[index]
     logger.log(ctx, "debug", "Turned " .. direction .. ", now facing " .. state.facing)
+    if ctx.save then ctx.save() end
     return true
 end
 
@@ -462,6 +464,7 @@ local function moveWithRetries(ctx, opts, moveFns, delta)
         if moveFns.move() then
             state.position = targetPos
             logger.log(ctx, "debug", string.format("Moved to x=%d y=%d z=%d", state.position.x, state.position.y, state.position.z))
+            if ctx.save then ctx.save() end
             return true
         end
 

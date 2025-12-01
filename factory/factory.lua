@@ -125,6 +125,23 @@ local function run(args)
     
     ctx.logger:info("Agent starting...")
 
+    -- Load previous state if available
+    local persistence = require("lib_persistence")
+    local savedState = persistence.load(ctx)
+    if savedState then
+        ctx.logger:info("Resuming from saved state...")
+        -- Merge saved state into context
+        mergeTables(ctx, savedState)
+        
+        -- Restore movement state explicitly if needed
+        if ctx.movement then
+            local movement = require("lib_movement")
+            movement.ensureState(ctx)
+            -- Force the library to recognize the loaded position/facing
+            -- (ensureState does this by checking ctx.movement, which we just loaded)
+        end
+    end
+
     -- Initial fuel check
     if turtle and turtle.getFuelLevel then
         local level = turtle.getFuelLevel()
@@ -138,7 +155,15 @@ local function run(args)
         end
     end
 
+    -- Helper to save state
+    ctx.save = function()
+        persistence.save(ctx)
+    end
+
     while ctx.state ~= "EXIT" do
+        -- Save state before executing the next step
+        ctx.save()
+
         local stateHandler = states[ctx.state]
         if not stateHandler then
             ctx.logger:error("Unknown state: " .. tostring(ctx.state), buildPayload(ctx))
@@ -169,6 +194,9 @@ local function run(args)
         ---@diagnostic disable-next-line: undefined-global
         sleep(0)
     end
+    
+    -- Clear state on clean exit
+    persistence.clear(ctx)
 
     ctx.logger:info("Agent finished.")
 end
