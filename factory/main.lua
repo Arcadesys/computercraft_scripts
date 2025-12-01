@@ -265,7 +265,32 @@ local function main(args)
         level = ctx.config.verbose and "debug" or "info"
     })
     ctx.logger:info("Agent starting...")
-    movement.forward(ctx)
+
+    -- Attempt a safe step-out: 2 forward, then 2 to the right (restore facing).
+    local function stepOut(ctx)
+        local ok, err
+        ok, err = movement.forward(ctx)
+        if not ok then return false, err end
+        ok, err = movement.forward(ctx)
+        if not ok then return false, err end
+        ok, err = movement.turnRight(ctx)
+        if not ok then return false, err end
+        ok, err = movement.forward(ctx)
+        if not ok then return false, err end
+        ok, err = movement.forward(ctx)
+        if not ok then return false, err end
+        -- Restore original facing
+        ok, err = movement.turnLeft(ctx)
+        if not ok then return false, err end
+        return true
+    end
+
+    local ok, err = stepOut(ctx)
+    if not ok then
+        ctx.logger:warn("Initial step-out failed: " .. tostring(err))
+    else
+        ctx.logger:info("Stepped out to working position (2 forward, 2 right)")
+    end
 
     -- State machine loop
     while ctx.state ~= "EXIT" do
