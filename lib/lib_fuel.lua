@@ -99,7 +99,7 @@ local function resolveTarget(state, opts)
     end
     return target
 end
-
+    
 local function resolveSides(state, opts)
     opts = opts or {}
     if type(opts.sides) == "table" and #opts.sides > 0 then
@@ -190,7 +190,7 @@ local function consumeFromInventory(ctx, target, opts)
     }
 end
 
-local function pullFromSources(ctx, state, opts)
+local function pullFromSources(ctx, state, opts, target)
     if not turtle then
         return false, { error = "turtle API unavailable" }
     end
@@ -200,6 +200,7 @@ local function pullFromSources(ctx, state, opts)
     local pullAmount = opts and opts.pullAmount
     local pulled = {}
     local errors = {}
+    local refueled = {}
     local attempts = 0
     local maxAttempts = opts and opts.maxPullAttempts or (#sides * #items)
     if maxAttempts < 1 then
@@ -220,6 +221,55 @@ local function pullFromSources(ctx, state, opts)
             if ok then
                 pulled[#pulled + 1] = { side = side, material = material }
                 logger.log(ctx, "debug", string.format("Pulled %s from %s", material, side))
+                -- Immediately refresh inventory and attempt to use pulled items as fuel
+                if turtle and type(turtle.refuel) == "function" then
+                    -- force a fresh scan so we can locate the pulled stacks
+                    inventory.ensureState(ctx)
+                    inventory.scan(ctx)
+                    local slots, _err = inventory.getMaterialSlots(ctx, material)
+                    if slots and #slots > 0 then
+                        for _, slot in ipairs(slots) do
+                            local detail = turtle.getItemDetail and turtle.getItemDetail(slot) or nil
+                            local shouldSkip = false
+                            if detail and opts and opts.excludeItems then
+                                for _, pattern in ipairs(opts.excludeItems) do
+                                    if detail.name and detail.name:find(pattern) then
+                                        shouldSkip = true
+                                        break
+                                    end
+                                end
+                            end
+                            if shouldSkip then
+                                logger.log(ctx, "debug", string.format("Skipping refuel from %s (slot %d) due to excludeItems", material, slot))
+                            else
+                                local beforeLevel = select(1, readFuel()) or 0
+                                if turtle.refuel(0) then
+                                    turtle.select(slot)
+                                    local consumedCount = 0
+                                    while turtle.getItemCount and turtle.getItemCount(slot) > 0 do
+                                        -- stop if we reached target (if provided)
+                                        local current = select(1, readFuel()) or beforeLevel
+                                        if target and target > 0 and current >= target then
+                                            break
+                                        end
+                                        if not turtle.refuel(1) then
+                                            break
+                                        end
+                                        consumedCount = consumedCount + 1
+                                    end
+                                    if consumedCount > 0 then
+                                        refueled[#refueled + 1] = { slot = slot, material = material, consumed = consumedCount }
+                                        logger.log(ctx, "debug", string.format("Refueled using %d of %s from slot %d", consumedCount, material, slot))
+                                    end
+                                end
+                            end
+                        end
+                        if #refueled > 0 then
+                            inventory.invalidate(ctx)
+                            inventory.scan(ctx)
+                        end
+                    end
+                end
             elseif err ~= "missing_material" then
                 errors[#errors + 1] = { side = side, material = material, error = err }
                 logger.log(ctx, "warn", string.format("Pull %s from %s failed: %s", material, side, tostring(err)))
@@ -232,7 +282,7 @@ local function pullFromSources(ctx, state, opts)
     if #pulled > 0 then
         inventory.invalidate(ctx)
     end
-    return #pulled > 0, { pulled = pulled, errors = errors }
+    return #pulled > 0, { pulled = pulled, errors = errors, refueled = refueled }
 end
 
 local function refuelRound(ctx, state, opts, target, report)
@@ -260,7 +310,7 @@ local function refuelRound(ctx, state, opts, target, report)
         pullOpts.pullAmount = pullOpts.pullAmount or math.max(1, math.ceil(missing / 1000))
     end
 
-    local pulled, pullInfo = pullFromSources(ctx, state, pullOpts)
+    local pulled, pullInfo = pullFromSources(ctx, state, pullOpts, target)
     report.steps[#report.steps + 1] = {
         type = "pull",
         round = report.round,

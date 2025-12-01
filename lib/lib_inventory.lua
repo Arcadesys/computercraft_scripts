@@ -1129,7 +1129,14 @@ function inventory.pullMaterial(ctx, material, amount, opts)
 
     local targetSlot = resolveTargetSlotForPull(state, material, opts)
     if not targetSlot then
-        return false, "no_empty_slot"
+        -- Try to condense inventory to free slots before giving up
+        pcall(inventory.condense, ctx)
+        -- Recompute state and targetSlot after condense
+        state = ensureScanned(ctx, { force = true }) or state
+        targetSlot = resolveTargetSlotForPull(state, material, opts)
+        if not targetSlot then
+            return false, "no_empty_slot"
+        end
     end
 
     local ok, selectErr = selectSlot(targetSlot)
@@ -1665,12 +1672,22 @@ function inventory.retrieveFromNearby(ctx, missing)
                             local amount = missing[mat]
                             if amount > 0 then
                                 print(string.format("Attempting to pull %s from %s...", mat, side))
+                                -- If inventory is full, try condensing to free space before pulling
+                                local empty = inventory.findEmptySlot(ctx)
+                                if not empty then
+                                    pcall(inventory.condense, ctx)
+                                    empty = inventory.findEmptySlot(ctx)
+                                end
+                                if not empty then
+                                    logger.log(ctx, "warn", string.format("No empty slot available to pull %s; skipping pull", mat))
+                                else
                                 local success, err = inventory.pullMaterial(ctx, mat, amount, { side = pullSide })
                                 if success then
                                     pulledAny = true
                                     missing[mat] = math.max(0, missing[mat] - amount)
                                 else
                                      logger.log(ctx, "warn", "Failed to pull " .. mat .. ": " .. tostring(err))
+                                end
                                 end
                             end
                         end
