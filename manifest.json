@@ -176,6 +176,10 @@
                       "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_placement.lua"
                   },
                   {
+                      "path":  "lib/lib_persistence.lua",
+                      "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_persistence.lua"
+                  },
+                  {
                       "path":  "lib/lib_reporter.lua",
                       "url":  "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/lib/lib_reporter.lua"
                   },
