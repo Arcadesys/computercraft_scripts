@@ -1,5 +1,16 @@
 local table_utils = {}
 
+function table_utils.copy(source)
+    if type(source) ~= "table" then
+        return {}
+    end
+    local result = {}
+    for key, value in pairs(source) do
+        result[key] = value
+    end
+    return result
+end
+
 local function deepCopy(value)
     if type(value) ~= "table" then
         return value

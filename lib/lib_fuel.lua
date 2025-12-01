@@ -11,6 +11,16 @@ local movement = require("lib_movement")
 local inventory = require("lib_inventory")
 local table_utils = require("lib_table")
 local logger = require("lib_logger")
+local copyTable = table_utils.copy or table_utils.shallowCopy or function(tbl)
+    local result = {}
+    if type(tbl) ~= "table" then
+        return result
+    end
+    for k, v in pairs(tbl) do
+        result[k] = v
+    end
+    return result
+end
 
 local fuel = {}
 
@@ -243,12 +253,7 @@ local function refuelRound(ctx, state, opts, target, report)
         return true, report
     end
 
-    local pullOpts
-    if opts then
-        pullOpts = table_utils.copy(opts)
-    else
-        pullOpts = {}
-    end
+    local pullOpts = opts and copyTable(opts) or {}
     local missing = target - (level or 0)
     if missing > 0 then
         -- Avoid over-pulling unstackable fuels (e.g., lava buckets). Assume a conservative 1000 fuel per item.
