@@ -35,10 +35,15 @@ local DEFAULT_MANIFEST_URL =
 local EMBEDDED_IMAGE = {
   name = "Workstation",
   version = "embedded",
-  files = {
-    {
-      path = "startup.lua",
-      content = [[
+  files = {}
+}
+
+local function addEmbeddedFile(path, content)
+  table.insert(EMBEDDED_IMAGE.files, { path = path, content = content })
+end
+
+-- START_EMBEDDED_FILES
+addEmbeddedFile("startup.lua", [[
 local version = "Workstation (embedded)"
 term.clear()
 term.setCursorPos(1, 1)
@@ -50,11 +55,9 @@ if fs.exists(home) then
 else
   print("Home program missing.")
 end
-]],
-    },
-    {
-      path = "home.lua",
-      content = [[
+]])
+
+addEmbeddedFile("home.lua", [[
 local version = "Workstation (embedded)"
 term.clear()
 term.setCursorPos(1, 1)
@@ -70,11 +73,9 @@ print()
 print("Shell available below. Type 'reboot' when finished.")
 print()
 shell.run("shell")
-]],
-    },
-    {
-      path = "factory/schema_farm_tree.txt",
-      content = [[legend:
+]])
+
+addEmbeddedFile("factory/schema_farm_tree.txt", [[legend:
 . = minecraft:air
 D = minecraft:dirt
 S = minecraft:oak_sapling
@@ -96,11 +97,9 @@ layer:1
 .....
 .S.S.
 .....
-]]
-    },
-    {
-      path = "factory/schema_farm_potato.txt",
-      content = [[legend:
+]])
+
+addEmbeddedFile("factory/schema_farm_potato.txt", [[legend:
 . = minecraft:air
 D = minecraft:dirt
 W = minecraft:water_bucket
@@ -123,10 +122,187 @@ layer:1
 .P.P.
 .PPP.
 .....
-]]
+]])
+
+addEmbeddedFile("factory_planner.lua", [=[---@diagnostic disable: undefined-global, undefined-field
+
+-- Factory Designer Launcher
+-- Thin wrapper around lib_designer so players always get the full feature set.
+
+local function ensurePackagePath()
+    if not package or type(package.path) ~= "string" then
+        package = package or {}
+        package.path = package.path or ""
+    end
+
+    if not string.find(package.path, "/lib/?.lua", 1, true) then
+        package.path = package.path .. ";/?.lua;/lib/?.lua;/factory/?.lua;/arcade/?.lua"
+    end
+end
+
+ensurePackagePath()
+
+local designer = require("lib_designer")
+local parser = require("lib_parser")
+
+local args = { ... }
+
+local function printUsage()
+    print([[Factory Designer
+Usage: factory_planner.lua [--load <schema-file>] [--farm <tree|potato>] [--help]
+
+Controls are available inside the designer (press M for menu).]])
+end
+
+local function resolveSchemaPath(rawPath)
+    if fs.exists(rawPath) then
+        return rawPath
+    end
+    if fs.exists(rawPath .. ".json") then
+        return rawPath .. ".json"
+    end
+    if fs.exists(rawPath .. ".txt") then
+        return rawPath .. ".txt"
+    end
+    return rawPath
+end
+
+local function loadInitialSchema(path)
+    local resolved = resolveSchemaPath(path)
+    if not fs.exists(resolved) then
+        print("Warning: schema file not found: " .. resolved)
+        return nil
+    end
+
+    local ok, schema, metadata = parser.parseFile(nil, resolved)
+    if not ok then
+        print("Failed to load schema: " .. tostring(schema))
+        return nil
+    end
+
+    print("Loaded schema: " .. resolved)
+    return {
+        schema = schema,
+        metadata = metadata,
     }
-  },
-}
+end
+
+local function main()
+    local config, handled = parseArgs()
+    if handled then return end
+
+    local runOpts = {}
+    if config and config.loadPath then
+        local initial = loadInitialSchema(config.loadPath)
+        if initial then
+            runOpts.schema = initial.schema
+            runOpts.metadata = initial.metadata
+        end
+    end
+
+    if config and config.farmType then
+        if config.farmType == "tree" then
+            runOpts.meta = { mode = "treefarm" }
+            runOpts.palette = {
+                { id = "minecraft:stone_bricks", color = colors.gray, sym = "#" },
+                { id = "minecraft:dirt", color = colors.brown, sym = "D" },
+                { id = "minecraft:oak_sapling", color = colors.green, sym = "S" },
+                { id = "minecraft:torch", color = colors.yellow, sym = "i" },
+                { id = "minecraft:chest", color = colors.orange, sym = "C" },
+            }
+        elseif config.farmType == "potato" then
+            runOpts.meta = { mode = "potatofarm" }
+            runOpts.palette = {
+                { id = "minecraft:stone_bricks", color = colors.gray, sym = "#" },
+                { id = "minecraft:dirt", color = colors.brown, sym = "D" },
+                { id = "minecraft:water_bucket", color = colors.blue, sym = "W" },
+                { id = "minecraft:potato", color = colors.yellow, sym = "P" },
+                { id = "minecraft:chest", color = colors.orange, sym = "C" },
+            }
+        else
+            print("Unknown farm type: " .. config.farmType)
+            return
+        end
+    end
+
+    local ok, err = pcall(designer.run, runOpts)
+    if not ok then
+        print("Designer crashed: " .. tostring(err))
+    end
+end
+
+main()
+]=])
+
+addEmbeddedFile("lib/version.lua", [=[--[[
+Version and build counter for Arcadesys TurtleOS.
+Build counter increments on each bundle/rebuild.
+]]
+
+local version = {}
+
+version.MAJOR = 2
+version.MINOR = 1
+version.PATCH = 1
+version.BUILD = 47
+
+--- Format version string (e.g., "v2.1.1 (build 42)")
+function version.toString()
+    return string.format("v%d.%d.%d (build %d)", 
+        version.MAJOR, version.MINOR, version.PATCH, version.BUILD)
+end
+
+--- Format short display (e.g., "TurtleOS v2.1.1 #42")
+function version.display()
+    return string.format("TurtleOS v%d.%d.%d #%d", 
+        version.MAJOR, version.MINOR, version.PATCH, version.BUILD)
+end
+
+return version
+]=])
+
+addEmbeddedFile("lib/lib_json.lua", [=[--[[
+JSON library for CC:Tweaked turtles.
+Provides helpers for encoding and decoding JSON.
+--]]
+
+---@diagnostic disable: undefined-global
+
+local json_utils = {}
+
+function json_utils.encode(data)
+    if textutils and textutils.serializeJSON then
+        return textutils.serializeJSON(data)
+    end
+    return nil, "json_encoder_unavailable"
+end
+
+function json_utils.decodeJson(text)
+    if type(text) ~= "string" then
+        return nil, "invalid_json"
+    end
+    if textutils and textutils.unserializeJSON then
+        local ok, result = pcall(textutils.unserializeJSON, text)
+        if ok and result ~= nil then
+            return result
+        end
+        return nil, "json_parse_failed"
+    end
+    local ok, json = pcall(require, "json")
+    if ok and type(json) == "table" and type(json.decode) == "function" then
+        local okDecode, result = pcall(json.decode, text)
+        if okDecode then
+            return result
+        end
+        return nil, "json_parse_failed"
+    end
+    return nil, "json_decoder_unavailable"
+end
+
+return json_utils
+]=])
+
+-- END_EMBEDDED_FILES
 
 local function log(msg)
   print("[install] " .. msg)

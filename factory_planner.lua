@@ -35,6 +35,16 @@ local function resolveSchemaPath(rawPath)
     if fs.exists(rawPath .. ".json") then
         return rawPath .. ".json"
     end
+    if fs.exists(rawPath .. ".txt") then
+        return rawPath .. ".txt"
+    end
+    return rawPath
+end
+
+local function loadInitialSchema(path)
+    local resolved = resolveSchemaPath(path)
+    if not fs.exists(resolved) then
+        print("Warning: schema file not found: " .. resolved)
         return nil
     end
 
@@ -95,12 +105,4 @@ local function main()
     end
 end
 
-local function runWithMonitor(fn)
-    local ok, monitorUtil = pcall(require, "lib_monitor")
-    if ok and monitorUtil and monitorUtil.runOnMonitor then
-        return monitorUtil.runOnMonitor(fn, { textScale = 0.5 })
-    end
-    return fn()
-end
-
-runWithMonitor(main)
+main()
