@@ -187,6 +187,7 @@ local function pullFromSources(ctx, state, opts)
     inventory.ensureState(ctx)
     local sides = resolveSides(state, opts)
     local items = resolveFuelItems(state, opts)
+    local pullAmount = opts and opts.pullAmount
     local pulled = {}
     local errors = {}
     local attempts = 0
@@ -201,7 +202,7 @@ local function pullFromSources(ctx, state, opts)
                 break
             end
             attempts = attempts + 1
-            local ok, err = inventory.pullMaterial(ctx, material, nil, {
+            local ok, err = inventory.pullMaterial(ctx, material, pullAmount, {
                 side = side,
                 deferScan = true,
                 cycleLimit = cycleLimit,
@@ -242,7 +243,19 @@ local function refuelRound(ctx, state, opts, target, report)
         return true, report
     end
 
-    local pulled, pullInfo = pullFromSources(ctx, state, opts)
+    local pullOpts
+    if opts then
+        pullOpts = table_utils.copy(opts)
+    else
+        pullOpts = {}
+    end
+    local missing = target - (level or 0)
+    if missing > 0 then
+        -- Avoid over-pulling unstackable fuels (e.g., lava buckets). Assume a conservative 1000 fuel per item.
+        pullOpts.pullAmount = pullOpts.pullAmount or math.max(1, math.ceil(missing / 1000))
+    end
+
+    local pulled, pullInfo = pullFromSources(ctx, state, pullOpts)
     report.steps[#report.steps + 1] = {
         type = "pull",
         round = report.round,

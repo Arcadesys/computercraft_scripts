@@ -11,6 +11,37 @@ local fuel = require("lib_fuel")
 local diagnostics = require("lib_diagnostics")
 local movement = require("lib_movement")
 
+local MATERIAL_ALIASES = {
+    ["minecraft:potatoes"] = { "minecraft:potato" }, -- Blocks vs. item name
+    ["minecraft:water"] = { "minecraft:water_bucket" }, -- Allow buckets to satisfy water needs
+}
+
+local function countWithAliases(invCounts, material)
+    local total = invCounts[material] or 0
+    local aliases = MATERIAL_ALIASES[material]
+    if aliases then
+        for _, alias in ipairs(aliases) do
+            total = total + (invCounts[alias] or 0)
+        end
+    end
+    return total
+end
+
+local function buildPullList(missing)
+    local pull = {}
+    for mat, count in pairs(missing) do
+        local aliases = MATERIAL_ALIASES[mat]
+        if aliases then
+            for _, alias in ipairs(aliases) do
+                pull[alias] = math.max(pull[alias] or 0, count)
+            end
+        else
+            pull[mat] = count
+        end
+    end
+    return pull
+end
+
 local function calculateRequirements(ctx, strategy)
     local reqs = {
         fuel = 0,
@@ -137,7 +168,7 @@ local function CHECK_REQUIREMENTS(ctx)
 
     -- Check materials
     for mat, count in pairs(reqs.materials) do
-        local have = invCounts[mat] or 0
+        local have = countWithAliases(invCounts, mat)
         
         -- Special handling for chests: allow any chest/barrel if "minecraft:chest" is requested
         if mat == "minecraft:chest" and have < count then
@@ -160,13 +191,14 @@ local function CHECK_REQUIREMENTS(ctx)
 
     if hasMissing then
         print("Checking nearby chests for missing items...")
-        if inventory.retrieveFromNearby(ctx, missing.materials) then
+        local pullList = buildPullList(missing.materials)
+        if inventory.retrieveFromNearby(ctx, pullList) then
              -- Re-check inventory
              invCounts = inventory.getCounts(ctx)
              hasMissing = false
              missing.materials = {}
              for mat, count in pairs(reqs.materials) do
-                local have = invCounts[mat] or 0
+                local have = countWithAliases(invCounts, mat)
                 if have < count then
                     missing.materials[mat] = count - have
                     hasMissing = true
