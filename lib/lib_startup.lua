@@ -7,7 +7,7 @@ Handles fuel checks and chest setup.
 local fuelLib = require("lib_fuel")
 local logger = require("lib_logger")
 local movement = require("lib_movement")
-local wizard = require("lib_wizard")
+local inventory = require("lib_inventory")
 
 local startup = {}
 
@@ -56,20 +56,36 @@ end
 -- Runs the chest setup wizard.
 -- Returns the configured chests table.
 function startup.runChestSetup(ctx)
-    local requirements = {
-        south = { type = "chest", name = "Output Chest" },
-        east = { type = "chest", name = "Trash Chest" },
-        west = { type = "chest", name = "Fuel Chest" }
-    }
+    local chests = {}
     
-    wizard.runChestSetup(ctx, requirements)
+    logger.log(ctx, "info", "Scanning for nearby containers...")
     
-    -- Map directions to chest types for internal use
-    local chests = {
-        output = "south",
-        trash = "east",
-        fuel = "west"
-    }
+    -- Scan all sides for a container
+    local sides = {"front", "top", "bottom", "left", "right", "back"}
+    local foundSide = nil
+    
+    for _, side in ipairs(sides) do
+        local info = inventory.detectContainer(ctx, { side = side })
+        if info then
+            foundSide = side
+            logger.log(ctx, "info", "Found container at " .. side)
+            break
+        end
+    end
+    
+    if foundSide then
+        -- Use the found container for everything
+        chests.output = foundSide
+        chests.trash = foundSide
+        chests.fuel = foundSide
+        logger.log(ctx, "info", "Using " .. foundSide .. " container for all operations.")
+    else
+        logger.log(ctx, "warn", "No containers found nearby. Operations requiring chests may fail.")
+        -- Fallback to 'front' just in case the user places one later without restarting
+        chests.output = "front"
+        chests.trash = "front"
+        chests.fuel = "front"
+    end
     
     return chests
 end
