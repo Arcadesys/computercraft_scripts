@@ -45,15 +45,6 @@ local function BUILD(ctx)
     if not strategy then
         return "ERROR"
     end
-
-    if ctx.pointer > #strategy then
-        return "DONE"
-    end
-
-    local step = strategy[ctx.pointer]
-    local material = step.block.material
-    
-    -- 1. Check Fuel
     if not startup.runFuelCheck(ctx, ctx.chests, 100, 1000) then
         return "BUILD"
     end

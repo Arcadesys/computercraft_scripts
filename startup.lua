@@ -1,27 +1,12 @@
----@diagnostic disable: undefined-global, undefined-field, param-type-mismatch
-
 -- startup.lua
--- Unified Arcadesys launcher for turtles and computers.
+-- Simplified launcher for TurtleOS
 
 package.path = package.path .. ";/?.lua;/lib/?.lua"
 
-local function findLauncher()
-    local here = fs.getDir(shell and shell.getRunningProgram and shell.getRunningProgram() or "") or ""
-    local candidates = {
-        fs.combine(here, "arcadesys_os.lua"),
-        "/arcadesys_os.lua",
-    }
-    for _, path in ipairs(candidates) do
-        if fs.exists(path) then
-            return path
-        end
-    end
-    return nil
-end
-
-local launcher = findLauncher()
-if launcher then
-    shell.run(launcher)
+if fs.exists("factory/turtle_os.lua") then
+    shell.run("factory/turtle_os.lua")
+elseif fs.exists("/factory/turtle_os.lua") then
+    shell.run("/factory/turtle_os.lua")
 else
-    print("arcadesys_os.lua missing; please run install.lua")
+    print("Error: factory/turtle_os.lua not found.")
 end

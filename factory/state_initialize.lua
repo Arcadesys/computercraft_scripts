@@ -319,6 +319,49 @@ local function INITIALIZE(ctx)
     
     logger.log(ctx, "info", string.format("Plan: %d steps.", #order))
 
+    -- Check for schema metadata to trigger next state
+    if ctx.schemaInfo and ctx.schemaInfo.meta then
+        local meta = ctx.schemaInfo.meta
+        if meta.mode == "treefarm" then
+            logger.log(ctx, "info", "Schema defines a Tree Farm. Will transition to TREEFARM after build.")
+            ctx.onBuildComplete = "TREEFARM"
+            
+            -- Calculate dimensions from bounds
+            local bounds = ctx.schemaInfo.bounds
+            local width = (bounds.max.x - bounds.min.x) + 1
+            local height = (bounds.max.z - bounds.min.z) + 1
+            
+            ctx.treefarm = {
+                width = width,
+                height = height,
+                currentX = 0,
+                currentZ = 0,
+                state = "SCAN",
+                chests = ctx.chests,
+                useSchema = true -- Flag to tell TREEFARM to use schema locations
+            }
+        elseif meta.mode == "potatofarm" then
+            logger.log(ctx, "info", "Schema defines a Potato Farm. Will transition to POTATOFARM after build.")
+            ctx.onBuildComplete = "POTATOFARM"
+            
+            local bounds = ctx.schemaInfo.bounds
+            local width = (bounds.max.x - bounds.min.x) + 1
+            local height = (bounds.max.z - bounds.min.z) + 1
+            
+            ctx.potatofarm = {
+                width = width,
+                height = height,
+                currentX = 0,
+                currentZ = 0,
+                nextX = 0,
+                nextZ = 0,
+                state = "SCAN",
+                chests = ctx.chests,
+                useSchema = true
+            }
+        end
+    end
+
     ctx.nextState = "BUILD"
     return "CHECK_REQUIREMENTS"
 end

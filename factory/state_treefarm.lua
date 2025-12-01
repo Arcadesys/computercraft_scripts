@@ -39,78 +39,68 @@ local function TREEFARM(ctx)
 
     -- 2. State Machine
     if tf.state == "SCAN" then
-        -- Interpret width/height as number of trees
-        local treeW = tonumber(tf.width) or 8
-        local treeH = tonumber(tf.height) or 8
-        local limitX = (treeW * 2) - 1
-        local limitZ = (treeH * 2) - 1
-        
-        if type(tf.nextX) ~= "number" then tf.nextX = 0 end
-        if type(tf.nextZ) ~= "number" then tf.nextZ = 0 end
-        
-        if tf.nextX == 0 and tf.nextZ == 0 then
-            logger.log(ctx, "info", "Starting patrol run. Grid: " .. treeW .. "x" .. treeH .. " trees.")
-
-            -- Pre-run fuel check
-            local totalSpots = (limitX + 1) * (limitZ + 1)
-            local fuelPerSpot = 16 -- Descent/Ascent + Travel
-            local needed = (totalSpots * fuelPerSpot) + 200
-            if type(needed) ~= "number" then needed = 1000 end
-            
-            local function getFuel()
-                local l = turtle.getFuelLevel()
-                if l == "unlimited" then return math.huge end
-                if type(l) ~= "number" then return 0 end
-                return l
-            end
-            
-            local current = getFuel()
-
-            if current < needed then
-                logger.log(ctx, "warn", string.format("Pre-run fuel check: Have %s, Need %s", tostring(current), tostring(needed)))
-                
-                -- 1. Try inventory
-                fuelLib.refuel(ctx, { target = needed, excludeItems = { "sapling", "log" } })
-                current = getFuel()
-                
-                logger.log(ctx, "debug", string.format("Fuel check: current=%s needed=%s", tostring(current), tostring(needed)))
-
-                -- 2. Try fuel chest
-                if current < needed and tf.chests and tf.chests.fuel then
-                    logger.log(ctx, "info", "Insufficient fuel. Visiting fuel depot.")
-                    movement.goTo(ctx, { x=0, y=0, z=0 })
-                    movement.face(ctx, tf.chests.fuel)
-                    
-                    local attempts = 0
-                    while current < needed and attempts < 16 do
-                        if not turtle.suck() then
-                            logger.log(ctx, "warn", "Fuel chest empty or inventory full!")
-                            break
+        -- Determine target spots
+        local spots = {}
+        if tf.useSchema and ctx.schema then
+            -- Extract sapling locations from schema
+            for xStr, yLayer in pairs(ctx.schema) do
+                for yStr, zLayer in pairs(yLayer) do
+                    for zStr, block in pairs(zLayer) do
+                        if block.material and (block.material:find("sapling") or block.material:find("log")) then
+                            table.insert(spots, { x = tonumber(xStr), z = tonumber(zStr) })
                         end
-                        fuelLib.refuel(ctx, { target = needed, excludeItems = { "sapling", "log" } })
-                        current = getFuel()
-                        attempts = attempts + 1
+                    end
+                end
+            end
+            -- Sort spots for consistent traversal
+            table.sort(spots, function(a, b)
+                if a.x == b.x then return a.z < b.z end
+                return a.x < b.x
+            end)
+        else
+            -- Generate grid spots
+            local treeW = tonumber(tf.width) or 8
+            local treeH = tonumber(tf.height) or 8
+            local limitX = (treeW * 2) - 1
+            local limitZ = (treeH * 2) - 1
+            for x = 0, limitX do
+                for z = 0, limitZ do
+                    if (x % 2 == 0) and (z % 2 == 0) then
+                        table.insert(spots, { x = x, z = z })
                     end
                 end
             end
         end
 
-        if tf.nextZ > limitZ then
+        if not tf.spotIndex then tf.spotIndex = 1 end
+        
+        if tf.spotIndex > #spots then
             tf.state = "DEPOSIT"
+            tf.spotIndex = 1
             return "TREEFARM"
         end
+
+        local spot = spots[tf.spotIndex]
+        local x = spot.x
+        local z = spot.z
         
-        local x = tf.nextX
-        local z = tf.nextZ
-        
-        logger.log(ctx, "debug", "Checking sector " .. x .. "," .. z)
+        logger.log(ctx, "debug", "Checking tree at " .. x .. "," .. z)
 
         -- Fly over to avoid obstacles
         local hoverHeight = 6
-        -- Offset by 2 to avoid home base and provide a return path
-        local xOffset = 2
-        local zOffset = 2
-        local target = { x = x + xOffset, y = hoverHeight, z = -(z + zOffset) }
+        -- Offset by 2 to avoid home base and provide a return path (adjust as needed based on schema origin)
+        -- If using schema, we assume schema coordinates are relative to start.
+        -- Existing logic used xOffset=2, zOffset=2. Let's keep it for now but might need adjustment for schema.
+        -- Actually, for schema, the coordinates are usually 0-based from the start.
+        -- The build offset in state_build was {x=1, y=0, z=1}.
+        -- So if schema has a block at 0,0,0, it was built at world relative 1,0,1.
+        -- We should probably respect that offset.
+        local offset = (ctx.config and ctx.config.buildOffset) or { x = 1, y = 0, z = 1 }
+        local target = { 
+            x = x + (offset.x or 0), 
+            y = hoverHeight, 
+            z = z + (offset.z or 0) 
+        }
         
         -- Move to target
         if not movement.goTo(ctx, target, { axisOrder = { "y", "x", "z" } }) then
@@ -119,7 +109,7 @@ local function TREEFARM(ctx)
             -- For now, skip or retry
         else
             -- Descend and harvest
-            -- We are at (x, hoverHeight, -z)
+            -- We are at (x, hoverHeight, z)
             while movement.getPosition(ctx).y > 1 do
                 local hasDown, dataDown = turtle.inspectDown()
                 if hasDown and (dataDown.name:find("log") or dataDown.name:find("leaves")) then
@@ -127,6 +117,9 @@ local function TREEFARM(ctx)
                     sleep(0.2)
                     while turtle.suckDown() do sleep(0.1) end
                 elseif hasDown and not dataDown.name:find("air") then
+                    -- Don't dig non-tree blocks if using schema, unless it's leaves/logs
+                    -- But trees grow leaves.
+                    -- If we are strictly above the sapling spot, we should be fine digging down to it.
                     turtle.digDown()
                     sleep(0.2)
                     while turtle.suckDown() do sleep(0.1) end
@@ -149,8 +142,8 @@ local function TREEFARM(ctx)
             end
             
             -- Replant
-            local isGridSpot = (x % 2 == 0) and (z % 2 == 0)
-            if isGridSpot and (not hasDown or dataDown.name:find("air") or dataDown.name:find("sapling")) then
+            -- If using schema, we know this is a spot.
+            if not hasDown or dataDown.name:find("air") or dataDown.name:find("sapling") then
                 -- Try to find any sapling
                 if selectSapling(ctx) then
                     logger.log(ctx, "info", "Replanting sapling at " .. x .. "," .. z .. ".")
@@ -160,12 +153,7 @@ local function TREEFARM(ctx)
         end
         
         -- Next
-        tf.nextX = tf.nextX + 1
-        if tf.nextX > limitX then
-            tf.nextX = 0
-            tf.nextZ = tf.nextZ + 1
-        end
-        
+        tf.spotIndex = tf.spotIndex + 1
         return "TREEFARM"
 
     elseif tf.state == "DEPOSIT" then
@@ -189,8 +177,7 @@ local function TREEFARM(ctx)
         sleep(30)
         
         tf.state = "SCAN"
-        tf.nextX = 0
-        tf.nextZ = 0
+        tf.spotIndex = 1
         return "TREEFARM"
     end
 

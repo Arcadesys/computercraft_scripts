@@ -204,7 +204,7 @@ local function parseVoxelGrid(schema, bounds, counts, grid)
     return true
 end
 
-local function summarise(bounds, counts)
+local function summarise(bounds, counts, meta)
     local materials = {}
     for material, count in pairs(counts) do
         materials[#materials + 1] = { material = material, count = count }
@@ -226,6 +226,7 @@ local function summarise(bounds, counts)
         },
         materials = materials,
         totalBlocks = total,
+        meta = meta
     }
 end
 
@@ -249,7 +250,7 @@ local function buildCanonical(def, opts)
     if bounds.min.x == math.huge then
         return nil, "empty_schema"
     end
-    return schema, summarise(bounds, counts)
+    return schema, summarise(bounds, counts, def.meta)
 end
 
 local function detectFormatFromExtension(path)
@@ -344,6 +345,11 @@ local function parseTextGridContent(text, opts)
         elseif trimmed:lower() == "legend:" then
             local legendBlock, nextIndex = parseLegendBlock(lines, lineIndex + 1)
             legend = schema_utils.mergeLegend(legend, legendBlock)
+            lineIndex = nextIndex
+        elseif trimmed:lower() == "meta:" then
+            local metaBlock, nextIndex = parseLegendBlock(lines, lineIndex + 1) -- Reuse parseLegendBlock as format is identical
+            if not opts then opts = {} end
+            opts.meta = schema_utils.mergeLegend(opts.meta, metaBlock)
             lineIndex = nextIndex
         elseif trimmed:match("^layer") then
             if #current > 0 then
@@ -499,9 +505,13 @@ function parser.parse(ctx, spec)
             definition = {
                 layers = data.layers or { data.rows },
                 legend = schema_utils.mergeLegend(spec.legend or nil, data.legend or nil),
+                meta = spec.meta or data.meta
             }
         else
             definition, err = parseTextGridContent(text, spec)
+            if definition and spec.meta then
+                 definition.meta = schema_utils.mergeLegend(definition.meta, spec.meta)
+            end
         end
     elseif format == "voxel" then
         if data then

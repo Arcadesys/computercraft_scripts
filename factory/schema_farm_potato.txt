@@ -1,0 +1,23 @@
+legend:
+. = minecraft:air
+D = minecraft:dirt
+W = minecraft:water_bucket
+P = minecraft:potatoes
+# = minecraft:stone_bricks
+
+meta:
+mode = potatofarm
+
+layer:0
+#####
+#DDD#
+#DWD#
+#DDD#
+#####
+
+layer:1
+.....
+.PPP.
+.P.P.
+.PPP.
+.....
