@@ -97,25 +97,11 @@ function strategy.generate(farmType, width, length)
         -- Let's do: W D D D W D D D W
         for x = 0, width - 1 do
             for z = 0, length - 1 do
-                if z == 0 or z == length - 1 or x == 0 or x == width - 1 then
-                    set(x, 0, z, MATERIALS.stone)
+                -- Only lay ground (dirt/water) at y=0; no border blocks or crops.
+                if x % 4 == 0 then
+                    set(x, 0, z, MATERIALS.water)
                 else
-                    if x % 4 == 0 then
-                        set(x, 0, z, MATERIALS.water)
-                    else
-                        set(x, 0, z, MATERIALS.dirt) -- Turtle will till this later or we place dirt
-                        -- We can't place "farmland" item usually. We place dirt.
-                        -- The build script places blocks.
-                        -- If we want crops, we need to till.
-                        -- For now, let's just lay the dirt and water.
-                        -- We can optionally indicate the crop type in metadata or just assume the user plants it.
-                        -- But for the schema, we might want to show the crop in Layer 1 for visualization.
-                        if farmType == "potato" then set(x, 1, z, MATERIALS.potato)
-                        elseif farmType == "carrot" then set(x, 1, z, MATERIALS.carrot)
-                        elseif farmType == "wheat" then set(x, 1, z, MATERIALS.wheat)
-                        elseif farmType == "beetroot" then set(x, 1, z, MATERIALS.beetroot)
-                        end
-                    end
+                    set(x, 0, z, MATERIALS.dirt) -- turtle tills/handles crops later
                 end
             end
         end

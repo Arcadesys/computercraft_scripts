@@ -8426,36 +8426,17 @@ function strategy.generate(farmType, width, length)
             end
         end
 
-    elseif farmType == "potato" then
-        -- Rows of water every 4 blocks?
-        -- Hydration is 4 blocks.
-        -- Pattern: W D D D D D D D D W (9 blocks)
-        -- Let's do: W D D D W D D D W
-        for x = 0, width - 1 do
-            for z = 0, length - 1 do
-                if z == 0 or z == length - 1 or x == 0 or x == width - 1 then
-                    set(x, 0, z, MATERIALS.stone)
-                else
-                    if x % 4 == 0 then
-                        set(x, 0, z, MATERIALS.water)
-                        -- Cover water with slab or lily pad? 
-                        -- For simplicity, leave open or put trapdoor?
-                        -- Let's just leave open for now.
-                    else
-                        set(x, 0, z, MATERIALS.dirt) -- Turtle will till this later or we place dirt
-                        -- We can't place "farmland" item usually. We place dirt.
-                        -- The build script places blocks.
-                        -- If we want potatoes, we need to till.
-                        -- For now, let's just place dirt and plant potatoes (which might fail if not tilled).
-                        -- Actually, "potatoes" block can't be placed on dirt.
-                        -- So this strategy is "Prepare the land".
-                        -- The user might need to till manually or we add a "TILL" state.
-                        -- Let's just lay the dirt and water.
-                    end
-                end
-            end
+  elseif farmType == "potato" then
+    for x = 0, width - 1 do
+      for z = 0, length - 1 do
+        if x % 4 == 0 then
+          set(x, 0, z, MATERIALS.water)
+        else
+          set(x, 0, z, MATERIALS.dirt)
         end
+      end
     end
+  end
 
     return schema
 end
@@ -10348,6 +10329,19 @@ local fuel = require("lib_fuel")
 local diagnostics = require("lib_diagnostics")
 
 local function calculateRequirements(ctx, strategy)
+    -- Potatofarm: assume soil is ready at y=0; only fuel + potatoes needed.
+    if ctx.potatofarm then
+        local width = tonumber(ctx.potatofarm.width) or tonumber(ctx.config.width) or 9
+        local height = tonumber(ctx.potatofarm.height) or tonumber(ctx.config.height) or 9
+        local inner = math.max(1, width - 2) * math.max(1, height - 2)
+        local fuelNeeded = math.ceil(inner * 2.0) + 100
+        local potatoesNeeded = inner
+        return {
+            fuel = fuelNeeded,
+            materials = { ["minecraft:potato"] = potatoesNeeded }
+        }
+    end
+
     local reqs = {
         fuel = 0,
         materials = {}

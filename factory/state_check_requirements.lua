@@ -43,6 +43,20 @@ local function buildPullList(missing)
 end
 
 local function calculateRequirements(ctx, strategy)
+    -- Potatofarm: assume soil is prepped at y=0; only require fuel and potatoes for replanting.
+    if ctx.potatofarm then
+        local width = tonumber(ctx.potatofarm.width) or tonumber(ctx.config.width) or 9
+        local height = tonumber(ctx.potatofarm.height) or tonumber(ctx.config.height) or 9
+        -- Rough fuel budget: sweep the inner grid twice plus margin.
+        local inner = math.max(1, (width - 2)) * math.max(1, (height - 2))
+        local fuelNeeded = math.ceil(inner * 2.0) + 100
+        local potatoesNeeded = inner -- enough to replant every spot once
+        return {
+            fuel = fuelNeeded,
+            materials = { ["minecraft:potato"] = potatoesNeeded }
+        }
+    end
+
     local reqs = {
         fuel = 0,
         materials = {}
