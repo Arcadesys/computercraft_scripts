@@ -10222,6 +10222,31 @@ local function addPos(p1, p2)
     return { x = p1.x + p2.x, y = p1.y + p2.y, z = p1.z + p2.z }
 end
 
+local function travelToBuildTarget(ctx, targetPos)
+    local moveOpts = { axisOrder = { "y", "x", "z" }, dig = true, attack = true }
+    local ok, err = movement.goTo(ctx, targetPos, moveOpts)
+    if ok then
+        return true
+    end
+
+    local clearance = (ctx.config and ctx.config.travelClearance) or 2
+    local current = ctx.movement and ctx.movement.position or { x = 0, y = 0, z = 0 }
+    local hopY = math.max(current.y or 0, targetPos.y or 0) + clearance
+
+    local path = {
+        { x = current.x, y = hopY, z = current.z },
+        { x = targetPos.x, y = hopY, z = targetPos.z },
+        targetPos,
+    }
+
+    ok, err = movement.stepPath(ctx, path, moveOpts)
+    if ok then
+        return true
+    end
+
+    return false, err
+end
+
 local function BUILD(ctx)
     local strategy, errMsg = diagnostics.requireStrategy(ctx)
     if not strategy then
@@ -10258,11 +10283,15 @@ local function BUILD(ctx)
     -- We assume ctx.origin is where we started.
     local origin = ctx.origin
     local worldOffset = localToWorld(step.approachLocal, origin.facing)
-    local targetPos = addPos(origin, worldOffset)
+    local offset = (ctx.config and ctx.config.buildOffset) or { x = 1, y = 0, z = -1 } -- hop northeast of chests by default
+    local targetPos = addPos(origin, {
+        x = (worldOffset.x or 0) + (offset.x or 0),
+        y = (worldOffset.y or 0) + (offset.y or 0),
+        z = (worldOffset.z or 0) + (offset.z or 0),
+    })
     
-    -- Use movement lib to go there
-    -- We might want a "travel clearance" (fly high) strategy, but for now direct.
-    local ok, err = movement.goTo(ctx, targetPos)
+    -- Use movement lib to go there with a hop-over fallback to avoid digging storage blocks.
+    local ok, err = travelToBuildTarget(ctx, targetPos)
     if not ok then
         logger.log(ctx, "warn", "Movement blocked: " .. tostring(err))
         ctx.resumeState = "BUILD"

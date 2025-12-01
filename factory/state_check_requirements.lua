@@ -168,6 +168,11 @@ local function CHECK_REQUIREMENTS(ctx)
 
     -- Check materials
     for mat, count in pairs(reqs.materials) do
+        -- Assume water is pre-placed; treat requirement as satisfied.
+        if mat == "minecraft:water" then
+            invCounts[mat] = count
+        end
+
         local have = countWithAliases(invCounts, mat)
         
         -- Special handling for chests: allow any chest/barrel if "minecraft:chest" is requested
@@ -203,7 +208,35 @@ local function CHECK_REQUIREMENTS(ctx)
                     missing.materials[mat] = count - have
                     hasMissing = true
                 end
+             end
+        end
+    end
+
+    -- If we're still missing items, check whether nearby chests have enough
+    -- even if we can't hold them all at once (e.g., lots of water buckets).
+    local nearby = nil
+    if hasMissing then
+        nearby = inventory.checkNearby(ctx, buildPullList(missing.materials))
+        for mat, deficit in pairs(missing.materials) do
+            local total = countWithAliases(invCounts, mat)
+            total = total + (nearby[mat] or 0)
+            local aliases = MATERIAL_ALIASES[mat]
+            if aliases then
+                for _, alias in ipairs(aliases) do
+                    total = total + (nearby[alias] or 0)
+                end
             end
+
+            if total >= (reqs.materials[mat] or 0) then
+                missing.materials[mat] = nil
+            end
+        end
+
+        -- Recompute hasMissing after relaxing for nearby stock
+        hasMissing = missing.fuel > 0
+        for _ in pairs(missing.materials) do
+            hasMissing = true
+            break
         end
     end
 
@@ -222,7 +255,7 @@ local function CHECK_REQUIREMENTS(ctx)
     end
 
     -- Check nearby
-    local nearby = inventory.checkNearby(ctx, missing.materials)
+    nearby = nearby or inventory.checkNearby(ctx, missing.materials)
     local foundNearby = false
     for mat, count in pairs(nearby) do
         if not foundNearby then
