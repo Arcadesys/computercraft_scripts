@@ -4008,6 +4008,4779 @@ end
 return schema_utils
 ]=])
 
+addEmbeddedFile("lib/lib_fs.lua", [=[
+local fs_utils = {}
+
+local createdArtifacts = {}
+
+function fs_utils.stageArtifact(path)
+    for _, existing in ipairs(createdArtifacts) do
+        if existing == path then
+            return
+        end
+    end
+    createdArtifacts[#createdArtifacts + 1] = path
+end
+
+function fs_utils.writeFile(path, contents)
+    if type(path) ~= "string" or path == "" then
+        return false, "invalid_path"
+    end
+    if fs and fs.open then
+        local handle = fs.open(path, "w")
+        if not handle then
+            return false, "open_failed"
+        end
+        handle.write(contents)
+        handle.close()
+        return true
+    end
+    if io and io.open then
+        local handle, err = io.open(path, "w")
+        if not handle then
+            return false, err or "open_failed"
+        end
+        handle:write(contents)
+        handle:close()
+        return true
+    end
+    return false, "fs_unavailable"
+end
+
+function fs_utils.deleteFile(path)
+    if fs and fs.delete and fs.exists then
+        local ok, exists = pcall(fs.exists, path)
+        if ok and exists then
+            fs.delete(path)
+        end
+        return true
+    end
+    if os and os.remove then
+        os.remove(path)
+        return true
+    end
+    return false
+end
+
+function fs_utils.readFile(path)
+    if type(path) ~= "string" or path == "" then
+        return nil, "invalid_path"
+    end
+    if fs and fs.open then
+        local handle = fs.open(path, "r")
+        if not handle then
+            return nil, "open_failed"
+        end
+        local ok, contents = pcall(handle.readAll)
+        handle.close()
+        if not ok then
+            return nil, "read_failed"
+        end
+        return contents
+    end
+    if io and io.open then
+        local handle, err = io.open(path, "r")
+        if not handle then
+            return nil, err or "open_failed"
+        end
+        local contents = handle:read("*a")
+        handle:close()
+        return contents
+    end
+    return nil, "fs_unavailable"
+end
+
+function fs_utils.cleanupArtifacts()
+    for index = #createdArtifacts, 1, -1 do
+        local path = createdArtifacts[index]
+        fs_utils.deleteFile(path)
+        createdArtifacts[index] = nil
+    end
+end
+
+return fs_utils
+]=])
+
+addEmbeddedFile("lib/lib_parser.lua", [=[
+--[[
+Parser library for CC:Tweaked turtles.
+Normalises schema sources (JSON, text grids, voxel tables) into the canonical
+schema[x][y][z] format used by the build states. All public entry points
+return success booleans with optional error messages and metadata tables.
+--]]
+
+---@diagnostic disable: undefined-global
+
+local parser = {}
+local logger = require("lib_logger")
+local table_utils = require("lib_table")
+local fs_utils = require("lib_fs")
+local json_utils = require("lib_json")
+local schema_utils = require("lib_schema")
+
+local function parseLayerRows(schema, bounds, counts, layerDef, legend, opts)
+    local rows = layerDef.rows
+    if type(rows) ~= "table" then
+        return false, "invalid_layer"
+    end
+    local height = #rows
+    if height == 0 then
+        return true
+    end
+    local width = nil
+    for rowIndex, row in ipairs(rows) do
+        if type(row) ~= "string" then
+            return false, "invalid_row"
+        end
+        if width == nil then
+            width = #row
+            if width == 0 then
+                return false, "empty_row"
+            end
+        elseif width ~= #row then
+            return false, "ragged_row"
+        end
+        for col = 1, #row do
+            local symbol = row:sub(col, col)
+            local entry, err = schema_utils.resolveSymbol(symbol, legend, opts)
+            if err then
+                return false, string.format("legend_error:%s", symbol)
+            end
+            if entry then
+                local x = (layerDef.x or 0) + (col - 1)
+                local y = layerDef.y or 0
+                local z = (layerDef.z or 0) + (rowIndex - 1)
+                local ok, addErr = schema_utils.addBlock(schema, bounds, counts, x, y, z, entry.material, entry.meta)
+                if not ok then
+                    return false, addErr
+                end
+            end
+        end
+    end
+    return true
+end
+
+local function toLayerRows(layer)
+    if type(layer) == "string" then
+        local rows = {}
+        for line in layer:gmatch("([^\r\n]+)") do
+            rows[#rows + 1] = line
+        end
+        return { rows = rows }
+    end
+    if type(layer) == "table" then
+        if layer.rows then
+            local rows = {}
+            for i = 1, #layer.rows do
+                rows[i] = tostring(layer.rows[i])
+            end
+            return {
+                rows = rows,
+                y = layer.y or layer.height or layer.level or 0,
+                x = layer.x or layer.offsetX or 0,
+                z = layer.z or layer.offsetZ or 0,
+            }
+        end
+        local rows = {}
+        local count = 0
+        for _, value in ipairs(layer) do
+            rows[#rows + 1] = tostring(value)
+            count = count + 1
+        end
+        if count > 0 then
+            return { rows = rows, y = layer.y or 0, x = layer.x or 0, z = layer.z or 0 }
+        end
+    end
+    return nil
+end
+
+local function parseLayers(schema, bounds, counts, def, legend, opts)
+    local layers = def.layers
+    if type(layers) ~= "table" then
+        return false, "invalid_layers"
+    end
+    local used = 0
+    for index, layer in ipairs(layers) do
+        local layerRows = toLayerRows(layer)
+        if not layerRows then
+            return false, "invalid_layer"
+        end
+        if not layerRows.y then
+            layerRows.y = (def.baseY or 0) + (index - 1)
+        else
+            layerRows.y = layerRows.y + (def.baseY or 0)
+        end
+        if def.baseX then
+            layerRows.x = (layerRows.x or 0) + def.baseX
+        end
+        if def.baseZ then
+            layerRows.z = (layerRows.z or 0) + def.baseZ
+        end
+        local ok, err = parseLayerRows(schema, bounds, counts, layerRows, legend, opts)
+        if not ok then
+            return false, err
+        end
+        used = used + 1
+    end
+    if used == 0 then
+        return false, "empty_layers"
+    end
+    return true
+end
+
+local function parseBlockList(schema, bounds, counts, blocks)
+    local used = 0
+    for _, block in ipairs(blocks) do
+        if type(block) ~= "table" then
+            return false, "invalid_block"
+        end
+        local x = block.x or block[1]
+        local y = block.y or block[2]
+        local z = block.z or block[3]
+        local material = block.material or block.name or block.block
+        local meta = block.meta or block.data
+        if type(meta) ~= "table" then
+            meta = {}
+        end
+        local ok, err = schema_utils.addBlock(schema, bounds, counts, x, y, z, material, meta)
+        if not ok then
+            return false, err
+        end
+        used = used + 1
+    end
+    if used == 0 then
+        return false, "empty_blocks"
+    end
+    return true
+end
+
+local function parseVoxelGrid(schema, bounds, counts, grid)
+    if type(grid) ~= "table" then
+        return false, "invalid_grid"
+    end
+    local used = 0
+    for xKey, xColumn in pairs(grid) do
+        local x = tonumber(xKey) or xKey
+        if type(x) ~= "number" then
+            return false, "invalid_coordinate"
+        end
+        if type(xColumn) ~= "table" then
+            return false, "invalid_grid"
+        end
+        for yKey, yColumn in pairs(xColumn) do
+            local y = tonumber(yKey) or yKey
+            if type(y) ~= "number" then
+                return false, "invalid_coordinate"
+            end
+            if type(yColumn) ~= "table" then
+                return false, "invalid_grid"
+            end
+            for zKey, entry in pairs(yColumn) do
+                local z = tonumber(zKey) or zKey
+                if type(z) ~= "number" then
+                    return false, "invalid_coordinate"
+                end
+                if entry ~= nil then
+                    local material
+                    local meta = {}
+                    if type(entry) == "string" then
+                        material = entry
+                    elseif type(entry) == "table" then
+                        material = entry.material or entry.name or entry.block
+                        meta = type(entry.meta) == "table" and entry.meta or {}
+                    else
+                        return false, "invalid_block"
+                    end
+                    if material and material ~= "" then
+                        local ok, err = schema_utils.addBlock(schema, bounds, counts, x, y, z, material, meta)
+                        if not ok then
+                            return false, err
+                        end
+                        used = used + 1
+                    end
+                end
+            end
+        end
+    end
+    if used == 0 then
+        return false, "empty_grid"
+    end
+    return true
+end
+
+local function summarise(bounds, counts, meta)
+    local materials = {}
+    for material, count in pairs(counts) do
+        materials[#materials + 1] = { material = material, count = count }
+    end
+    table.sort(materials, function(a, b)
+        if a.count == b.count then
+            return a.material < b.material
+        end
+        return a.count > b.count
+    end)
+    local total = 0
+    for _, entry in ipairs(materials) do
+        total = total + entry.count
+    end
+    return {
+        bounds = {
+            min = table_utils.shallowCopy(bounds.min),
+            max = table_utils.shallowCopy(bounds.max),
+        },
+        materials = materials,
+        totalBlocks = total,
+        meta = meta
+    }
+end
+
+local function buildCanonical(def, opts)
+    local schema = {}
+    local bounds = schema_utils.newBounds()
+    local counts = {}
+    local ok, err
+    if def.blocks then
+        ok, err = parseBlockList(schema, bounds, counts, def.blocks)
+    elseif def.layers then
+        ok, err = parseLayers(schema, bounds, counts, def, def.legend, opts)
+    elseif def.grid then
+        ok, err = parseVoxelGrid(schema, bounds, counts, def.grid)
+    else
+        return nil, "unknown_definition"
+    end
+    if not ok then
+        return nil, err
+    end
+    if bounds.min.x == math.huge then
+        return nil, "empty_schema"
+    end
+    return schema, summarise(bounds, counts, def.meta)
+end
+
+local function detectFormatFromExtension(path)
+    if type(path) ~= "string" then
+        return nil
+    end
+    local ext = path:match("%.([%w_%-]+)$")
+    if not ext then
+        return nil
+    end
+    ext = ext:lower()
+    if ext == "json" or ext == "schem" then
+        return "json"
+    end
+    if ext == "txt" or ext == "grid" then
+        return "grid"
+    end
+    if ext == "vox" or ext == "voxel" then
+        return "voxel"
+    end
+    return nil
+end
+
+local function detectFormatFromText(text)
+    if type(text) ~= "string" then
+        return nil
+    end
+    local trimmed = text:match("^%s*(.-)%s*$") or text
+    local firstChar = trimmed:sub(1, 1)
+    if firstChar == "{" or firstChar == "[" then
+        return "json"
+    end
+    return "grid"
+end
+
+local function parseLegendBlock(lines, index)
+    local legend = {}
+    local pos = index
+    while pos <= #lines do
+        local line = lines[pos]
+        if line == "" then
+            break
+        end
+        if line:match("^layer") then
+            break
+        end
+        local symbol, rest = line:match("^(%S+)%s*[:=]%s*(.+)$")
+        if not symbol then
+            symbol, rest = line:match("^(%S+)%s+(.+)$")
+        end
+        if symbol and rest then
+            rest = rest:gsub("^%s+", ""):gsub("%s+$", "")
+            local value
+            if rest:sub(1, 1) == "{" then
+                local parsed = json_utils.decodeJson(rest)
+                if parsed then
+                    value = parsed
+                else
+                    value = rest
+                end
+            else
+                value = rest
+            end
+            legend[symbol] = value
+        end
+        pos = pos + 1
+    end
+    return legend, pos
+end
+
+local function parseTextGridContent(text, opts)
+    local lines = {}
+    for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+        line = line:gsub("\r$", "")
+        lines[#lines + 1] = line
+    end
+    local legend = schema_utils.mergeLegend(opts and opts.legend or nil, nil)
+    local layers = {}
+    local current = {}
+    local currentY = nil
+    local lineIndex = 1
+    while lineIndex <= #lines do
+        local line = lines[lineIndex]
+        local trimmed = line:match("^%s*(.-)%s*$")
+        if trimmed == "" then
+            if #current > 0 then
+                layers[#layers + 1] = { rows = current, y = currentY or (#layers) }
+                current = {}
+                currentY = nil
+            end
+            lineIndex = lineIndex + 1
+        elseif trimmed:lower() == "legend:" then
+            local legendBlock, nextIndex = parseLegendBlock(lines, lineIndex + 1)
+            legend = schema_utils.mergeLegend(legend, legendBlock)
+            lineIndex = nextIndex
+        elseif trimmed:lower() == "meta:" then
+            local metaBlock, nextIndex = parseLegendBlock(lines, lineIndex + 1) -- Reuse parseLegendBlock as format is identical
+            if not opts then opts = {} end
+            opts.meta = schema_utils.mergeLegend(opts.meta, metaBlock)
+            lineIndex = nextIndex
+        elseif trimmed:match("^layer") then
+            if #current > 0 then
+                layers[#layers + 1] = { rows = current, y = currentY or (#layers) }
+                current = {}
+            end
+            local yValue = trimmed:match("layer%s*[:=]%s*(-?%d+)")
+            currentY = yValue and tonumber(yValue) or (#layers)
+            lineIndex = lineIndex + 1
+        else
+            current[#current + 1] = line
+            lineIndex = lineIndex + 1
+        end
+    end
+    if #current > 0 then
+        layers[#layers + 1] = { rows = current, y = currentY or (#layers) }
+    end
+    if not legend or next(legend) == nil then
+        return nil, "missing_legend"
+    end
+    if #layers == 0 then
+        return nil, "empty_layers"
+    end
+    return {
+        layers = layers,
+        legend = legend,
+    }
+end
+
+local function parseJsonContent(obj, opts)
+    if type(obj) ~= "table" then
+        return nil, "invalid_json_root"
+    end
+    local legend = schema_utils.mergeLegend(opts and opts.legend or nil, obj.legend or nil)
+    if obj.blocks then
+        return {
+            blocks = obj.blocks,
+            legend = legend,
+        }
+    end
+    if obj.layers then
+        return {
+            layers = obj.layers,
+            legend = legend,
+            baseX = obj.baseX,
+            baseY = obj.baseY,
+            baseZ = obj.baseZ,
+        }
+    end
+    if obj.grid or obj.voxels then
+        return {
+            grid = obj.grid or obj.voxels,
+            legend = legend,
+        }
+    end
+    if #obj > 0 then
+        return {
+            blocks = obj,
+            legend = legend,
+        }
+    end
+    return nil, "unrecognised_json"
+end
+
+local function assignToContext(ctx, schema, info)
+    if type(ctx) ~= "table" then
+        return
+    end
+    ctx.schema = schema
+    ctx.schemaInfo = info
+end
+
+local function ensureSpecTable(spec)
+    if type(spec) == "table" then
+        return table_utils.shallowCopy(spec)
+    end
+    if type(spec) == "string" then
+        return { source = spec }
+    end
+    return {}
+end
+
+function parser.parse(ctx, spec)
+    spec = ensureSpecTable(spec)
+    local format = spec.format
+    local text = spec.text
+    local data = spec.data
+    local path = spec.path or spec.sourcePath
+    local source = spec.source
+    if not format and spec.path then
+        format = detectFormatFromExtension(spec.path)
+    end
+    if not format and spec.formatHint then
+        format = spec.formatHint
+    end
+    if not text and not data then
+        if spec.textContent then
+            text = spec.textContent
+        elseif spec.raw then
+            text = spec.raw
+        elseif spec.sourceText then
+            text = spec.sourceText
+        end
+    end
+    if not path and type(source) == "string" and text == nil and data == nil then
+        local maybeFormat = detectFormatFromExtension(source)
+        if maybeFormat then
+            path = source
+            format = format or maybeFormat
+        else
+            text = source
+        end
+    end
+    if text == nil and path then
+        local contents, err = fs_utils.readFile(path)
+        if not contents then
+            return false, err or "read_failed"
+        end
+        text = contents
+        if not format then
+            format = detectFormatFromExtension(path) or detectFormatFromText(text)
+        end
+    end
+    if not format then
+        if data then
+            if data.layers then
+                format = "grid"
+            elseif data.blocks then
+                format = "json"
+            elseif data.grid or data.voxels then
+                format = "voxel"
+            end
+        elseif text then
+            format = detectFormatFromText(text)
+        end
+    end
+    if not format then
+        return false, "unknown_format"
+    end
+    local definition, err
+    if format == "json" then
+        if data then
+            definition, err = parseJsonContent(data, spec)
+        else
+            local obj, decodeErr = json_utils.decodeJson(text)
+            if not obj then
+                return false, decodeErr
+            end
+            definition, err = parseJsonContent(obj, spec)
+        end
+    elseif format == "grid" then
+        if data and (data.layers or data.rows) then
+            definition = {
+                layers = data.layers or { data.rows },
+                legend = schema_utils.mergeLegend(spec.legend or nil, data.legend or nil),
+                meta = spec.meta or data.meta
+            }
+        else
+            definition, err = parseTextGridContent(text, spec)
+            if definition and spec.meta then
+                 definition.meta = schema_utils.mergeLegend(definition.meta, spec.meta)
+            end
+        end
+    elseif format == "voxel" then
+        if data then
+            definition = {
+                grid = data.grid or data.voxels or data,
+            }
+        else
+            local obj, decodeErr = json_utils.decodeJson(text)
+            if not obj then
+                return false, decodeErr
+            end
+            if obj.grid or obj.voxels then
+                definition = {
+                    grid = obj.grid or obj.voxels,
+                }
+            else
+                definition, err = parseJsonContent(obj, spec)
+            end
+        end
+    else
+        return false, "unsupported_format"
+    end
+    if not definition then
+        return false, err or "invalid_definition"
+    end
+    if spec.legend then
+        definition.legend = schema_utils.mergeLegend(definition.legend, spec.legend)
+    end
+    local schema, metadata = buildCanonical(definition, spec)
+    if not schema then
+        return false, metadata or "parse_failed"
+    end
+    if type(metadata) ~= "table" then
+        metadata = { note = metadata }
+    end
+    metadata = metadata or {}
+    metadata.format = format
+    metadata.path = path
+    assignToContext(ctx, schema, metadata)
+    logger.log(ctx, "debug", string.format("Parsed schema with %d blocks", metadata.totalBlocks or 0))
+    return true, schema, metadata
+end
+
+function parser.parseFile(ctx, path, opts)
+    opts = opts or {}
+    opts.path = path
+    return parser.parse(ctx, opts)
+end
+
+function parser.parseText(ctx, text, opts)
+    opts = opts or {}
+    opts.text = text
+    opts.format = opts.format or "grid"
+    return parser.parse(ctx, opts)
+end
+
+function parser.parseJson(ctx, data, opts)
+    opts = opts or {}
+    opts.data = data
+    opts.format = "json"
+    return parser.parse(ctx, opts)
+end
+
+return parser
+]=])
+
+addEmbeddedFile("lib/lib_inventory.lua", [=[
+--[[
+Inventory library for CC:Tweaked turtles.
+Tracks slot contents, provides material lookup helpers, and wraps chest
+interactions used by higher-level states. All public functions accept a shared
+ctx table and follow the project convention of returning success booleans with
+optional error messages.
+--]]
+
+---@diagnostic disable: undefined-global
+
+local inventory = {}
+local movement = require("lib_movement")
+local logger = require("lib_logger")
+
+local SIDE_ACTIONS = {
+    forward = {
+        drop = turtle and turtle.drop or nil,
+        suck = turtle and turtle.suck or nil,
+    },
+    up = {
+        drop = turtle and turtle.dropUp or nil,
+        suck = turtle and turtle.suckUp or nil,
+    },
+    down = {
+        drop = turtle and turtle.dropDown or nil,
+        suck = turtle and turtle.suckDown or nil,
+    },
+}
+
+local PUSH_TARGETS = {
+    "front",
+    "back",
+    "left",
+    "right",
+    "top",
+    "bottom",
+    "north",
+    "south",
+    "east",
+    "west",
+    "up",
+    "down",
+}
+
+local OPPOSITE_FACING = {
+    north = "south",
+    south = "north",
+    east = "west",
+    west = "east",
+}
+
+local CONTAINER_KEYWORDS = {
+    "chest",
+    "barrel",
+    "shulker",
+    "crate",
+    "storage",
+    "inventory",
+}
+
+inventory.DEFAULT_TRASH = {
+    ["minecraft:air"] = true,
+    ["minecraft:stone"] = true,
+    ["minecraft:cobblestone"] = true,
+    ["minecraft:deepslate"] = true,
+    ["minecraft:cobbled_deepslate"] = true,
+    ["minecraft:tuff"] = true,
+    ["minecraft:diorite"] = true,
+    ["minecraft:granite"] = true,
+    ["minecraft:andesite"] = true,
+    ["minecraft:calcite"] = true,
+    ["minecraft:netherrack"] = true,
+    ["minecraft:end_stone"] = true,
+    ["minecraft:basalt"] = true,
+    ["minecraft:blackstone"] = true,
+    ["minecraft:gravel"] = true,
+    ["minecraft:dirt"] = true,
+    ["minecraft:coarse_dirt"] = true,
+    ["minecraft:rooted_dirt"] = true,
+    ["minecraft:mycelium"] = true,
+    ["minecraft:sand"] = true,
+    ["minecraft:red_sand"] = true,
+    ["minecraft:sandstone"] = true,
+    ["minecraft:red_sandstone"] = true,
+    ["minecraft:clay"] = true,
+    ["minecraft:dripstone_block"] = true,
+    ["minecraft:pointed_dripstone"] = true,
+    ["minecraft:bedrock"] = true,
+    ["minecraft:lava"] = true,
+    ["minecraft:water_bucket"] = true,
+}
+
+local function noop()
+end
+
+local function normalizeSide(value)
+    if type(value) ~= "string" then
+        return nil
+    end
+    local lower = value:lower()
+    if lower == "forward" or lower == "front" or lower == "fwd" then
+        return "forward"
+    end
+    if lower == "up" or lower == "top" or lower == "above" then
+        return "up"
+    end
+    if lower == "down" or lower == "bottom" or lower == "below" then
+        return "down"
+    end
+    return nil
+end
+
+local function resolveSide(ctx, opts)
+    if type(opts) == "string" then
+        local direct = normalizeSide(opts)
+        return direct or "forward"
+    end
+
+    local candidate
+    if type(opts) == "table" then
+        candidate = opts.side or opts.direction or opts.facing or opts.containerSide or opts.defaultSide
+        if not candidate and type(opts.location) == "string" then
+            candidate = opts.location
+        end
+    end
+
+    if not candidate and type(ctx) == "table" then
+        local cfg = ctx.config
+        if type(cfg) == "table" then
+            candidate = cfg.inventorySide or cfg.materialSide or cfg.supplySide or cfg.defaultInventorySide
+        end
+        if not candidate and type(ctx.inventoryState) == "table" then
+            candidate = ctx.inventoryState.defaultSide
+        end
+    end
+
+    local normalised = normalizeSide(candidate)
+    if normalised then
+        return normalised
+    end
+
+    return "forward"
+end
+
+local function tableCount(tbl)
+    if type(tbl) ~= "table" then
+        return 0
+    end
+    local count = 0
+    for _ in pairs(tbl) do
+        count = count + 1
+    end
+    return count
+end
+
+local function copyArray(list)
+    if type(list) ~= "table" then
+        return {}
+    end
+    local result = {}
+    for index = 1, #list do
+        result[index] = list[index]
+    end
+    return result
+end
+
+local function copySummary(summary)
+    if type(summary) ~= "table" then
+        return {}
+    end
+    local result = {}
+    for key, value in pairs(summary) do
+        result[key] = value
+    end
+    return result
+end
+
+local function copySlots(slots)
+    if type(slots) ~= "table" then
+        return {}
+    end
+    local result = {}
+    for slot, info in pairs(slots) do
+        if type(info) == "table" then
+            result[slot] = {
+                slot = info.slot,
+                count = info.count,
+                name = info.name,
+                detail = info.detail,
+            }
+        else
+            result[slot] = info
+        end
+    end
+    return result
+end
+
+local function hasContainerTag(tags)
+    if type(tags) ~= "table" then
+        return false
+    end
+    for key, value in pairs(tags) do
+        if value and type(key) == "string" then
+            local lower = key:lower()
+            for _, keyword in ipairs(CONTAINER_KEYWORDS) do
+                if lower:find(keyword, 1, true) then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+local function isContainerBlock(name, tags)
+    if type(name) ~= "string" then
+        return false
+    end
+    local lower = name:lower()
+    for _, keyword in ipairs(CONTAINER_KEYWORDS) do
+        if lower:find(keyword, 1, true) then
+            return true
+        end
+    end
+    return hasContainerTag(tags)
+end
+
+local function inspectForwardForContainer()
+    if not turtle or type(turtle.inspect) ~= "function" then
+        return false
+    end
+    local ok, data = turtle.inspect()
+    if not ok or type(data) ~= "table" then
+        return false
+    end
+    if isContainerBlock(data.name, data.tags) then
+        return true, data
+    end
+    return false
+end
+
+local function inspectUpForContainer()
+    if not turtle or type(turtle.inspectUp) ~= "function" then
+        return false
+    end
+    local ok, data = turtle.inspectUp()
+    if not ok or type(data) ~= "table" then
+        return false
+    end
+    if isContainerBlock(data.name, data.tags) then
+        return true, data
+    end
+    return false
+end
+
+local function inspectDownForContainer()
+    if not turtle or type(turtle.inspectDown) ~= "function" then
+        return false
+    end
+    local ok, data = turtle.inspectDown()
+    if not ok or type(data) ~= "table" then
+        return false
+    end
+    if isContainerBlock(data.name, data.tags) then
+        return true, data
+    end
+    return false
+end
+
+local function shouldSearchAllSides(opts)
+    if type(opts) ~= "table" then
+        return true
+    end
+    if opts.searchAllSides == false then
+        return false
+    end
+    return true
+end
+
+local function peripheralSideForDirection(side)
+    if side == "forward" or side == "front" then
+        return "front"
+    end
+    if side == "up" or side == "top" then
+        return "top"
+    end
+    if side == "down" or side == "bottom" then
+        return "bottom"
+    end
+    return side
+end
+
+local function computePrimaryPushDirection(ctx, periphSide)
+    if periphSide == "front" then
+        local facing = movement.getFacing(ctx)
+        if facing then
+            return OPPOSITE_FACING[facing]
+        end
+    elseif periphSide == "top" then
+        return "down"
+    elseif periphSide == "bottom" then
+        return "up"
+    end
+    return nil
+end
+
+local function tryPushItems(chest, periphSide, slot, amount, targetSlot, primaryDirection)
+    if type(chest) ~= "table" or type(chest.pushItems) ~= "function" then
+        return 0
+    end
+
+    local tried = {}
+
+    local function attempt(direction)
+        if not direction or tried[direction] then
+            return 0
+        end
+        tried[direction] = true
+        local ok, moved
+        if targetSlot then
+            ok, moved = pcall(chest.pushItems, direction, slot, amount, targetSlot)
+        else
+            ok, moved = pcall(chest.pushItems, direction, slot, amount)
+        end
+        if ok and type(moved) == "number" and moved > 0 then
+            return moved
+        end
+        return 0
+    end
+
+    local moved = attempt(primaryDirection)
+    if moved > 0 then
+        return moved
+    end
+
+    for _, direction in ipairs(PUSH_TARGETS) do
+        moved = attempt(direction)
+        if moved > 0 then
+            return moved
+        end
+    end
+
+    return 0
+end
+
+local function collectStacks(chest, material)
+    local stacks = {}
+    if type(chest) ~= "table" or not material then
+        return stacks
+    end
+
+    if type(chest.list) == "function" then
+        local ok, list = pcall(chest.list)
+        if ok and type(list) == "table" then
+            for slot, stack in pairs(list) do
+                local numericSlot = tonumber(slot)
+                if numericSlot and type(stack) == "table" then
+                    local name = stack.name or stack.id
+                    local count = stack.count or stack.qty or stack.quantity or 0
+                    if name == material and type(count) == "number" and count > 0 then
+                        stacks[#stacks + 1] = { slot = numericSlot, count = count }
+                    end
+                end
+            end
+        end
+    end
+
+    if #stacks == 0 and type(chest.size) == "function" and type(chest.getItemDetail) == "function" then
+        local okSize, size = pcall(chest.size)
+        if okSize and type(size) == "number" and size > 0 then
+            for slot = 1, size do
+                local okDetail, detail = pcall(chest.getItemDetail, slot)
+                if okDetail and type(detail) == "table" then
+                    local name = detail.name
+                    local count = detail.count or detail.qty or detail.quantity or 0
+                    if name == material and type(count) == "number" and count > 0 then
+                        stacks[#stacks + 1] = { slot = slot, count = count }
+                    end
+                end
+            end
+        end
+    end
+
+    table.sort(stacks, function(a, b)
+        return a.slot < b.slot
+    end)
+
+    return stacks
+end
+
+local function newContainerManifest()
+    return {
+        totals = {},
+        slots = {},
+        totalItems = 0,
+        orderedSlots = {},
+        size = nil,
+        metadata = nil,
+    }
+end
+
+local function addManifestEntry(manifest, slot, stack)
+    if type(manifest) ~= "table" or type(slot) ~= "number" then
+        return
+    end
+    if type(stack) ~= "table" then
+        return
+    end
+    local name = stack.name or stack.id
+    local count = stack.count or stack.qty or stack.quantity or stack.Count
+    if type(name) ~= "string" or type(count) ~= "number" or count <= 0 then
+        return
+    end
+    manifest.slots[slot] = {
+        name = name,
+        count = count,
+        tags = stack.tags,
+        nbt = stack.nbt,
+        displayName = stack.displayName or stack.label or stack.Name,
+        detail = stack,
+    }
+    manifest.totals[name] = (manifest.totals[name] or 0) + count
+    manifest.totalItems = manifest.totalItems + count
+end
+
+local function populateManifestSlots(manifest)
+    local ordered = {}
+    for slot in pairs(manifest.slots) do
+        ordered[#ordered + 1] = slot
+    end
+    table.sort(ordered)
+    manifest.orderedSlots = ordered
+
+    local materials = {}
+    for material in pairs(manifest.totals) do
+        materials[#materials + 1] = material
+    end
+    table.sort(materials)
+    manifest.materials = materials
+end
+
+local function attachMetadata(manifest, periphSide)
+    if not peripheral then
+        return
+    end
+    local metadata = manifest.metadata or {}
+    if type(peripheral.call) == "function" then
+        local okMeta, meta = pcall(peripheral.call, periphSide, "getMetadata")
+        if okMeta and type(meta) == "table" then
+            metadata.name = meta.name or metadata.name
+            metadata.displayName = meta.displayName or meta.label or metadata.displayName
+            metadata.tags = meta.tags or metadata.tags
+        end
+    end
+    if type(peripheral.getType) == "function" then
+        local okType, perType = pcall(peripheral.getType, periphSide)
+        if okType then
+            if type(perType) == "string" then
+                metadata.peripheralType = perType
+            elseif type(perType) == "table" and type(perType[1]) == "string" then
+                metadata.peripheralType = perType[1]
+            end
+        end
+    end
+    if next(metadata) ~= nil then
+        manifest.metadata = metadata
+    end
+end
+
+local function readContainerManifest(periphSide)
+    if not peripheral or type(peripheral.wrap) ~= "function" then
+        return nil, "peripheral_api_unavailable"
+    end
+
+    local wrapOk, chest = pcall(peripheral.wrap, periphSide)
+    if not wrapOk or type(chest) ~= "table" then
+        return nil, "wrap_failed"
+    end
+
+    local manifest = newContainerManifest()
+
+    if type(chest.list) == "function" then
+        local okList, list = pcall(chest.list)
+        if okList and type(list) == "table" then
+            for slot, stack in pairs(list) do
+                local numericSlot = tonumber(slot)
+                if numericSlot then
+                    addManifestEntry(manifest, numericSlot, stack)
+                end
+            end
+        end
+    end
+
+    local haveSlots = next(manifest.slots) ~= nil
+    if type(chest.size) == "function" then
+        local okSize, size = pcall(chest.size)
+        if okSize and type(size) == "number" and size >= 0 then
+            manifest.size = size
+            if not haveSlots and type(chest.getItemDetail) == "function" then
+                for slot = 1, size do
+                    local okDetail, detail = pcall(chest.getItemDetail, slot)
+                    if okDetail then
+                        addManifestEntry(manifest, slot, detail)
+                    end
+                end
+            end
+        end
+    end
+
+    populateManifestSlots(manifest)
+    attachMetadata(manifest, periphSide)
+
+    return manifest
+end
+
+local function extractFromContainer(ctx, periphSide, material, amount, targetSlot)
+    if not material or not peripheral or type(peripheral.wrap) ~= "function" then
+        return 0
+    end
+
+    local wrapOk, chest = pcall(peripheral.wrap, periphSide)
+    if not wrapOk or type(chest) ~= "table" then
+        return 0
+    end
+    if type(chest.pushItems) ~= "function" then
+        return 0
+    end
+
+    local desired = amount
+    if not desired or desired <= 0 then
+        desired = 64
+    end
+
+    local stacks = collectStacks(chest, material)
+    if #stacks == 0 then
+        return 0
+    end
+
+    local remaining = desired
+    local transferred = 0
+    local primaryDirection = computePrimaryPushDirection(ctx, periphSide)
+
+    for _, stack in ipairs(stacks) do
+        local available = stack.count or 0
+        while remaining > 0 and available > 0 do
+            local toMove = math.min(available, remaining, 64)
+            local moved = tryPushItems(chest, periphSide, stack.slot, toMove, targetSlot, primaryDirection)
+            if moved <= 0 then
+                break
+            end
+            transferred = transferred + moved
+            remaining = remaining - moved
+            available = available - moved
+        end
+        if remaining <= 0 then
+            break
+        end
+    end
+
+    return transferred
+end
+
+local function ensureChestAhead(ctx, opts)
+    local frontOk, frontDetail = inspectForwardForContainer()
+    if frontOk then
+        return true, noop, { side = "forward", detail = frontDetail }
+    end
+
+    if not shouldSearchAllSides(opts) then
+        return false, nil, nil, "container_not_found"
+    end
+    if not turtle then
+        return false, nil, nil, "turtle_api_unavailable"
+    end
+
+    movement.ensureState(ctx)
+    local startFacing = movement.getFacing(ctx)
+
+    local function restoreFacing()
+        if not startFacing then
+            return
+        end
+        if movement.getFacing(ctx) ~= startFacing then
+            local okFace, faceErr = movement.faceDirection(ctx, startFacing)
+            if not okFace and faceErr then
+                logger.log(ctx, "warn", "Failed to restore facing: " .. tostring(faceErr))
+            end
+        end
+    end
+
+    local function makeRestore()
+        if not startFacing then
+            return noop
+        end
+        return function()
+            restoreFacing()
+        end
+    end
+
+    -- Check left
+    local ok, err = movement.turnLeft(ctx)
+    if not ok then
+        restoreFacing()
+        return false, nil, nil, err or "turn_failed"
+    end
+    local leftOk, leftDetail = inspectForwardForContainer()
+    if leftOk then
+        logger.log(ctx, "debug", "Found container on left side; using that")
+        return true, makeRestore(), { side = "left", detail = leftDetail }
+    end
+    ok, err = movement.turnRight(ctx)
+    if not ok then
+        restoreFacing()
+        return false, nil, nil, err or "turn_failed"
+    end
+
+    -- Check right
+    ok, err = movement.turnRight(ctx)
+    if not ok then
+        restoreFacing()
+        return false, nil, nil, err or "turn_failed"
+    end
+    local rightOk, rightDetail = inspectForwardForContainer()
+    if rightOk then
+        logger.log(ctx, "debug", "Found container on right side; using that")
+        return true, makeRestore(), { side = "right", detail = rightDetail }
+    end
+    ok, err = movement.turnLeft(ctx)
+    if not ok then
+        restoreFacing()
+        return false, nil, nil, err or "turn_failed"
+    end
+
+    -- Check behind
+    ok, err = movement.turnRight(ctx)
+    if not ok then
+        restoreFacing()
+        return false, nil, nil, err or "turn_failed"
+    end
+    ok, err = movement.turnRight(ctx)
+    if not ok then
+        restoreFacing()
+        return false, nil, nil, err or "turn_failed"
+    end
+    local backOk, backDetail = inspectForwardForContainer()
+    if backOk then
+        logger.log(ctx, "debug", "Found container behind; using that")
+        return true, makeRestore(), { side = "back", detail = backDetail }
+    end
+    ok, err = movement.turnLeft(ctx)
+    if not ok then
+        restoreFacing()
+        return false, nil, nil, err or "turn_failed"
+    end
+    ok, err = movement.turnLeft(ctx)
+    if not ok then
+        restoreFacing()
+        return false, nil, nil, err or "turn_failed"
+    end
+
+    restoreFacing()
+    return false, nil, nil, "container_not_found"
+end
+
+local function ensureInventoryState(ctx)
+    if type(ctx) ~= "table" then
+        error("inventory library requires a context table", 2)
+    end
+
+    if type(ctx.inventoryState) ~= "table" then
+        ctx.inventoryState = ctx.inventory or {}
+    end
+    ctx.inventory = ctx.inventoryState
+
+    local state = ctx.inventoryState
+    state.scanVersion = state.scanVersion or 0
+    state.slots = state.slots or {}
+    state.materialSlots = state.materialSlots or {}
+    state.materialTotals = state.materialTotals or {}
+    state.emptySlots = state.emptySlots or {}
+    state.totalItems = state.totalItems or 0
+    if state.dirty == nil then
+        state.dirty = true
+    end
+    return state
+end
+
+function inventory.ensureState(ctx)
+    return ensureInventoryState(ctx)
+end
+
+function inventory.invalidate(ctx)
+    local state = ensureInventoryState(ctx)
+    state.dirty = true
+    return true
+end
+
+local function fetchSlotDetail(slot)
+    if not turtle then
+        return { slot = slot, count = 0 }
+    end
+    local detail
+    if turtle.getItemDetail then
+        detail = turtle.getItemDetail(slot)
+    end
+    local count
+    if turtle.getItemCount then
+        count = turtle.getItemCount(slot)
+    elseif detail then
+        count = detail.count
+    end
+    count = count or 0
+    local name = detail and detail.name or nil
+    return {
+        slot = slot,
+        count = count,
+        name = name,
+        detail = detail,
+    }
+end
+
+function inventory.scan(ctx, opts)
+    local state = ensureInventoryState(ctx)
+    if not turtle then
+        state.slots = {}
+        state.materialSlots = {}
+        state.materialTotals = {}
+        state.emptySlots = {}
+        state.totalItems = 0
+        state.dirty = false
+        state.scanVersion = state.scanVersion + 1
+        return false, "turtle API unavailable"
+    end
+
+    local slots = {}
+    local materialSlots = {}
+    local materialTotals = {}
+    local emptySlots = {}
+    local totalItems = 0
+
+    for slot = 1, 16 do
+        local info = fetchSlotDetail(slot)
+        slots[slot] = info
+        if info.count > 0 and info.name then
+            local list = materialSlots[info.name]
+            if not list then
+                list = {}
+                materialSlots[info.name] = list
+            end
+            list[#list + 1] = slot
+            materialTotals[info.name] = (materialTotals[info.name] or 0) + info.count
+            totalItems = totalItems + info.count
+        else
+            emptySlots[#emptySlots + 1] = slot
+        end
+    end
+
+    state.slots = slots
+    state.materialSlots = materialSlots
+    state.materialTotals = materialTotals
+    state.emptySlots = emptySlots
+    state.totalItems = totalItems
+    if os and type(os.clock) == "function" then
+        state.lastScanClock = os.clock()
+    else
+        state.lastScanClock = nil
+    end
+    local epochFn = os and os["epoch"]
+    if type(epochFn) == "function" then
+        state.lastScanEpoch = epochFn("utc")
+    else
+        state.lastScanEpoch = nil
+    end
+    state.scanVersion = state.scanVersion + 1
+    state.dirty = false
+
+    logger.log(ctx, "debug", string.format("Inventory scan complete: %d items across %d materials", totalItems, tableCount(materialSlots)))
+    return true
+end
+
+local function ensureScanned(ctx, opts)
+    local state = ensureInventoryState(ctx)
+    if state.dirty or (type(opts) == "table" and opts.force) or not state.slots or next(state.slots) == nil then
+        local ok, err = inventory.scan(ctx, opts)
+        if not ok and err then
+            return nil, err
+        end
+    end
+    return state
+end
+
+function inventory.getMaterialSlots(ctx, material, opts)
+    if type(material) ~= "string" or material == "" then
+        return nil, "invalid_material"
+    end
+    local state, err = ensureScanned(ctx, opts)
+    if not state then
+        return nil, err
+    end
+    local slots = state.materialSlots[material]
+    if not slots then
+        return {}
+    end
+    return copyArray(slots)
+end
+
+function inventory.getSlotForMaterial(ctx, material, opts)
+    local slots, err = inventory.getMaterialSlots(ctx, material, opts)
+    if slots == nil then
+        return nil, err
+    end
+    if slots[1] then
+        return slots[1]
+    end
+    return nil, "missing_material"
+end
+
+function inventory.countMaterial(ctx, material, opts)
+    if type(material) ~= "string" or material == "" then
+        return 0, "invalid_material"
+    end
+    local state, err = ensureScanned(ctx, opts)
+    if not state then
+        return 0, err
+    end
+    return state.materialTotals[material] or 0
+end
+
+function inventory.hasMaterial(ctx, material, amount, opts)
+    amount = amount or 1
+    if amount <= 0 then
+        return true
+    end
+    local total, err = inventory.countMaterial(ctx, material, opts)
+    if err then
+        return false, err
+    end
+    return total >= amount
+end
+
+function inventory.findEmptySlot(ctx, opts)
+    local state, err = ensureScanned(ctx, opts)
+    if not state then
+        return nil, err
+    end
+    local empty = state.emptySlots
+    if empty and empty[1] then
+        return empty[1]
+    end
+    return nil, "no_empty_slot"
+end
+
+function inventory.isEmpty(ctx, opts)
+    local state, err = ensureScanned(ctx, opts)
+    if not state then
+        return false, err
+    end
+    return state.totalItems == 0
+end
+
+function inventory.totalItemCount(ctx, opts)
+    local state, err = ensureScanned(ctx, opts)
+    if not state then
+        return 0, err
+    end
+    return state.totalItems
+end
+
+function inventory.getTotals(ctx, opts)
+    local state, err = ensureScanned(ctx, opts)
+    if not state then
+        return nil, err
+    end
+    return copySummary(state.materialTotals)
+end
+
+function inventory.snapshot(ctx, opts)
+    local state, err = ensureScanned(ctx, opts)
+    if not state then
+        return nil, err
+    end
+    return {
+        slots = copySlots(state.slots),
+        totals = copySummary(state.materialTotals),
+        emptySlots = copyArray(state.emptySlots),
+        totalItems = state.totalItems,
+        scanVersion = state.scanVersion,
+        lastScanClock = state.lastScanClock,
+        lastScanEpoch = state.lastScanEpoch,
+    }
+end
+
+function inventory.detectContainer(ctx, opts)
+    opts = opts or {}
+    local side = resolveSide(ctx, opts)
+    if side == "forward" then
+        local chestOk, restoreFn, info, err = ensureChestAhead(ctx, opts)
+        if not chestOk then
+            return nil, err or "container_not_found"
+        end
+        if type(restoreFn) == "function" then
+            restoreFn()
+        end
+        local result = info or { side = "forward" }
+        result.peripheralSide = "front"
+        return result
+    elseif side == "up" then
+        local okUp, detail = inspectUpForContainer()
+        if okUp then
+            return { side = "up", detail = detail, peripheralSide = "top" }
+        end
+        return nil, "container_not_found"
+    elseif side == "down" then
+        local okDown, detail = inspectDownForContainer()
+        if okDown then
+            return { side = "down", detail = detail, peripheralSide = "bottom" }
+        end
+        return nil, "container_not_found"
+    end
+    return nil, "unsupported_side"
+end
+
+function inventory.getContainerManifest(ctx, opts)
+    if not turtle then
+        return nil, "turtle API unavailable"
+    end
+    opts = opts or {}
+    local side = resolveSide(ctx, opts)
+    local periphSide = peripheralSideForDirection(side)
+    local restoreFacing = noop
+    local info
+
+    if side == "forward" then
+        local chestOk, restoreFn, chestInfo, err = ensureChestAhead(ctx, opts)
+        if not chestOk then
+            return nil, err or "container_not_found"
+        end
+        if type(restoreFn) == "function" then
+            restoreFacing = restoreFn
+        end
+        info = chestInfo or { side = "forward" }
+        periphSide = "front"
+    elseif side == "up" then
+        local okUp, detail = inspectUpForContainer()
+        if not okUp then
+            return nil, "container_not_found"
+        end
+        info = { side = "up", detail = detail }
+        periphSide = "top"
+    elseif side == "down" then
+        local okDown, detail = inspectDownForContainer()
+        if not okDown then
+            return nil, "container_not_found"
+        end
+        info = { side = "down", detail = detail }
+        periphSide = "bottom"
+    else
+        return nil, "unsupported_side"
+    end
+
+    local manifest, manifestErr = readContainerManifest(periphSide)
+    restoreFacing()
+    if not manifest then
+        return nil, manifestErr or "wrap_failed"
+    end
+
+    manifest.peripheralSide = periphSide
+    if info then
+        manifest.relativeSide = info.side
+        manifest.inspectDetail = info.detail
+        if not manifest.metadata and info.detail then
+            manifest.metadata = {
+                name = info.detail.name,
+                displayName = info.detail.displayName or info.detail.label,
+                tags = info.detail.tags,
+            }
+        elseif manifest.metadata and info.detail then
+            manifest.metadata.name = manifest.metadata.name or info.detail.name
+            manifest.metadata.displayName = manifest.metadata.displayName or info.detail.displayName or info.detail.label
+            manifest.metadata.tags = manifest.metadata.tags or info.detail.tags
+        end
+    end
+
+    return manifest
+end
+
+function inventory.selectMaterial(ctx, material, opts)
+    if not turtle then
+        return false, "turtle API unavailable"
+    end
+    local slot, err = inventory.getSlotForMaterial(ctx, material, opts)
+    if not slot then
+        return false, err or "missing_material"
+    end
+    if turtle.select(slot) then
+        return true
+    end
+    return false, "select_failed"
+end
+
+local function selectSlot(slot)
+    if not turtle then
+        return false
+    end
+    if turtle.getSelectedSlot() == slot then
+        return true
+    end
+    return turtle.select(slot)
+end
+
+function inventory.dropMaterial(ctx, material, amount, opts)
+    opts = opts or {}
+    local side = resolveSide(ctx, opts)
+    local periphSide = peripheralSideForDirection(side)
+    local slots = inventory.getMaterialSlots(ctx, material, opts)
+    if not slots or #slots == 0 then
+        return 0, "material_not_found"
+    end
+
+    local dropped = 0
+    local remaining = amount or 64
+    local action = SIDE_ACTIONS[side] and SIDE_ACTIONS[side].drop
+
+    if not action then
+        return 0, "invalid_side"
+    end
+
+    for _, slotInfo in ipairs(slots) do
+        if remaining <= 0 then
+            break
+        end
+        local count = slotInfo.count
+        local toDrop = math.min(count, remaining)
+        if selectSlot(slotInfo.slot) then
+            if action(toDrop) then
+                dropped = dropped + toDrop
+                remaining = remaining - toDrop
+                inventory.invalidate(ctx)
+            else
+                return dropped, "drop_failed"
+            end
+        else
+            return dropped, "select_failed"
+        end
+    end
+    return dropped
+end
+
+function inventory.suckMaterial(ctx, material, amount, opts)
+    opts = opts or {}
+    local side = resolveSide(ctx, opts)
+    local periphSide = peripheralSideForDirection(side)
+    
+    -- If specific material requested, try to use peripheral push if available
+    if material and peripheral.isPresent(periphSide) then
+        local extracted = extractFromContainer(ctx, periphSide, material, amount)
+        if extracted > 0 then
+            inventory.invalidate(ctx)
+            return extracted
+        end
+    end
+
+    -- Fallback to suck
+    local action = SIDE_ACTIONS[side] and SIDE_ACTIONS[side].suck
+    if not action then
+        return 0, "invalid_side"
+    end
+
+    if action(amount) then
+        inventory.invalidate(ctx)
+        -- We don't know exactly what we sucked or how much without scanning, 
+        -- but we know the action succeeded.
+        -- To be accurate, we should scan and check difference, but for now return success.
+        return amount or 1 
+    end
+    return 0, "suck_failed"
+end
+
+function inventory.condense(ctx, opts)
+    local state, err = ensureScanned(ctx, opts)
+    if not state then
+        return false, err
+    end
+
+    local moves = 0
+    local slots = state.slots
+    
+    -- Simple condense: find partial stacks and merge them
+    -- This is O(N^2) over 16 slots, which is fine.
+    for i = 1, 15 do
+        local slotI = slots[i]
+        if slotI.count > 0 and slotI.count < 64 and slotI.name then
+            for j = i + 1, 16 do
+                local slotJ = slots[j]
+                if slotJ.count > 0 and slotJ.name == slotI.name then
+                    -- Can merge J into I
+                    local space = 64 - slotI.count
+                    local toMove = math.min(space, slotJ.count)
+                    if toMove > 0 then
+                        if selectSlot(j) then
+                            if turtle.transferTo(i, toMove) then
+                                slotI.count = slotI.count + toMove
+                                slotJ.count = slotJ.count - toMove
+                                moves = moves + 1
+                                inventory.invalidate(ctx)
+                            end
+                        end
+                    end
+                    if slotI.count >= 64 then
+                        break
+                    end
+                end
+            end
+        end
+    end
+    
+    return true, moves
+end
+
+function inventory.trash(ctx, opts)
+    opts = opts or {}
+    local trashList = opts.trash or inventory.DEFAULT_TRASH
+    local state, err = ensureScanned(ctx, opts)
+    if not state then
+        return false, err
+    end
+
+    local trashed = 0
+    for i = 1, 16 do
+        local slot = state.slots[i]
+        if slot.count > 0 and slot.name and trashList[slot.name] then
+            if selectSlot(i) then
+                if turtle.drop() then -- Drop forward? or down? Usually trash is dropped wherever.
+                    trashed = trashed + slot.count
+                    inventory.invalidate(ctx)
+                elseif turtle.dropDown() then
+                     trashed = trashed + slot.count
+                     inventory.invalidate(ctx)
+                elseif turtle.dropUp() then
+                     trashed = trashed + slot.count
+                     inventory.invalidate(ctx)
+                end
+            end
+        end
+    end
+    return true, trashed
+end
+
+function inventory.restock(ctx, requirements, opts)
+    -- requirements: { ["minecraft:log"] = 16, ... }
+    opts = opts or {}
+    local missing = {}
+    local state = ensureScanned(ctx, opts)
+    
+    for mat, count in pairs(requirements) do
+        local current = inventory.countMaterial(ctx, mat)
+        if current < count then
+            missing[mat] = count - current
+        end
+    end
+    
+    if next(missing) == nil then
+        return true
+    end
+    
+    -- Try to pull from connected inventories
+    -- This logic needs to be robust.
+    -- For now, simple check forward/up/down
+    
+    local sides = {"front", "top", "bottom"}
+    local pulledAny = false
+    
+    for _, side in ipairs(sides) do
+        if peripheral.isPresent(side) then
+            for mat, amount in pairs(missing) do
+                if amount > 0 then
+                    local pulled = extractFromContainer(ctx, side, mat, amount)
+                    if pulled > 0 then
+                        missing[mat] = missing[mat] - pulled
+                        pulledAny = true
+                        inventory.invalidate(ctx)
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Check if satisfied
+    for mat, amount in pairs(missing) do
+        if amount > 0 then
+            return false, "missing_resources", missing
+        end
+    end
+    
+    return true
+end
+
+function inventory.dump(ctx, opts)
+    -- Dump everything except kept items
+    opts = opts or {}
+    local keep = opts.keep or {}
+    local side = resolveSide(ctx, opts)
+    local action = SIDE_ACTIONS[side] and SIDE_ACTIONS[side].drop
+    if not action then return false, "invalid_side" end
+    
+    local state = ensureScanned(ctx, opts)
+    local dumped = 0
+    
+    for i = 1, 16 do
+        local slot = state.slots[i]
+        if slot.count > 0 and slot.name then
+            local keepCount = keep[slot.name] or 0
+            if keepCount < slot.count then
+                -- Need to dump some
+                local toDump = slot.count - keepCount
+                if selectSlot(i) then
+                    if action(toDump) then
+                        dumped = dumped + toDump
+                        inventory.invalidate(ctx)
+                    end
+                end
+            end
+        end
+    end
+    return true, dumped
+end
+
+function inventory.hasSpace(ctx, opts)
+    local state = ensureScanned(ctx, opts)
+    if not state then return false end
+    if #state.emptySlots > 0 then return true end
+    -- Check if any stack is not full?
+    -- Actually, usually we just care about empty slots for new items
+    return false
+end
+
+function inventory.compact(ctx)
+    return inventory.condense(ctx)
+end
+
+function inventory.transfer(ctx, toSlot, fromSlot, amount)
+    if not turtle then return false end
+    if fromSlot == toSlot then return true end
+    if selectSlot(fromSlot) then
+        if amount then
+            return turtle.transferTo(toSlot, amount)
+        else
+            return turtle.transferTo(toSlot)
+        end
+    end
+    return false
+end
+
+function inventory.equip(ctx, side, material)
+    -- side: "left" or "right"
+    if not turtle then return false end
+    local slot, err = inventory.getSlotForMaterial(ctx, material)
+    if not slot then return false, err end
+    
+    if selectSlot(slot.slot) then
+        if side == "left" then
+            return turtle.equipLeft()
+        else
+            return turtle.equipRight()
+        end
+    end
+    return false
+end
+
+function inventory.pullMaterial(ctx, material, amount, opts)
+    -- High level pull: find container with material and pull it
+    -- This relies on ensureChestAhead or similar logic being available/configured
+    -- For now, just a wrapper around extractFromContainer if side is known
+    opts = opts or {}
+    local side = resolveSide(ctx, opts)
+    local periphSide = peripheralSideForDirection(side)
+    
+    if peripheral.isPresent(periphSide) then
+        local count = extractFromContainer(ctx, periphSide, material, amount)
+        if count > 0 then
+            inventory.invalidate(ctx)
+            return true, count
+        end
+    end
+    return false, "not_found"
+end
+
+function inventory.pushMaterial(ctx, material, amount, opts)
+    return inventory.dropMaterial(ctx, material, amount, opts)
+end
+
+function inventory.getSlotDetail(ctx, slot)
+    local state = ensureScanned(ctx)
+    if state and state.slots then
+        return state.slots[slot]
+    end
+    return fetchSlotDetail(slot)
+end
+
+function inventory.refresh(ctx)
+    return inventory.scan(ctx, { force = true })
+end
+
+function inventory.checkRequirements(ctx, requirements)
+    local missing = {}
+    local hasMissing = false
+    for mat, count in pairs(requirements) do
+        local avail = inventory.countMaterial(ctx, mat)
+        if avail < count then
+            missing[mat] = count - avail
+            hasMissing = true
+        end
+    end
+    if hasMissing then
+        return false, missing
+    end
+    return true
+end
+
+function inventory.consume(ctx, material, amount)
+    -- "Consume" means ensure we have it, and then assume it's used (e.g. for building)
+    -- This doesn't actually remove it from inventory, just checks presence.
+    -- The actual removal happens when turtle.place() is called.
+    return inventory.hasMaterial(ctx, material, amount)
+end
+
+function inventory.ensureSelected(ctx, material)
+    return inventory.selectMaterial(ctx, material)
+end
+
+function inventory.findItem(ctx, material)
+    local slot = inventory.getSlotForMaterial(ctx, material)
+    if slot then return slot.slot end
+    return nil
+end
+
+-- Advanced inventory management
+
+function inventory.sort(ctx)
+    -- Sort inventory by name
+    local state = ensureScanned(ctx)
+    local slots = copySlots(state.slots)
+    local sorted = {}
+    for i=1,16 do sorted[i] = slots[i] end
+    
+    table.sort(sorted, function(a,b)
+        if a.name and not b.name then return true end
+        if not a.name and b.name then return false end
+        if not a.name and not b.name then return false end
+        if a.name == b.name then return a.count > b.count end
+        return a.name < b.name
+    end)
+    
+    -- Apply sort... this is complex to execute efficiently.
+    -- Skipping for now as it's not critical.
+    return false, "not_implemented"
+end
+
+function inventory.dumpTrash(ctx)
+    return inventory.trash(ctx)
+end
+
+function inventory.getInventory(ctx)
+    local state = ensureScanned(ctx)
+    return state.slots
+end
+
+function inventory.inspect(ctx, slot)
+    return inventory.getSlotDetail(ctx, slot)
+end
+
+function inventory.getItemCount(ctx, slot)
+    local detail = inventory.getSlotDetail(ctx, slot)
+    return detail and detail.count or 0
+end
+
+function inventory.getItemName(ctx, slot)
+    local detail = inventory.getSlotDetail(ctx, slot)
+    return detail and detail.name
+end
+
+function inventory.getFreeSpace(ctx, slot)
+    local detail = inventory.getSlotDetail(ctx, slot)
+    if not detail or not detail.name then return 64 end
+    local limit = 64 -- Assume 64 for now, could check maxStackSize if available
+    return limit - detail.count
+end
+
+function inventory.isFull(ctx)
+    local state = ensureScanned(ctx)
+    return #state.emptySlots == 0
+end
+
+function inventory.merge(ctx)
+    return inventory.condense(ctx)
+end
+
+-- Helper to check if we have enough fuel items
+function inventory.hasFuel(ctx, threshold)
+    -- This requires knowing which items are fuel.
+    -- We can check turtle.refuel(0) on items?
+    -- Or use a known fuel list.
+    -- For now, assume coal/charcoal/lava
+    local fuels = {
+        ["minecraft:coal"] = 80,
+        ["minecraft:charcoal"] = 80,
+        ["minecraft:lava_bucket"] = 1000,
+        ["minecraft:blaze_rod"] = 120,
+    }
+    
+    local total = 0
+    for mat, value in pairs(fuels) do
+        local count = inventory.countMaterial(ctx, mat)
+        total = total + (count * value)
+    end
+    return total >= (threshold or 0)
+end
+
+function inventory.refuel(ctx, amount)
+    -- Try to refuel 'amount' levels
+    -- Scan for fuel items and consume them
+    local needed = amount or (turtle.getFuelLimit() - turtle.getFuelLevel())
+    if needed <= 0 then return true end
+    
+    local fuels = {
+        "minecraft:coal",
+        "minecraft:charcoal",
+        "minecraft:lava_bucket",
+        "minecraft:blaze_rod",
+        "minecraft:stick",
+        "minecraft:planks",
+        "minecraft:log",
+    }
+    
+    for _, fuel in ipairs(fuels) do
+        local slots = inventory.getMaterialSlots(ctx, fuel)
+        if slots then
+            for _, slot in ipairs(slots) do
+                if selectSlot(slot.slot) then
+                    if turtle.refuel(0) then -- Check if it is fuel
+                         -- Refuel one by one or all?
+                         turtle.refuel() -- Refuel all in stack
+                         inventory.invalidate(ctx)
+                         if turtle.getFuelLevel() >= (turtle.getFuelLimit() - 100) then
+                             return true
+                         end
+                    end
+                end
+            end
+        end
+    end
+    return true
+end
+
+function inventory.ensureState(ctx)
+    if not ctx.inventory then
+        ctx.inventory = {}
+    end
+    
+    -- Check if we need to rescan
+    local changes = false
+    if not ctx.inventory.slots then
+        changes = true
+    end
+    
+    if changes then
+        inventory.scan(ctx)
+    end
+    return true
+end
+
+function inventory.getCounts(ctx)
+    local counts = {}
+    -- Scan all slots
+    for i = 1, 16 do
+        local item = turtle.getItemDetail(i)
+        if item then
+            counts[item.name] = (counts[item.name] or 0) + item.count
+        end
+    end
+    return counts
+end
+
+function inventory.retrieveFromNearby(ctx, missing)
+    local sides = {"front", "top", "bottom", "left", "right", "back"}
+    local pulledAny = false
+    
+    for _, side in ipairs(sides) do
+        if peripheral.isPresent(side) then
+            local types = { peripheral.getType(side) }
+            local isInventory = false
+            for _, t in ipairs(types) do
+                if t == "inventory" then isInventory = true break end
+            end
+            
+            if isInventory then
+                local p = peripheral.wrap(side)
+                if p and p.list then
+                    local list = p.list()
+                    local neededFromChest = {}
+                    for slot, item in pairs(list) do
+                        if item and missing[item.name] and missing[item.name] > 0 then
+                            neededFromChest[item.name] = true
+                        end
+                    end
+                    
+                    -- Check if we need anything from this chest
+                    local hasNeeds = false
+                    for k,v in pairs(neededFromChest) do hasNeeds = true break end
+                    
+                    if hasNeeds then
+                        local pullSide = "forward"
+                        local turned = false
+                        
+                        -- Turn to face the chest if needed
+                        if side == "top" then pullSide = "up"
+                        elseif side == "bottom" then pullSide = "down"
+                        elseif side == "front" then pullSide = "forward"
+                        elseif side == "left" then
+                            movement.turnLeft(ctx)
+                            turned = true
+                            pullSide = "forward"
+                        elseif side == "right" then
+                            movement.turnRight(ctx)
+                            turned = true
+                            pullSide = "forward"
+                        elseif side == "back" then
+                            movement.turnRight(ctx)
+                            movement.turnRight(ctx)
+                            turned = true
+                            pullSide = "forward"
+                        end
+                        
+                        -- Pull all needed items
+                        for mat, _ in pairs(neededFromChest) do
+                            local amount = missing[mat]
+                            if amount > 0 then
+                                print(string.format("Attempting to pull %s from %s...", mat, side))
+                                -- If inventory is full, try condensing to free space before pulling
+                                local empty = inventory.findEmptySlot(ctx)
+                                if not empty then
+                                    pcall(inventory.condense, ctx)
+                                    empty = inventory.findEmptySlot(ctx)
+                                end
+                                if not empty then
+                                    logger.log(ctx, "warn", string.format("No empty slot available to pull %s; skipping pull", mat))
+                                else
+                                local success, err = inventory.pullMaterial(ctx, mat, amount, { side = pullSide })
+                                if success then
+                                    pulledAny = true
+                                    missing[mat] = math.max(0, missing[mat] - amount)
+                                else
+                                     logger.log(ctx, "warn", "Failed to pull " .. mat .. ": " .. tostring(err))
+                                end
+                                end
+                            end
+                        end
+                        
+                        -- Restore facing
+                        if turned then
+                            if side == "left" then movement.turnRight(ctx)
+                            elseif side == "right" then movement.turnLeft(ctx)
+                            elseif side == "back" then 
+                                movement.turnRight(ctx)
+                                movement.turnRight(ctx)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return pulledAny
+end
+
+function inventory.checkNearby(ctx, missing)
+    local found = {}
+    local sides = {"front", "top", "bottom", "left", "right", "back"}
+    
+    for _, side in ipairs(sides) do
+        if peripheral.isPresent(side) then
+            local types = { peripheral.getType(side) }
+            local isInventory = false
+            for _, t in ipairs(types) do
+                if t == "inventory" then isInventory = true break end
+            end
+            
+            if isInventory then
+                local p = peripheral.wrap(side)
+                if p and p.list then
+                    local list = p.list()
+                    for slot, item in pairs(list) do
+                        if item and missing[item.name] then
+                            found[item.name] = (found[item.name] or 0) + item.count
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return found
+end
+
+return inventory
+]=])
+
+addEmbeddedFile("lib/lib_table.lua", [=[
+local table_utils = {}
+
+function table_utils.copy(source)
+    if type(source) ~= "table" then
+        return {}
+    end
+    local result = {}
+    for key, value in pairs(source) do
+        result[key] = value
+    end
+    return result
+end
+
+local function deepCopy(value)
+    if type(value) ~= "table" then
+        return value
+    end
+    local result = {}
+    for k, v in pairs(value) do
+        result[k] = deepCopy(v)
+    end
+    return result
+end
+
+table_utils.deepCopy = deepCopy
+
+function table_utils.merge(base, overrides)
+    if type(base) ~= "table" and type(overrides) ~= "table" then
+        return overrides or base
+    end
+
+    local result = {}
+
+    if type(base) == "table" then
+        for k, v in pairs(base) do
+            result[k] = deepCopy(v)
+        end
+    end
+
+    if type(overrides) == "table" then
+        for k, v in pairs(overrides) do
+            if type(v) == "table" and type(result[k]) == "table" then
+                result[k] = table_utils.merge(result[k], v)
+            else
+                result[k] = deepCopy(v)
+            end
+        end
+    elseif overrides ~= nil then
+        return deepCopy(overrides)
+    end
+
+    return result
+end
+
+function table_utils.copyArray(source)
+    local result = {}
+    if type(source) ~= "table" then
+        return result
+    end
+    for i = 1, #source do
+        result[i] = source[i]
+    end
+    return result
+end
+
+function table_utils.sumValues(tbl)
+    local total = 0
+    if type(tbl) ~= "table" then
+        return total
+    end
+    for _, value in pairs(tbl) do
+        if type(value) == "number" then
+            total = total + value
+        end
+    end
+    return total
+end
+
+function table_utils.copyTotals(totals)
+    local result = {}
+    for material, count in pairs(totals or {}) do
+        result[material] = count
+    end
+    return result
+end
+
+function table_utils.mergeTotals(target, source)
+    for material, count in pairs(source or {}) do
+        target[material] = (target[material] or 0) + count
+    end
+end
+
+function table_utils.tableCount(tbl)
+    if type(tbl) ~= "table" then
+        return 0
+    end
+    local count = 0
+    for _ in pairs(tbl) do
+        count = count + 1
+    end
+    return count
+end
+
+function table_utils.copyArray(list)
+    if type(list) ~= "table" then
+        return {}
+    end
+    local result = {}
+    for index = 1, #list do
+        result[index] = list[index]
+    end
+    return result
+end
+
+function table_utils.copySummary(summary)
+    if type(summary) ~= "table" then
+        return {}
+    end
+    local result = {}
+    for key, value in pairs(summary) do
+        result[key] = value
+    end
+    return result
+end
+
+function table_utils.copySlots(slots)
+    if type(slots) ~= "table" then
+        return {}
+    end
+    local result = {}
+    for slot, info in pairs(slots) do
+        if type(info) == "table" then
+            result[slot] = {
+                slot = info.slot,
+                count = info.count,
+                name = info.name,
+                detail = info.detail,
+            }
+        else
+            result[slot] = info
+        end
+    end
+    return result
+end
+
+function table_utils.copyValue(value, seen)
+    if type(value) ~= "table" then
+        return value
+    end
+    seen = seen or {}
+    if seen[value] then
+        return seen[value]
+    end
+    local result = {}
+    seen[value] = result
+    for k, v in pairs(value) do
+        result[k] = table_utils.copyValue(v, seen)
+    end
+    return result
+end
+
+function table_utils.shallowCopy(tbl)
+    local result = {}
+    for k, v in pairs(tbl) do
+        result[k] = v
+    end
+    return result
+end
+
+return table_utils
+]=])
+
+addEmbeddedFile("lib/lib_string.lua", [=[
+local string_utils = {}
+
+function string_utils.trim(text)
+    if type(text) ~= "string" then
+        return text
+    end
+    return text:match("^%s*(.-)%s*$")
+end
+
+function string_utils.detailToString(value, depth)
+    depth = (depth or 0) + 1
+    if depth > 4 then
+        return "..."
+    end
+    if type(value) ~= "table" then
+        return tostring(value)
+    end
+    if textutils and textutils.serialize then
+        return textutils.serialize(value)
+    end
+    local parts = {}
+    for k, v in pairs(value) do
+        parts[#parts + 1] = tostring(k) .. "=" .. string_utils.detailToString(v, depth)
+    end
+    return "{" .. table.concat(parts, ", ") .. "}"
+end
+
+return string_utils
+]=])
+
+addEmbeddedFile("lib/version.lua", [=[
+--[[
+Version and build counter for Arcadesys TurtleOS.
+Build counter increments on each bundle/rebuild.
+]]
+
+local version = {}
+
+version.MAJOR = 2
+version.MINOR = 1
+version.PATCH = 1
+version.BUILD = 47
+
+--- Format version string (e.g., "v2.1.1 (build 42)")
+function version.toString()
+    return string.format("v%d.%d.%d (build %d)", 
+        version.MAJOR, version.MINOR, version.PATCH, version.BUILD)
+end
+
+--- Format short display (e.g., "TurtleOS v2.1.1 #42")
+function version.display()
+    return string.format("TurtleOS v%d.%d.%d #%d", 
+        version.MAJOR, version.MINOR, version.PATCH, version.BUILD)
+end
+
+return version
+]=])
+
+addEmbeddedFile("lib/lib_world.lua", [=[
+local world = {}
+
+function world.getInspect(side)
+    if side == "forward" then
+        return turtle.inspect
+    elseif side == "up" then
+        return turtle.inspectUp
+    elseif side == "down" then
+        return turtle.inspectDown
+    end
+    return nil
+end
+
+local SIDE_ALIASES = {
+    forward = "forward",
+    front = "forward",
+    down = "down",
+    bottom = "down",
+    up = "up",
+    top = "up",
+    left = "left",
+    right = "right",
+    back = "back",
+    behind = "back",
+}
+
+function world.normaliseSide(side)
+    if type(side) ~= "string" then
+        return nil
+    end
+    return SIDE_ALIASES[string.lower(side)]
+end
+
+function world.toPeripheralSide(side)
+    local normalised = world.normaliseSide(side) or side
+    if normalised == "forward" then
+        return "front"
+    elseif normalised == "up" then
+        return "top"
+    elseif normalised == "down" then
+        return "bottom"
+    elseif normalised == "back" then
+        return "back"
+    elseif normalised == "left" then
+        return "left"
+    elseif normalised == "right" then
+        return "right"
+    end
+    return normalised
+end
+
+function world.inspectSide(side)
+    local normalised = world.normaliseSide(side)
+    if normalised == "forward" then
+        return turtle and turtle.inspect and turtle.inspect()
+    elseif normalised == "up" then
+        return turtle and turtle.inspectUp and turtle.inspectUp()
+    elseif normalised == "down" then
+        return turtle and turtle.inspectDown and turtle.inspectDown()
+    end
+    return false
+end
+
+function world.isContainer(detail)
+    if type(detail) ~= "table" then
+        return false
+    end
+    local name = string.lower(detail.name or "")
+    if name:find("chest", 1, true) or name:find("barrel", 1, true) or name:find("drawer", 1, true) then
+        return true
+    end
+    if type(detail.tags) == "table" then
+        for tag in pairs(detail.tags) do
+            local lowered = string.lower(tag)
+            if lowered:find("inventory", 1, true) or lowered:find("chest", 1, true) or lowered:find("barrel", 1, true) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function world.normalizeSide(value)
+    if type(value) ~= "string" then
+        return nil
+    end
+    local lower = value:lower()
+    if lower == "forward" or lower == "front" or lower == "fwd" then
+        return "forward"
+    end
+    if lower == "up" or lower == "top" or lower == "above" then
+        return "up"
+    end
+    if lower == "down" or lower == "bottom" or lower == "below" then
+        return "down"
+    end
+    return nil
+end
+
+function world.resolveSide(ctx, opts)
+    if type(opts) == "string" then
+        local direct = world.normalizeSide(opts)
+        return direct or "forward"
+    end
+
+    local candidate
+    if type(opts) == "table" then
+        candidate = opts.side or opts.direction or opts.facing or opts.containerSide or opts.defaultSide
+        if not candidate and type(opts.location) == "string" then
+            candidate = opts.location
+        end
+    end
+
+    if not candidate and type(ctx) == "table" then
+        local cfg = ctx.config
+        if type(cfg) == "table" then
+            candidate = cfg.inventorySide or cfg.materialSide or cfg.supplySide or cfg.defaultInventorySide
+        end
+        if not candidate and type(ctx.inventoryState) == "table" then
+            candidate = ctx.inventoryState.defaultSide
+        end
+    end
+
+    local normalised = world.normalizeSide(candidate)
+    if normalised then
+        return normalised
+    end
+
+    return "forward"
+end
+
+function world.isContainerBlock(name, tags)
+    if type(name) ~= "string" then
+        return false
+    end
+    local lower = name:lower()
+    for _, keyword in ipairs(CONTAINER_KEYWORDS) do
+        if lower:find(keyword, 1, true) then
+            return true
+        end
+    end
+    return world.hasContainerTag(tags)
+end
+
+function world.inspectForwardForContainer()
+    if not turtle or type(turtle.inspect) ~= "function" then
+        return false
+    end
+    local ok, data = turtle.inspect()
+    if not ok or type(data) ~= "table" then
+        return false
+    end
+    if world.isContainerBlock(data.name, data.tags) then
+        return true, data
+    end
+    return false
+end
+
+function world.inspectUpForContainer()
+    if not turtle or type(turtle.inspectUp) ~= "function" then
+        return false
+    end
+    local ok, data = turtle.inspectUp()
+    if not ok or type(data) ~= "table" then
+        return false
+    end
+    if world.isContainerBlock(data.name, data.tags) then
+        return true, data
+    end
+    return false
+end
+
+function world.inspectDownForContainer()
+    if not turtle or type(turtle.inspectDown) ~= "function" then
+        return false
+    end
+    local ok, data = turtle.inspectDown()
+    if not ok or type(data) ~= "table" then
+        return false
+    end
+    if world.isContainerBlock(data.name, data.tags) then
+        return true, data
+    end
+    return false
+end
+
+function world.peripheralSideForDirection(side)
+    if side == "forward" or side == "front" then
+        return "front"
+    end
+    if side == "up" or side == "top" then
+        return "top"
+    end
+    if side == "down" or side == "bottom" then
+        return "bottom"
+    end
+    return side
+end
+
+function world.computePrimaryPushDirection(ctx, periphSide)
+    if periphSide == "front" then
+        local facing = movement.getFacing(ctx)
+        if facing then
+            return OPPOSITE_FACING[facing]
+        end
+    elseif periphSide == "top" then
+        return "down"
+    elseif periphSide == "bottom" then
+        return "up"
+    end
+    return nil
+end
+
+function world.normaliseCoordinate(value)
+    local number = tonumber(value)
+    if number == nil then
+        return nil
+    end
+    if number >= 0 then
+        return math.floor(number + 0.5)
+    end
+    return math.ceil(number - 0.5)
+end
+
+function world.normalisePosition(pos)
+    if type(pos) ~= "table" then
+        return nil, "invalid_position"
+    end
+    local xRaw = pos.x
+    if xRaw == nil then
+        xRaw = pos[1]
+    end
+    local yRaw = pos.y
+    if yRaw == nil then
+        yRaw = pos[2]
+    end
+    local zRaw = pos.z
+    if zRaw == nil then
+        zRaw = pos[3]
+    end
+    local x = world.normaliseCoordinate(xRaw)
+    local y = world.normaliseCoordinate(yRaw)
+    local z = world.normaliseCoordinate(zRaw)
+    if not x or not y or not z then
+        return nil, "invalid_position"
+    end
+    return { x = x, y = y, z = z }
+end
+
+function world.normaliseFacing(facing)
+    facing = type(facing) == "string" and facing:lower() or "north"
+    if facing ~= "north" and facing ~= "east" and facing ~= "south" and facing ~= "west" then
+        return "north"
+    end
+    return facing
+end
+
+function world.facingVectors(facing)
+    facing = world.normaliseFacing(facing)
+    if facing == "north" then
+        return { forward = { x = 0, z = -1 }, right = { x = 1, z = 0 } }
+    elseif facing == "east" then
+        return { forward = { x = 1, z = 0 }, right = { x = 0, z = 1 } }
+    elseif facing == "south" then
+        return { forward = { x = 0, z = 1 }, right = { x = -1, z = 0 } }
+    else -- west
+        return { forward = { x = -1, z = 0 }, right = { x = 0, z = -1 } }
+    end
+end
+
+function world.rotateLocalOffset(localOffset, facing)
+    local vectors = world.facingVectors(facing)
+    local dx = localOffset.x or 0
+    local dz = localOffset.z or 0
+    local right = vectors.right
+    local forward = vectors.forward
+    return {
+        x = (right.x * dx) + (forward.x * dz),
+        z = (right.z * dx) + (forward.z * dz),
+    }
+end
+
+function world.localToWorld(localOffset, facing)
+    facing = world.normaliseFacing(facing)
+    local dx = localOffset and localOffset.x or 0
+    local dz = localOffset and localOffset.z or 0
+    local rotated = world.rotateLocalOffset({ x = dx, z = dz }, facing)
+    return {
+        x = rotated.x,
+        y = localOffset and localOffset.y or 0,
+        z = rotated.z,
+    }
+end
+
+function world.localToWorldRelative(origin, localPos)
+    local rotated = world.localToWorld(localPos, origin.facing)
+    return {
+        x = origin.x + rotated.x,
+        y = origin.y + rotated.y,
+        z = origin.z + rotated.z
+    }
+end
+
+function world.copyPosition(pos)
+    if type(pos) ~= "table" then
+        return nil
+    end
+    return {
+        x = pos.x or 0,
+        y = pos.y or 0,
+        z = pos.z or 0,
+    }
+end
+
+function world.detectContainers(io)
+    local found = {}
+    local sides = { "forward", "down", "up" }
+    local labels = {
+        forward = "front",
+        down = "below",
+        up = "above",
+    }
+    for _, side in ipairs(sides) do
+        local inspect
+        if side == "forward" then
+            inspect = turtle.inspect
+        elseif side == "up" then
+            inspect = turtle.inspectUp
+        else
+            inspect = turtle.inspectDown
+        end
+        if type(inspect) == "function" then
+            local ok, detail = inspect()
+            if ok then
+                local name = type(detail.name) == "string" and detail.name or "unknown"
+                found[#found + 1] = string.format(" %s: %s", labels[side] or side, name)
+            end
+        end
+    end
+    if io.print then
+        if #found == 0 then
+            io.print("Detected containers: <none>")
+        else
+            io.print("Detected containers:")
+            for _, line in ipairs(found) do
+                io.print(" -" .. line)
+            end
+        end
+    end
+end
+
+return world
+]=])
+
+addEmbeddedFile("lib/lib_fuel.lua", [=[
+--[[
+Fuel management helpers for CC:Tweaked turtles.
+Tracks thresholds, detects low fuel conditions, and provides a simple
+SERVICE routine that returns the turtle to origin and attempts to refuel
+from configured sources.
+--]]
+
+---@diagnostic disable: undefined-global
+
+local movement = require("lib_movement")
+local inventory = require("lib_inventory")
+local table_utils = require("lib_table")
+local logger = require("lib_logger")
+local copyTable = table_utils.copy or table_utils.shallowCopy or function(tbl)
+    local result = {}
+    if type(tbl) ~= "table" then
+        return result
+    end
+    for k, v in pairs(tbl) do
+        result[k] = v
+    end
+    return result
+end
+
+local fuel = {}
+
+local DEFAULT_THRESHOLD = 80
+local DEFAULT_RESERVE = 160
+local DEFAULT_SIDES = { "forward", "down", "up" }
+local DEFAULT_FUEL_ITEMS = {
+    "minecraft:coal",
+    "minecraft:charcoal",
+    "minecraft:coal_block",
+    "minecraft:lava_bucket",
+    "minecraft:blaze_rod",
+    "minecraft:dried_kelp_block",
+}
+
+local function ensureFuelState(ctx)
+    if type(ctx) ~= "table" then
+        error("fuel library requires a context table", 2)
+    end
+    ctx.fuelState = ctx.fuelState or {}
+    local state = ctx.fuelState
+    local cfg = ctx.config or {}
+
+    state.threshold = state.threshold or cfg.fuelThreshold or cfg.minFuel or DEFAULT_THRESHOLD
+    state.reserve = state.reserve or cfg.fuelReserve or math.max(DEFAULT_RESERVE, state.threshold * 2)
+    state.fuelItems = state.fuelItems or (cfg.fuelItems and #cfg.fuelItems > 0 and table_utils.copyArray(cfg.fuelItems)) or table_utils.copyArray(DEFAULT_FUEL_ITEMS)
+    state.sides = state.sides or (cfg.fuelChestSides and #cfg.fuelChestSides > 0 and table_utils.copyArray(cfg.fuelChestSides)) or table_utils.copyArray(DEFAULT_SIDES)
+    state.cycleLimit = state.cycleLimit or cfg.fuelCycleLimit or cfg.inventoryCycleLimit or 192
+    state.history = state.history or {}
+    state.serviceActive = state.serviceActive or false
+    state.lastLevel = state.lastLevel or nil
+    return state
+end
+
+function fuel.ensureState(ctx)
+    return ensureFuelState(ctx)
+end
+
+local function readFuel()
+    if not turtle or not turtle.getFuelLevel then
+        return nil, nil, false
+    end
+    local level = turtle.getFuelLevel()
+    local limit = turtle.getFuelLimit and turtle.getFuelLimit() or nil
+    if level == "unlimited" or limit == "unlimited" then
+        return nil, nil, true
+    end
+    if level == math.huge or limit == math.huge then
+        return nil, nil, true
+    end
+    if type(level) ~= "number" then
+        return nil, nil, false
+    end
+    if type(limit) ~= "number" then
+        limit = nil
+    end
+    return level, limit, false
+end
+
+local function resolveTarget(state, opts)
+    opts = opts or {}
+    local target = opts.target or 0
+    if type(target) ~= "number" or target <= 0 then
+        target = 0
+    end
+    local threshold = opts.threshold or state.threshold or 0
+    local reserve = opts.reserve or state.reserve or 0
+    if threshold > target then
+        target = threshold
+    end
+    if reserve > target then
+        target = reserve
+    end
+    if target <= 0 then
+        target = threshold > 0 and threshold or DEFAULT_THRESHOLD
+    end
+    return target
+end
+    
+local function resolveSides(state, opts)
+    opts = opts or {}
+    if type(opts.sides) == "table" and #opts.sides > 0 then
+        return table_utils.copyArray(opts.sides)
+    end
+    return table_utils.copyArray(state.sides)
+end
+
+local function resolveFuelItems(state, opts)
+    opts = opts or {}
+    if type(opts.fuelItems) == "table" and #opts.fuelItems > 0 then
+        return table_utils.copyArray(opts.fuelItems)
+    end
+    return table_utils.copyArray(state.fuelItems)
+end
+
+local function recordHistory(state, entry)
+    state.history = state.history or {}
+    state.history[#state.history + 1] = entry
+    local limit = 20
+    while #state.history > limit do
+        table.remove(state.history, 1)
+    end
+end
+
+local function consumeFromInventory(ctx, target, opts)
+    if not turtle or type(turtle.refuel) ~= "function" then
+        return false, { error = "turtle API unavailable" }
+    end
+    local before = select(1, readFuel())
+    if before == nil then
+        return false, { error = "fuel unreadable" }
+    end
+    target = target or 0
+    if target <= 0 then
+        return false, {
+            consumed = {},
+            startLevel = before,
+            endLevel = before,
+            note = "no_target",
+        }
+    end
+
+    local level = before
+    local consumed = {}
+    for slot = 1, 16 do
+        if target > 0 and level >= target then
+            break
+        end
+
+        local item = turtle.getItemDetail(slot)
+        local shouldSkip = false
+        if item and opts and opts.excludeItems then
+            for _, pattern in ipairs(opts.excludeItems) do
+                if item.name:find(pattern) then
+                    shouldSkip = true
+                    break
+                end
+            end
+        end
+
+        if not shouldSkip then
+            turtle.select(slot)
+            local count = turtle.getItemCount(slot)
+            local canRefuel = count and count > 0 and turtle.refuel(0)
+            if canRefuel then
+                while (target <= 0 or level < target) and turtle.getItemCount(slot) > 0 do
+                    if not turtle.refuel(1) then
+                        break
+                    end
+                    consumed[slot] = (consumed[slot] or 0) + 1
+                    level = select(1, readFuel()) or level
+                    if target > 0 and level >= target then
+                        break
+                    end
+                end
+            end
+        end
+    end
+    local after = select(1, readFuel()) or level
+    if inventory.invalidate then
+        inventory.invalidate(ctx)
+    end
+    return (after > before), {
+        consumed = consumed,
+        startLevel = before,
+        endLevel = after,
+    }
+end
+
+local function pullFromSources(ctx, state, opts, target)
+    if not turtle then
+        return false, { error = "turtle API unavailable" }
+    end
+    inventory.ensureState(ctx)
+    local sides = resolveSides(state, opts)
+    local items = resolveFuelItems(state, opts)
+    local pullAmount = opts and opts.pullAmount
+    local pulled = {}
+    local errors = {}
+    local refueled = {}
+    local attempts = 0
+    local maxAttempts = opts and opts.maxPullAttempts or (#sides * #items)
+    if maxAttempts < 1 then
+        maxAttempts = #sides * #items
+    end
+    local cycleLimit = (opts and opts.inventoryCycleLimit) or state.cycleLimit or 192
+    for _, side in ipairs(sides) do
+        for _, material in ipairs(items) do
+            if attempts >= maxAttempts then
+                break
+            end
+            attempts = attempts + 1
+            local ok, err = inventory.pullMaterial(ctx, material, pullAmount, {
+                side = side,
+                deferScan = true,
+                cycleLimit = cycleLimit,
+            })
+            if ok then
+                pulled[#pulled + 1] = { side = side, material = material }
+                logger.log(ctx, "debug", string.format("Pulled %s from %s", material, side))
+                -- Immediately refresh inventory and attempt to use pulled items as fuel
+                if turtle and type(turtle.refuel) == "function" then
+                    -- force a fresh scan so we can locate the pulled stacks
+                    inventory.ensureState(ctx)
+                    inventory.scan(ctx)
+                    local slots, _err = inventory.getMaterialSlots(ctx, material)
+                    if slots and #slots > 0 then
+                        for _, slot in ipairs(slots) do
+                            local detail = turtle.getItemDetail and turtle.getItemDetail(slot) or nil
+                            local shouldSkip = false
+                            if detail and opts and opts.excludeItems then
+                                for _, pattern in ipairs(opts.excludeItems) do
+                                    if detail.name and detail.name:find(pattern) then
+                                        shouldSkip = true
+                                        break
+                                    end
+                                end
+                            end
+                            if shouldSkip then
+                                logger.log(ctx, "debug", string.format("Skipping refuel from %s (slot %d) due to excludeItems", material, slot))
+                            else
+                                local beforeLevel = select(1, readFuel()) or 0
+                                if turtle.refuel(0) then
+                                    turtle.select(slot)
+                                    local consumedCount = 0
+                                    while turtle.getItemCount and turtle.getItemCount(slot) > 0 do
+                                        -- stop if we reached target (if provided)
+                                        local current = select(1, readFuel()) or beforeLevel
+                                        if target and target > 0 and current >= target then
+                                            break
+                                        end
+                                        if not turtle.refuel(1) then
+                                            break
+                                        end
+                                        consumedCount = consumedCount + 1
+                                    end
+                                    if consumedCount > 0 then
+                                        refueled[#refueled + 1] = { slot = slot, material = material, consumed = consumedCount }
+                                        logger.log(ctx, "debug", string.format("Refueled using %d of %s from slot %d", consumedCount, material, slot))
+                                    end
+                                end
+                            end
+                        end
+                        if #refueled > 0 then
+                            inventory.invalidate(ctx)
+                            inventory.scan(ctx)
+                        end
+                    end
+                end
+            elseif err ~= "missing_material" then
+                errors[#errors + 1] = { side = side, material = material, error = err }
+                logger.log(ctx, "warn", string.format("Pull %s from %s failed: %s", material, side, tostring(err)))
+            end
+        end
+        if attempts >= maxAttempts then
+            break
+        end
+    end
+    if #pulled > 0 then
+        inventory.invalidate(ctx)
+    end
+    return #pulled > 0, { pulled = pulled, errors = errors, refueled = refueled }
+end
+
+local function refuelRound(ctx, state, opts, target, report)
+    local consumed, info = consumeFromInventory(ctx, target, opts)
+    report.steps[#report.steps + 1] = {
+        type = "inventory",
+        round = report.round,
+        success = consumed,
+        info = info,
+    }
+    if consumed then
+        logger.log(ctx, "debug", string.format("Consumed %d fuel items from inventory", table_utils.sumValues(info and info.consumed)))
+    end
+    local level = select(1, readFuel())
+    if level and level >= target and target > 0 then
+        report.finalLevel = level
+        report.reachedTarget = true
+        return true, report
+    end
+
+    local pullOpts = opts and copyTable(opts) or {}
+    local missing = target - (level or 0)
+    if missing > 0 then
+        -- Avoid over-pulling unstackable fuels (e.g., lava buckets). Assume a conservative 1000 fuel per item.
+        pullOpts.pullAmount = pullOpts.pullAmount or math.max(1, math.ceil(missing / 1000))
+    end
+
+    local pulled, pullInfo = pullFromSources(ctx, state, pullOpts, target)
+    report.steps[#report.steps + 1] = {
+        type = "pull",
+        round = report.round,
+        success = pulled,
+        info = pullInfo,
+    }
+
+    if pulled then
+        local consumedAfterPull, postInfo = consumeFromInventory(ctx, target, opts)
+        report.steps[#report.steps + 1] = {
+            type = "inventory",
+            stage = "post_pull",
+            round = report.round,
+            success = consumedAfterPull,
+            info = postInfo,
+        }
+        if consumedAfterPull then
+            logger.log(ctx, "debug", string.format("Post-pull consumption used %d fuel items", table_utils.sumValues(postInfo and postInfo.consumed)))
+            local postLevel = select(1, readFuel())
+            if postLevel and postLevel >= target and target > 0 then
+                report.finalLevel = postLevel
+                report.reachedTarget = true
+                return true, report
+            end
+        end
+    end
+
+    return (pulled or consumed), report
+end
+
+local function refuelInternal(ctx, state, opts)
+    local startLevel, limit, unlimited = readFuel()
+    if unlimited then
+        return true, {
+            startLevel = startLevel,
+            limit = limit,
+            finalLevel = startLevel,
+            unlimited = true,
+        }
+    end
+    if not startLevel then
+        return true, {
+            startLevel = nil,
+            limit = limit,
+            finalLevel = nil,
+            message = "fuel level unavailable",
+        }
+    end
+
+    local target = resolveTarget(state, opts)
+    local report = {
+        startLevel = startLevel,
+        limit = limit,
+        target = target,
+        steps = {},
+    }
+
+    local rounds = opts and opts.rounds or 3
+    if rounds < 1 then
+        rounds = 1
+    end
+
+    for i = 1, rounds do
+        report.round = i
+        local ok, roundReport = refuelRound(ctx, state, opts, target, report)
+        report = roundReport
+        if report.reachedTarget then
+            return true, report
+        end
+        if not ok then
+            break
+        end
+    end
+
+    report.finalLevel = select(1, readFuel()) or startLevel
+    if report.finalLevel and report.finalLevel >= target and target > 0 then
+        report.reachedTarget = true
+        return true, report
+    end
+    report.reachedTarget = target <= 0
+    return report.reachedTarget, report
+end
+
+function fuel.check(ctx, opts)
+    local state = ensureFuelState(ctx)
+    local level, limit, unlimited = readFuel()
+    state.lastLevel = level or state.lastLevel
+
+    local report = {
+        level = level,
+        limit = limit,
+        unlimited = unlimited,
+        threshold = state.threshold,
+        reserve = state.reserve,
+        history = state.history,
+    }
+
+    if unlimited then
+        report.ok = true
+        return true, report
+    end
+    if not level then
+        report.ok = true
+        report.note = "fuel level unavailable"
+        return true, report
+    end
+
+    local threshold = opts and opts.threshold or state.threshold or 0
+    report.threshold = threshold
+    report.reserve = opts and opts.reserve or state.reserve
+    report.ok = level >= threshold
+    report.needsService = not report.ok
+    report.depleted = level <= 0
+    return report.ok, report
+end
+
+function fuel.refuel(ctx, opts)
+    local state = ensureFuelState(ctx)
+    local ok, report = refuelInternal(ctx, state, opts)
+    recordHistory(state, {
+        type = "refuel",
+        timestamp = os and os.time and os.time() or nil,
+        success = ok,
+        report = report,
+    })
+    if ok then
+        logger.log(ctx, "info", string.format("Refuel complete (fuel=%s)", tostring(report.finalLevel or "unknown")))
+    else
+        logger.log(ctx, "warn", "Refuel attempt did not reach target level")
+    end
+    return ok, report
+end
+
+function fuel.ensure(ctx, opts)
+    local state = ensureFuelState(ctx)
+    local ok, report = fuel.check(ctx, opts)
+    if ok then
+        return true, report
+    end
+    if opts and opts.nonInteractive then
+        return false, report
+    end
+    local serviceOk, serviceReport = fuel.service(ctx, opts)
+    if not serviceOk then
+        report.service = serviceReport
+        return false, report
+    end
+    return fuel.check(ctx, opts)
+end
+
+local function bootstrapFuel(ctx, state, opts, report)
+    logger.log(ctx, "warn", "Fuel depleted; attempting to consume onboard fuel before navigating")
+    local minimumMove = opts and opts.minimumMoveFuel or math.max(10, state.threshold or 0)
+    if minimumMove <= 0 then
+        minimumMove = 10
+    end
+    local consumed, info = consumeFromInventory(ctx, minimumMove, opts)
+    report.steps[#report.steps + 1] = {
+        type = "inventory",
+        stage = "bootstrap",
+        success = consumed,
+        info = info,
+    }
+    local level = select(1, readFuel()) or (info and info.endLevel) or report.startLevel
+    report.bootstrapLevel = level
+    if level <= 0 then
+        logger.log(ctx, "error", "Fuel depleted; cannot move to origin")
+        report.error = "out_of_fuel"
+        report.finalLevel = level
+        return false, report
+    end
+    return true, report
+end
+
+local function runService(ctx, state, opts, report)
+    state.serviceActive = true
+    logger.log(ctx, "info", "Entering SERVICE mode: returning to origin for refuel")
+
+    local ok, err = movement.returnToOrigin(ctx, opts and opts.navigation)
+    if not ok then
+        state.serviceActive = false
+        logger.log(ctx, "error", "SERVICE return failed: " .. tostring(err))
+        report.returnError = err
+        return false, report
+    end
+    report.steps[#report.steps + 1] = { type = "return", success = true }
+
+    local refuelOk, refuelReport = refuelInternal(ctx, state, opts)
+    report.steps[#report.steps + 1] = {
+        type = "refuel",
+        success = refuelOk,
+        report = refuelReport,
+    }
+
+    state.serviceActive = false
+    recordHistory(state, {
+        type = "service",
+        timestamp = os and os.time and os.time() or nil,
+        success = refuelOk,
+        report = report,
+    })
+
+    if not refuelOk then
+        logger.log(ctx, "warn", "SERVICE refuel did not reach target level")
+        report.finalLevel = select(1, readFuel()) or (refuelReport and refuelReport.finalLevel) or report.startLevel
+        return false, report
+    end
+
+    local finalLevel = select(1, readFuel()) or refuelReport.finalLevel
+    report.finalLevel = finalLevel
+    logger.log(ctx, "info", string.format("SERVICE complete (fuel=%s)", tostring(finalLevel or "unknown")))
+    return true, report
+end
+
+function fuel.service(ctx, opts)
+    local state = ensureFuelState(ctx)
+    if state.serviceActive then
+        return false, { error = "service_already_active" }
+    end
+
+    inventory.ensureState(ctx)
+    movement.ensureState(ctx)
+
+    local level, limit, unlimited = readFuel()
+    local report = {
+        startLevel = level,
+        limit = limit,
+        steps = {},
+    }
+
+    if unlimited then
+        report.note = "fuel is unlimited"
+        return true, report
+    end
+
+    if not level then
+        logger.log(ctx, "warn", "Fuel level unavailable; skipping service")
+        report.error = "fuel_unreadable"
+        return false, report
+    end
+
+    if level <= 0 then
+        local ok, bootstrapReport = bootstrapFuel(ctx, state, opts, report)
+        if not ok then
+            return false, bootstrapReport
+        end
+        report = bootstrapReport
+    end
+
+    return runService(ctx, state, opts, report)
+end
+
+function fuel.resolveFuelThreshold(ctx)
+    local threshold = 0
+    local function consider(value)
+        if type(value) == "number" and value > threshold then
+            threshold = value
+        end
+    end
+    if type(ctx.fuelState) == "table" then
+        local fuel = ctx.fuelState
+        consider(fuel.threshold)
+        consider(fuel.reserve)
+        consider(fuel.min)
+        consider(fuel.minFuel)
+        consider(fuel.low)
+    end
+    if type(ctx.config) == "table" then
+        local cfg = ctx.config
+        consider(cfg.fuelThreshold)
+        consider(cfg.fuelReserve)
+        consider(cfg.minFuel)
+    end
+    return threshold
+end
+
+function fuel.isFuelLow(ctx)
+    if not turtle or not turtle.getFuelLevel then
+        return false
+    end
+    local level = turtle.getFuelLevel()
+    if level == "unlimited" then
+        return false
+    end
+    if type(level) ~= "number" then
+        return false
+    end
+    local threshold = fuel.resolveFuelThreshold(ctx)
+    if threshold <= 0 then
+        return false
+    end
+    return level <= threshold
+
+    end
+
+    function fuel.describeFuel(io, report)
+    if not io.print then
+        return
+    end
+    if report.unlimited then
+        io.print("Fuel: unlimited")
+        return
+    end
+    local levelText = report.level and tostring(report.level) or "unknown"
+    local limitText = report.limit and ("/" .. tostring(report.limit)) or ""
+    io.print(string.format("Fuel level: %s%s", levelText, limitText))
+    if report.threshold then
+        io.print(string.format("Threshold: %d", report.threshold))
+    end
+    if report.reserve then
+        io.print(string.format("Reserve target: %d", report.reserve))
+    end
+    if report.needsService then
+        io.print("Status: below threshold (service required)")
+    else
+        io.print("Status: sufficient for now")
+    end
+end
+
+function fuel.describeService(io, report)
+    if not io.print then
+        return
+    end
+    if not report then
+        io.print("No service report available.")
+        return
+    end
+    if report.returnError then
+        io.print("Return-to-origin failed: " .. tostring(report.returnError))
+    end
+    if report.steps then
+        for _, step in ipairs(report.steps) do
+            if step.type == "return" then
+                io.print("Return to origin: " .. (step.success and "OK" or "FAIL"))
+            elseif step.type == "refuel" then
+                local info = step.report or {}
+                local final = info.finalLevel ~= nil and info.finalLevel or (info.endLevel or "unknown")
+                io.print(string.format("Refuel step: %s (final=%s)", step.success and "OK" or "FAIL", tostring(final)))
+            end
+        end
+    end
+    if report.finalLevel then
+        io.print("Service final fuel level: " .. tostring(report.finalLevel))
+    end
+end
+
+return fuel
+]=])
+
+addEmbeddedFile("lib/lib_mining.lua", [=[
+--[[
+Mining library for CC:Tweaked turtles.
+Handles ore detection, extraction, and hole filling.
+]]
+
+---@diagnostic disable: undefined-global
+
+local mining = {}
+local inventory = require("lib_inventory")
+local movement = require("lib_movement")
+local logger = require("lib_logger")
+local json = require("lib_json")
+
+local CONFIG_FILE = "data/trash_config.json"
+
+-- Blocks that are considered "trash" and should be ignored during ore scanning.
+-- Also used to determine what blocks can be used to fill holes.
+mining.TRASH_BLOCKS = inventory.DEFAULT_TRASH
+mining.TRASH_BLOCKS["minecraft:chest"] = true
+mining.TRASH_BLOCKS["minecraft:barrel"] = true
+mining.TRASH_BLOCKS["minecraft:trapped_chest"] = true
+mining.TRASH_BLOCKS["minecraft:torch"] = true
+
+function mining.loadConfig()
+    if fs.exists(CONFIG_FILE) then
+        local f = fs.open(CONFIG_FILE, "r")
+        if f then
+            local data = f.readAll()
+            f.close()
+            local config = json.decodeJson(data)
+            if config and config.trash then
+                for k, v in pairs(config.trash) do
+                    mining.TRASH_BLOCKS[k] = v
+                end
+            end
+        end
+    end
+end
+
+function mining.saveConfig()
+    local config = { trash = mining.TRASH_BLOCKS }
+    local data = json.encode(config)
+    -- Ensure data directory exists
+    if not fs.exists("data") then
+        fs.makeDir("data")
+    end
+    local f = fs.open(CONFIG_FILE, "w")
+    if f then
+        f.write(data)
+        f.close()
+    end
+end
+
+-- Load config on startup
+mining.loadConfig()
+
+-- Blocks that should NEVER be placed to fill holes (liquids, gravity blocks, etc)
+mining.FILL_BLACKLIST = {
+    ["minecraft:air"] = true,
+    ["minecraft:water_bucket"] = true,
+    ["minecraft:lava"] = true,
+    ["minecraft:sand"] = true,
+    ["minecraft:gravel"] = true,
+    ["minecraft:torch"] = true,
+    ["minecraft:bedrock"] = true,
+    ["minecraft:chest"] = true,
+    ["minecraft:barrel"] = true,
+    ["minecraft:trapped_chest"] = true,
+}
+
+--- Check if a block is considered "ore" (valuable)
+function mining.isOre(name)
+    if not name then return false end
+    return not mining.TRASH_BLOCKS[name]
+end
+
+--- Find a suitable trash block in inventory to use for filling
+local function findFillMaterial(ctx)
+    inventory.scan(ctx)
+    local state = inventory.ensureState(ctx)
+    if not state or not state.slots then return nil end
+    for slot, item in pairs(state.slots) do
+        if mining.TRASH_BLOCKS[item.name] and not mining.FILL_BLACKLIST[item.name] then
+            return slot, item.name
+        end
+    end
+    return nil
+end
+
+--- Mine a block in a specific direction if it's valuable, then fill the hole
+-- @param dir "front", "up", "down"
+function mining.mineAndFill(ctx, dir)
+    local inspect, dig, place, suck
+    if dir == "front" then
+        inspect = turtle.inspect
+        dig = turtle.dig
+        place = turtle.place
+        suck = turtle.suck
+    elseif dir == "up" then
+        inspect = turtle.inspectUp
+        dig = turtle.digUp
+        place = turtle.placeUp
+        suck = turtle.suckUp
+    elseif dir == "down" then
+        inspect = turtle.inspectDown
+        dig = turtle.digDown
+        place = turtle.placeDown
+        suck = turtle.suckDown
+    else
+        return false, "Invalid direction"
+    end
+
+    local hasBlock, data = inspect()
+    if hasBlock and mining.isOre(data.name) then
+        logger.log(ctx, "info", "Mining valuable: " .. data.name)
+        if dig() then
+            sleep(0.2)
+            while suck() do sleep(0.1) end
+
+            -- Attempt to fill the hole
+            local slot = findFillMaterial(ctx)
+            if slot then
+                turtle.select(slot)
+                place()
+            else
+                logger.log(ctx, "warn", "No trash blocks available to fill hole")
+            end
+            return true
+        else
+            logger.log(ctx, "warn", "Failed to dig " .. data.name)
+        end
+    end
+    return false
+end
+
+--- Scan all 6 directions around the turtle, mine ores, and fill holes.
+-- The turtle will return to its original facing.
+function mining.scanAndMineNeighbors(ctx)
+    -- Check Up
+    mining.mineAndFill(ctx, "up")
+    
+    -- Check Down
+    mining.mineAndFill(ctx, "down")
+
+    -- Check 4 horizontal directions
+    for i = 1, 4 do
+        mining.mineAndFill(ctx, "front")
+        movement.turnRight(ctx)
+    end
+end
+
+return mining
+]=])
+
+addEmbeddedFile("lib/lib_json.lua", [=[
+local json_utils = {}
+
+function json_utils.encode(data)
+    if textutils and textutils.serializeJSON then
+        return textutils.serializeJSON(data)
+    end
+    return nil, "json_encoder_unavailable"
+end
+
+function json_utils.decodeJson(text)
+    if type(text) ~= "string" then
+        return nil, "invalid_json"
+    end
+    if textutils and textutils.unserializeJSON then
+        local ok, result = pcall(textutils.unserializeJSON, text)
+        if ok and result ~= nil then
+            return result
+        end
+        return nil, "json_parse_failed"
+    end
+    local ok, json = pcall(require, "json")
+    if ok and type(json) == "table" and type(json.decode) == "function" then
+        local okDecode, result = pcall(json.decode, text)
+        if okDecode then
+            return result
+        end
+        return nil, "json_parse_failed"
+    end
+    return nil, "json_decoder_unavailable"
+end
+
+function json_utils.decode(text)
+    return json_utils.decodeJson(text)
+end
+
+return json_utils
+]=])
+
+addEmbeddedFile("lib/lib_diagnostics.lua", [=[
+local diagnostics = {}
+
+local function safeOrigin(origin)
+    if type(origin) ~= "table" then
+        return nil
+    end
+    return {
+        x = origin.x,
+        y = origin.y,
+        z = origin.z,
+        facing = origin.facing
+    }
+end
+
+local function normalizeStrategy(strategy)
+    if type(strategy) == "table" then
+        return strategy
+    end
+    return nil
+end
+
+local function snapshot(ctx)
+    if type(ctx) ~= "table" then
+        return { error = "missing context" }
+    end
+    local config = type(ctx.config) == "table" and ctx.config or {}
+    local origin = safeOrigin(ctx.origin)
+    local strategyLen = 0
+    if type(ctx.strategy) == "table" then
+        strategyLen = #ctx.strategy
+    end
+    local stamp
+    if os and type(os.time) == "function" then
+        stamp = os.time()
+    end
+
+    return {
+        state = ctx.state,
+        mode = config.mode,
+        pointer = ctx.pointer,
+        strategySize = strategyLen,
+        retries = ctx.retries,
+        missingMaterial = ctx.missingMaterial,
+        lastError = ctx.lastError,
+        origin = origin,
+        timestamp = stamp
+    }
+end
+
+local function requireStrategy(ctx)
+    local strategy = normalizeStrategy(ctx.strategy)
+    if strategy then
+        return strategy
+    end
+
+    local message = "Build strategy unavailable"
+    if ctx and ctx.logger then
+        ctx.logger:error(message, { context = snapshot(ctx) })
+    end
+    ctx.lastError = ctx.lastError or message
+    return nil, message
+end
+
+diagnostics.snapshot = snapshot
+diagnostics.requireStrategy = requireStrategy
+
+return diagnostics
+]=])
+
+addEmbeddedFile("lib/lib_persistence.lua", [=[
+local json = require("lib_json")
+local logger = require("lib_logger")
+
+local persistence = {}
+local STATE_FILE = "state.json"
+
+function persistence.load(ctx, config)
+    local path = (config and config.path) or STATE_FILE
+    
+    if not fs.exists(path) then
+        logger.log(ctx, "info", "No previous state found at " .. path)
+        return nil
+    end
+
+    local f = fs.open(path, "r")
+    if not f then
+        logger.log(ctx, "error", "Failed to open state file for reading: " .. path)
+        return nil
+    end
+
+    local content = f.readAll()
+    f.close()
+
+    if not content or content == "" then
+        logger.log(ctx, "warn", "State file was empty")
+        return nil
+    end
+
+    local state = json.decode(content)
+    if not state then
+        logger.log(ctx, "error", "Failed to decode state JSON")
+        return nil
+    end
+
+    logger.log(ctx, "info", "State loaded from " .. path)
+    return state
+end
+
+function persistence.save(ctx, config)
+    local path = (config and config.path) or STATE_FILE
+    
+    local snapshot = {
+        state = ctx.state,
+        config = ctx.config,
+        origin = ctx.origin,
+        movement = ctx.movement,
+        chests = ctx.chests,
+        potatofarm = ctx.potatofarm,
+        treefarm = ctx.treefarm,
+        mine = ctx.mine,
+    }
+
+    local content = json.encode(snapshot)
+    if not content then
+        logger.log(ctx, "error", "Failed to encode state to JSON")
+        return false
+    end
+
+    local f = fs.open(path, "w")
+    if not f then
+        logger.log(ctx, "error", "Failed to open state file for writing: " .. path)
+        return false
+    end
+
+    f.write(content)
+    f.close()
+
+    return true
+end
+
+function persistence.clear(ctx, config)
+    local path = (config and config.path) or STATE_FILE
+    if fs.exists(path) then
+        fs.delete(path)
+        logger.log(ctx, "info", "Cleared state file: " .. path)
+    end
+end
+
+return persistence
+]=])
+
+addEmbeddedFile("factory/factory.lua", [=[
+local logger = require("lib_logger")
+local diagnostics = require("lib_diagnostics")
+local debug = debug
+
+if type(package) ~= "table" then package = { path = "" } end
+if type(package.path) ~= "string" then package.path = package.path or "" end
+package.loaded = package.loaded or {}
+
+local function requireForce(name)
+    package.loaded[name] = nil
+    return require(name)
+end
+
+local states = {
+    INITIALIZE = requireForce("state_initialize"),
+    CHECK_REQUIREMENTS = requireForce("state_check_requirements"),
+    BUILD = requireForce("state_build"),
+    MINE = requireForce("state_mine"),
+    TREEFARM = requireForce("state_treefarm"),
+    POTATOFARM = requireForce("state_potatofarm"),
+    RESTOCK = requireForce("state_restock"),
+    REFUEL = requireForce("state_refuel"),
+    BLOCKED = requireForce("state_blocked"),
+    ERROR = requireForce("state_error"),
+    DONE = requireForce("state_done"),
+}
+
+local function mergeTables(base, extra)
+    if type(base) ~= "table" then
+        base = {}
+    end
+    if type(extra) == "table" then
+        for key, value in pairs(extra) do
+            base[key] = value
+        end
+    end
+    return base
+end
+
+local function buildPayload(ctx, extra)
+    local payload = { context = diagnostics.snapshot(ctx) }
+    if extra then
+        mergeTables(payload, extra)
+    end
+    return payload
+end
+
+local function run(args)
+    local ctx = {
+        state = "INITIALIZE",
+        config = {
+            verbose = false,
+            schemaPath = nil,
+        },
+        origin = { x = 0, y = 0, z = 0, facing = "north" },
+        pointer = 1,
+        schema = nil,
+        strategy = nil,
+        inventoryState = {},
+        fuelState = {},
+        retries = 0,
+    }
+
+    local index = 1
+    while index <= #args do
+        local value = args[index]
+        if value == "--verbose" then
+            ctx.config.verbose = true
+        elseif value == "mine" then
+            ctx.config.mode = "mine"
+        elseif value == "tunnel" then
+            ctx.config.mode = "tunnel"
+        elseif value == "excavate" then
+            ctx.config.mode = "excavate"
+        elseif value == "treefarm" then
+            ctx.config.mode = "treefarm"
+        elseif value == "potatofarm" then
+            ctx.config.mode = "potatofarm"
+        elseif value == "farm" then
+            ctx.config.mode = "farm"
+        elseif value == "--farm-type" then
+            index = index + 1
+            ctx.config.farmType = args[index]
+        elseif value == "--width" then
+            index = index + 1
+            ctx.config.width = tonumber(args[index])
+        elseif value == "--height" then
+            index = index + 1
+            ctx.config.height = tonumber(args[index])
+        elseif value == "--depth" then
+            index = index + 1
+            ctx.config.depth = tonumber(args[index])
+        elseif value == "--length" then
+            index = index + 1
+            ctx.config.length = tonumber(args[index])
+        elseif value == "--branch-interval" then
+            index = index + 1
+            ctx.config.branchInterval = tonumber(args[index])
+        elseif value == "--branch-length" then
+            index = index + 1
+            ctx.config.branchLength = tonumber(args[index])
+        elseif value == "--torch-interval" then
+            index = index + 1
+            ctx.config.torchInterval = tonumber(args[index])
+        elseif not value:find("^--") and not ctx.config.schemaPath and ctx.config.mode ~= "mine" and ctx.config.mode ~= "farm" then
+            ctx.config.schemaPath = value
+        end
+        index = index + 1
+    end
+
+    if not ctx.config.schemaPath and ctx.config.mode ~= "mine" and ctx.config.mode ~= "farm" then
+        ctx.config.schemaPath = "schema.json"
+    end
+
+    local logOpts = {
+        level = ctx.config.verbose and "debug" or "info",
+        timestamps = true
+    }
+    logger.attach(ctx, logOpts)
+    
+    ctx.logger:info("Agent starting...")
+
+    local persistence = require("lib_persistence")
+    local savedState = persistence.load(ctx)
+    if savedState then
+        ctx.logger:info("Resuming from saved state...")
+        mergeTables(ctx, savedState)
+        
+        if ctx.movement then
+            local movement = require("lib_movement")
+            movement.ensureState(ctx)
+        end
+    end
+
+    if turtle and turtle.getFuelLevel then
+        local level = turtle.getFuelLevel()
+        local limit = turtle.getFuelLimit()
+        ctx.logger:info(string.format("Fuel: %s / %s", tostring(level), tostring(limit)))
+        if level ~= "unlimited" and type(level) == "number" and level < 100 then
+             ctx.logger:warn("Fuel is very low on startup!")
+             local fuelLib = require("lib_fuel")
+             fuelLib.refuel(ctx, { target = 2000 })
+        end
+    end
+
+    ctx.save = function()
+        persistence.save(ctx)
+    end
+
+    while ctx.state ~= "EXIT" do
+        ctx.save()
+
+        local stateHandler = states[ctx.state]
+        if not stateHandler then
+            ctx.logger:error("Unknown state: " .. tostring(ctx.state), buildPayload(ctx))
+            break
+        end
+
+        ctx.logger:debug("Entering state: " .. ctx.state)
+        local ok, nextStateOrErr = pcall(stateHandler, ctx)
+        if not ok then
+            local trace = debug and debug.traceback and debug.traceback() or nil
+            ctx.logger:error("Crash in state " .. ctx.state .. ": " .. tostring(nextStateOrErr),
+                buildPayload(ctx, { error = tostring(nextStateOrErr), traceback = trace }))
+            ctx.lastError = nextStateOrErr
+            ctx.state = "ERROR"
+        else
+            if type(nextStateOrErr) ~= "string" or nextStateOrErr == "" then
+                ctx.logger:error("State returned invalid transition", buildPayload(ctx, { result = tostring(nextStateOrErr) }))
+                ctx.lastError = nextStateOrErr
+                ctx.state = "ERROR"
+            elseif not states[nextStateOrErr] and nextStateOrErr ~= "EXIT" then
+                ctx.logger:error("Transitioned to unknown state: " .. tostring(nextStateOrErr), buildPayload(ctx))
+                ctx.state = "ERROR"
+            else
+                ctx.state = nextStateOrErr
+            end
+        end
+
+        sleep(0)
+    end
+    
+    persistence.clear(ctx)
+
+    ctx.logger:info("Agent finished.")
+end
+
+local module = { run = run }
+
+if not _G.__FACTORY_EMBED__ then
+    local argv = { ... }
+    run(argv)
+end
+
+return module
+]=])
+
+addEmbeddedFile("factory/main.lua", [=[
+if not string.find(package.path, "/lib/?.lua") then
+    package.path = package.path .. ";/?.lua;/lib/?.lua;/arcade/?.lua;/factory/?.lua"
+end
+
+local logger = require("lib_logger")
+local movement = require("lib_movement")
+local ui = require("lib_ui")
+local trash_config = require("ui.trash_config")
+
+local function interactiveSetup(ctx)
+    local mode = "treefarm"
+    local width = 9
+    local height = 9
+    local length = 60
+    local branchInterval = 3
+    local branchLength = 16
+    local torchInterval = 6
+    
+    local selected = 1 
+    
+    while true do
+        ui.clear()
+        ui.drawFrame(2, 2, 30, 16, "Factory Setup")
+        
+        ui.label(4, 4, "Mode: ")
+        local modeLabel = "Tree"
+        if mode == "potatofarm" then modeLabel = "Potato" end
+        if mode == "mine" then modeLabel = "Mine" end
+        
+        if selected == 1 then
+            if term.isColor() then term.setTextColor(colors.yellow) end
+            term.write("< " .. modeLabel .. " >")
+        else
+            if term.isColor() then term.setTextColor(colors.white) end
+            term.write("  " .. modeLabel .. "  ")
+        end
+
+        local startIdx = 4
+        
+        if mode == "treefarm" or mode == "potatofarm" then
+            startIdx = 4
+            ui.label(4, 6, "Width: ")
+            if selected == 2 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write("< " .. width .. " >")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("  " .. width .. "  ")
+            end
+            
+            ui.label(4, 8, "Height:")
+            if selected == 3 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write("< " .. height .. " >")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("  " .. height .. "  ")
+            end
+        elseif mode == "mine" then
+            startIdx = 7
+            ui.label(4, 6, "Length: ")
+            if selected == 2 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write("< " .. length .. " >")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("  " .. length .. "  ")
+            end
+
+            ui.label(4, 7, "Br. Int:")
+            if selected == 3 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write("< " .. branchInterval .. " >")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("  " .. branchInterval .. "  ")
+            end
+
+            ui.label(4, 8, "Br. Len:")
+            if selected == 4 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write("< " .. branchLength .. " >")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("  " .. branchLength .. "  ")
+            end
+
+            ui.label(4, 9, "Torch Int:")
+            if selected == 5 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write("< " .. torchInterval .. " >")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("  " .. torchInterval .. "  ")
+            end
+
+            ui.label(4, 10, "Trash:")
+            if selected == 6 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write(" < EDIT > ")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("   EDIT   ")
+            end
+        end
+        
+        ui.button(8, 12, "START", selected == startIdx)
+        
+        local event, key = os.pullEvent("key")
+        if key == keys.up then
+            selected = selected - 1
+            if selected < 1 then selected = startIdx end
+        elseif key == keys.down then
+            selected = selected + 1
+            if selected > startIdx then selected = 1 end
+        elseif key == keys.left then
+            if selected == 1 then 
+                if mode == "treefarm" then mode = "potatofarm"
+                elseif mode == "potatofarm" then mode = "mine"
+                else mode = "treefarm" end
+                selected = 1
+            end
+            if mode == "treefarm" or mode == "potatofarm" then
+                if selected == 2 then width = math.max(1, width - 1) end
+                if selected == 3 then height = math.max(1, height - 1) end
+            elseif mode == "mine" then
+                if selected == 2 then length = math.max(10, length - 10) end
+                if selected == 3 then branchInterval = math.max(1, branchInterval - 1) end
+                if selected == 4 then branchLength = math.max(1, branchLength - 1) end
+                if selected == 5 then torchInterval = math.max(1, torchInterval - 1) end
+            end
+        elseif key == keys.right then
+            if selected == 1 then 
+                if mode == "treefarm" then mode = "mine"
+                elseif mode == "mine" then mode = "potatofarm"
+                else mode = "treefarm" end
+                selected = 1
+            end
+            if mode == "treefarm" or mode == "potatofarm" then
+                if selected == 2 then width = width + 1 end
+                if selected == 3 then height = height + 1 end
+            elseif mode == "mine" then
+                if selected == 2 then length = length + 10 end
+                if selected == 3 then branchInterval = branchInterval + 1 end
+                if selected == 4 then branchLength = branchLength + 1 end
+                if selected == 5 then torchInterval = torchInterval + 1 end
+            end
+        elseif key == keys.enter then
+            if selected == startIdx then
+                return { 
+                    mode = mode, 
+                    width = width, 
+                    height = height, 
+                    length = length, 
+                    branchInterval = branchInterval, 
+                    branchLength = branchLength, 
+                    torchInterval = torchInterval 
+                }
+            elseif mode == "mine" and selected == 6 then
+                trash_config.run()
+            end
+        end
+    end
+end
+
+local states = {
+    INITIALIZE = require("state_initialize"),
+    BUILD = require("state_build"),
+    MINE = require("state_mine"),
+    RESTOCK = require("state_restock"),
+    REFUEL = require("state_refuel"),
+    BLOCKED = require("state_blocked"),
+    ERROR = require("state_error"),
+    DONE = require("state_done"),
+    CHECK_REQUIREMENTS = require("state_check_requirements"),
+    TREEFARM = require("state_treefarm"),
+    POTATOFARM = require("state_potatofarm"),
+    BRANCHMINE = require("state_branchmine")
+}
+
+local function main(args)
+    local ctx = {
+        state = "INITIALIZE",
+        config = {
+            verbose = false,
+            schemaPath = nil
+        },
+        origin = { x=0, y=0, z=0, facing="north" },
+        pointer = 1,
+        schema = nil,
+        strategy = nil,
+        inventoryState = {},
+        fuelState = {},
+        retries = 0
+    }
+
+    local i = 1
+    while i <= #args do
+        local arg = args[i]
+        if arg == "--verbose" then
+            ctx.config.verbose = true
+        elseif arg == "mine" then
+            ctx.config.mode = "mine"
+        elseif arg == "treefarm" then
+            ctx.config.mode = "treefarm"
+        elseif arg == "potatofarm" then
+            ctx.config.mode = "potatofarm"
+        elseif arg == "--length" then
+            i = i + 1
+            ctx.config.length = tonumber(args[i])
+        elseif arg == "--width" then
+            i = i + 1
+            ctx.config.width = tonumber(args[i])
+        elseif arg == "--height" then
+            i = i + 1
+            ctx.config.height = tonumber(args[i])
+        elseif arg == "--branch-interval" then
+            i = i + 1
+            ctx.config.branchInterval = tonumber(args[i])
+        elseif arg == "--branch-length" then
+            i = i + 1
+            ctx.config.branchLength = tonumber(args[i])
+        elseif arg == "--torch-interval" then
+            i = i + 1
+            ctx.config.torchInterval = tonumber(args[i])
+        elseif not arg:find("^--") and not ctx.config.schemaPath and ctx.config.mode ~= "mine" then
+             ctx.config.schemaPath = arg
+        end
+        i = i + 1
+    end
+    
+    if #args == 0 then
+        local setupConfig = interactiveSetup(ctx)
+        for k, v in pairs(setupConfig) do
+            ctx.config[k] = v
+        end
+    end
+    
+    if not ctx.config.schemaPath and ctx.config.mode ~= "mine" then
+        ctx.config.schemaPath = "schema.json"
+    end
+
+    ctx.logger = logger.new({
+        level = ctx.config.verbose and "debug" or "info"
+    })
+    ctx.logger:info("Agent starting...")
+
+    local function stepOut(ctx)
+        local ok, err
+        ok, err = movement.forward(ctx)
+        if not ok then return false, err end
+        ok, err = movement.forward(ctx)
+        if not ok then return false, err end
+        ok, err = movement.turnRight(ctx)
+        if not ok then return false, err end
+        ok, err = movement.forward(ctx)
+        if not ok then return false, err end
+        ok, err = movement.forward(ctx)
+        if not ok then return false, err end
+        ok, err = movement.turnLeft(ctx)
+        if not ok then return false, err end
+        return true
+    end
+
+    local ok, err = stepOut(ctx)
+    if not ok then
+        ctx.logger:warn("Initial step-out failed: " .. tostring(err))
+    else
+        ctx.logger:info("Stepped out to working position (2 forward, 2 right)")
+    end
+
+    while ctx.state ~= "EXIT" do
+        local currentStateFunc = states[ctx.state]
+        if not currentStateFunc then
+            ctx.logger:error("Unknown state: " .. tostring(ctx.state))
+            break
+        end
+
+        ctx.logger:debug("Entering state: " .. ctx.state)
+        
+        local ok, nextStateOrErr = pcall(currentStateFunc, ctx)
+        
+        if not ok then
+            ctx.logger:error("Crash in state " .. ctx.state .. ": " .. tostring(nextStateOrErr))
+            ctx.lastError = nextStateOrErr
+            ctx.state = "ERROR"
+        else
+            ctx.state = nextStateOrErr
+        end
+        
+        sleep(0)
+    end
+
+    ctx.logger:info("Agent finished.")
+    
+    if ctx.lastError then
+        print("Agent finished: " .. tostring(ctx.lastError))
+    else
+        print("Agent finished: success!")
+    end
+end
+
+local args = { ... }
+main(args)
+]=])
+
+addEmbeddedFile("factory/turtle_os.lua", [=[
+--[[
+TurtleOS v2.0
+Graphical launcher for the factory agent.
+--]]
+
+if type(package) ~= "table" then package = { path = "" } end
+if type(package.path) ~= "string" then package.path = package.path or "" end
+package.loaded = package.loaded or {}
+
+local function requireCompat(name)
+    if package.loaded[name] ~= nil then return package.loaded[name] end
+
+    local lastErr
+    for pattern in string.gmatch(package.path or "", "([^;]+)") do
+        local candidate = pattern:gsub("%?", name)
+        if fs.exists(candidate) and not fs.isDir(candidate) then
+            local fn, err = loadfile(candidate)
+            if not fn then
+                lastErr = err
+            else
+                local ok, res = pcall(fn)
+                if not ok then
+                    lastErr = res
+                else
+                    package.loaded[name] = res
+                    return res
+                end
+            end
+        end
+    end
+
+    error(string.format("module '%s' not found%s", name, lastErr and (": " .. tostring(lastErr)) or ""))
+end
+
+local function ensurePackagePaths(baseDir)
+    local root = baseDir == "" and "/" or baseDir
+    local paths = {
+        "/?.lua",
+        "/lib/?.lua",
+        fs.combine(root, "?.lua"),
+        fs.combine(root, "lib/?.lua"),
+        fs.combine(root, "factory/?.lua"),
+        fs.combine(root, "ui/?.lua"),
+        fs.combine(root, "tools/?.lua"),
+    }
+
+    local current = package.path or ""
+    if current ~= "" then table.insert(paths, current) end
+
+    local seen, final = {}, {}
+    for _, p in ipairs(paths) do
+        if p and p ~= "" and not seen[p] then
+            seen[p] = true
+            table.insert(final, p)
+        end
+    end
+    package.path = table.concat(final, ";")
+end
+
+local function detectBaseDir()
+    if shell and shell.getRunningProgram then
+        return fs.getDir(shell.getRunningProgram())
+    end
+    if debug and debug.getinfo then
+        local info = debug.getinfo(1, "S")
+        if info and info.source then
+            local src = info.source
+            if src:sub(1, 1) == "@" then src = src:sub(2) end
+            return fs.getDir(src)
+        end
+    end
+    return ""
+end
+
+ensurePackagePaths(detectBaseDir())
+local require = _G.require or requireCompat
+_G.require = require
+
+local ui = require("lib_ui")
+local parser = require("lib_parser")
+local json = require("lib_json")
+local schema_utils = require("lib_schema")
+
+_G.__FACTORY_EMBED__ = true
+local factory = require("factory")
+_G.__FACTORY_EMBED__ = nil
+
+local function pauseAndReturn(retVal)
+    print("\nOperation finished.")
+    print("Press Enter to continue...")
+    read()
+    return retVal
+end
+
+local function runMining(form)
+    local length = 64
+    local interval = 3
+    local torch = 6
+    
+    for _, el in ipairs(form.elements) do
+        if el.id == "length" then length = tonumber(el.value) or 64 end
+        if el.id == "interval" then interval = tonumber(el.value) or 3 end
+        if el.id == "torch" then torch = tonumber(el.value) or 6 end
+    end
+    
+    ui.clear()
+    print("Starting Mining Operation...")
+    print(string.format("Length: %d, Interval: %d", length, interval))
+    sleep(1)
+    
+    factory.run({ "mine", "--length", tostring(length), "--branch-interval", tostring(interval), "--torch-interval", tostring(torch) })
+    
+    return pauseAndReturn("stay")
+end
+
+local function runTunnel()
+    local length = 16
+    local width = 1
+    local height = 2
+    local torch = 6
+    
+    local form = ui.Form("Tunnel Configuration")
+    form:addInput("length", "Length", tostring(length))
+    form:addInput("width", "Width", tostring(width))
+    form:addInput("height", "Height", tostring(height))
+    form:addInput("torch", "Torch Interval", tostring(torch))
+    
+    local result = form:run()
+    if result == "cancel" then return "stay" end
+    
+    for _, el in ipairs(form.elements) do
+        if el.id == "length" then length = tonumber(el.value) or 16 end
+        if el.id == "width" then width = tonumber(el.value) or 1 end
+        if el.id == "height" then height = tonumber(el.value) or 2 end
+        if el.id == "torch" then torch = tonumber(el.value) or 6 end
+    end
+    
+    ui.clear()
+    print("Starting Tunnel Operation...")
+    print(string.format("L: %d, W: %d, H: %d", length, width, height))
+    sleep(1)
+    
+    factory.run({ "tunnel", "--length", tostring(length), "--width", tostring(width), "--height", tostring(height), "--torch-interval", tostring(torch) })
+    
+    return pauseAndReturn("stay")
+end
+
+local function runExcavate()
+    local length = 8
+    local width = 8
+    local depth = 3
+    
+    local form = ui.Form("Excavation Configuration")
+    form:addInput("length", "Length", tostring(length))
+    form:addInput("width", "Width", tostring(width))
+    form:addInput("depth", "Depth", tostring(depth))
+    
+    local result = form:run()
+    if result == "cancel" then return "stay" end
+    
+    for _, el in ipairs(form.elements) do
+        if el.id == "length" then length = tonumber(el.value) or 8 end
+        if el.id == "width" then width = tonumber(el.value) or 8 end
+        if el.id == "depth" then depth = tonumber(el.value) or 3 end
+    end
+    
+    ui.clear()
+    print("Starting Excavation Operation...")
+    print(string.format("L: %d, W: %d, D: %d", length, width, depth))
+    sleep(1)
+    
+    factory.run({ "excavate", "--length", tostring(length), "--width", tostring(width), "--depth", tostring(depth) })
+    
+    return pauseAndReturn("stay")
+end
+
+local function runTreeFarm()
+    ui.clear()
+    print("Starting Tree Farm...")
+    sleep(1)
+    factory.run({ "treefarm" })
+    return pauseAndReturn("stay")
+end
+
+local function runPotatoFarm()
+    local width = 9
+    local length = 9
+    
+    local form = ui.Form("Potato Farm Configuration")
+    form:addStepper("width", "Width", width, { min = 3, max = 25 })
+    form:addStepper("length", "Length", length, { min = 3, max = 25 })
+    
+    local result = form:run()
+    if result == "cancel" then return "stay" end
+    
+    for _, el in ipairs(form.elements) do
+        if el.id == "width" then width = tonumber(el.value) or 9 end
+        if el.id == "length" then length = tonumber(el.value) or 9 end
+    end
+    
+    ui.clear()
+    print("Starting Potato Farm Build...")
+    print(string.format("W: %d, L: %d", width, length))
+    sleep(1)
+    
+    factory.run({ "farm", "--farm-type", "potato", "--width", tostring(width), "--length", tostring(length) })
+    
+    return pauseAndReturn("stay")
+end
+
+local function runBuild(schemaFile)
+    ui.clear()
+    print("Starting Build Operation...")
+    print("Schema: " .. schemaFile)
+end
+
+local function main()
+    while true do
+        ui.clear()
+        print("TurtleOS v2.0")
+        print("-------------")
+        
+        local options = {
+            { text = "Tree Farm", action = runTreeFarm },
+            { text = "Potato Farm", action = runPotatoFarm },
+            { text = "Excavate", action = runExcavate },
+            { text = "Tunnel", action = runTunnel },
+            { text = "Mine", action = runMining },
+            { text = "Farm Designer", action = function()
+                local sub = ui.Menu("Farm Designer")
+                sub:addOption("Tree Farm Design", function()
+                    ui.clear()
+                    shell.run("factory_planner.lua", "--farm", "tree")
+                end)
+                sub:addOption("Potato Farm Design", function()
+                    ui.clear()
+                    shell.run("factory_planner.lua", "--farm", "potato")
+                end)
+                sub:addOption("Back", function() return "back" end)
+                sub:run()
+            end },
+            { text = "Exit", action = function() return "exit" end }
+        }
+        
+        local menu = ui.Menu("Main Menu")
+        for _, opt in ipairs(options) do
+            menu:addOption(opt.text, opt.action)
+        end
+        
+        local result = menu:run()
+        if result == "exit" then break end
+    end
+end
+
+main()
+]=])
+
+addEmbeddedFile("arcadesys_os.lua", [=[
+--[[
+Arcadesys launcher
+]]
+
+local VERSION = "2.0.2"
+
+if type(package) ~= "table" then package = { path = "" } end
+if type(package.path) ~= "string" then package.path = package.path or "" end
+package.loaded = package.loaded or {}
+
+local upstreamRequire = _G.require
+
+local function requireCompat(name)
+    if package.loaded[name] ~= nil then return package.loaded[name] end
+    if upstreamRequire and upstreamRequire ~= requireCompat then
+        local result = upstreamRequire(name)
+        package.loaded[name] = result
+        return result
+    end
+
+    local lastErr
+    for pattern in string.gmatch(package.path or "", "([^;]+)") do
+        local candidate = pattern:gsub("%?", name)
+        if fs.exists(candidate) and not fs.isDir(candidate) then
+            local fn, err = loadfile(candidate)
+            if not fn then
+                lastErr = err
+            else
+                local ok, res = pcall(fn)
+                if not ok then
+                    lastErr = res
+                else
+                    package.loaded[name] = res
+                    return res
+                end
+            end
+        end
+    end
+    error(string.format("module '%s' not found%s", name, lastErr and (": " .. tostring(lastErr)) or ""))
+end
+
+_G.require = _G.require or requireCompat
+
+local function ensurePackagePaths(baseDir)
+    local root = baseDir == "" and "/" or baseDir
+    local paths = {
+        "/?.lua",
+        "/lib/?.lua",
+        fs.combine(root, "?.lua"),
+        fs.combine(root, "lib/?.lua"),
+        fs.combine(root, "arcade/?.lua"),
+        fs.combine(root, "arcade/ui/?.lua"),
+        fs.combine(root, "factory/?.lua"),
+        fs.combine(root, "ui/?.lua"),
+        fs.combine(root, "tools/?.lua"),
+    }
+
+    local current = package.path or ""
+    if current ~= "" then table.insert(paths, current) end
+    local seen, final = {}, {}
+    for _, p in ipairs(paths) do
+        if p and p ~= "" and not seen[p] then
+            seen[p] = true
+            table.insert(final, p)
+        end
+    end
+    package.path = table.concat(final, ";")
+end
+
+local function detectBaseDir()
+    if shell and shell.getRunningProgram then
+        return fs.getDir(shell.getRunningProgram())
+    end
+    if debug and debug.getinfo then
+        local info = debug.getinfo(1, "S")
+        if info and info.source then
+            local src = info.source
+            if src:sub(1, 1) == "@" then src = src:sub(2) end
+            return fs.getDir(src)
+        end
+    end
+    return ""
+end
+
+local function runProgram(path, ui, ...)
+    local args = { ... }
+    local function go()
+        local fn, loadErr = loadfile(path)
+        if not fn then
+            error("Unable to load " .. path .. ": " .. tostring(loadErr))
+        end
+        _G.arg = args
+        return fn(table.unpack(args))
+    end
+
+    local ok, err = pcall(go)
+    if not ok then
+        local msg = "Failed to run " .. path .. ": " .. tostring(err)
+        print(msg)
+        if _G.read then
+            print("(Press Enter to continue)")
+            pcall(read)
+        elseif _G.sleep then
+            sleep(2)
+        end
+    end
+end
+
+local baseDir = detectBaseDir()
+ensurePackagePaths(baseDir == "" and "/" or baseDir)
+
+print(string.format("Arcadesys %s - launching Turtle UI", VERSION))
+
+local function launchTurtleUi()
+    if fs.exists("factory/turtle_os.lua") then
+        runProgram("factory/turtle_os.lua")
+    elseif fs.exists("/factory/turtle_os.lua") then
+        runProgram("/factory/turtle_os.lua")
+    else
+        print("Turtle UI missing.")
+        if _G.read then
+            print("(Press Enter to continue)")
+            pcall(read)
+        elseif _G.sleep then
+            sleep(2)
+        end
+    end
+end
+
+launchTurtleUi()
+]=])
+
 addEmbeddedFile("factory/schema_farm_tree.txt", [[legend:
 . = minecraft:air
 D = minecraft:dirt
@@ -4056,6 +8829,158 @@ layer:1
 .PPP.
 .....
 ]])
+
+addEmbeddedFile("factory/schema_printer_sample.txt", [[legend:
+# = minecraft:stone_bricks
+G = minecraft:glass
+L = minecraft:lantern
+T = minecraft:torch
+. = minecraft:air
+
+layer:0
+.....
+.###.
+.###.
+.###.
+.....
+
+layer:1
+.....
+.#G#.
+.#L#.
+.#G#.
+.....
+
+layer:2
+.....
+..#..
+..#..
+..#..
+.....
+
+layer:3
+.....
+.....
+..T..
+.....
+.....
+]])
+
+
+
+
+
+
+
+addEmbeddedFile("arcade/data/valhelsia_blocks.lua", [=[
+return {
+    { id = "minecraft:stone", label = "Stone" },
+    { id = "minecraft:dirt", label = "Dirt" },
+    { id = "minecraft:cobblestone", label = "Cobblestone" },
+    { id = "minecraft:planks", label = "Planks" },
+    { id = "minecraft:sand", label = "Sand" },
+    { id = "minecraft:gravel", label = "Gravel" },
+    { id = "minecraft:log", label = "Log" },
+    { id = "minecraft:glass", label = "Glass" },
+    { id = "minecraft:chest", label = "Chest" },
+    { id = "minecraft:furnace", label = "Furnace" },
+    { id = "minecraft:crafting_table", label = "Crafting Table" },
+    { id = "minecraft:iron_block", label = "Iron Block" },
+    { id = "minecraft:gold_block", label = "Gold Block" },
+    { id = "minecraft:diamond_block", label = "Diamond Block" },
+    { id = "minecraft:torch", label = "Torch" },
+    { id = "minecraft:hopper", label = "Hopper" },
+    { id = "minecraft:dropper", label = "Dropper" },
+    { id = "minecraft:dispenser", label = "Dispenser" },
+    { id = "minecraft:observer", label = "Observer" },
+    { id = "minecraft:piston", label = "Piston" },
+    { id = "minecraft:sticky_piston", label = "Sticky Piston" },
+    { id = "minecraft:lever", label = "Lever" },
+    { id = "minecraft:redstone_block", label = "Redstone Block" },
+    
+    { id = "storagedrawers:controller", label = "Drawer Controller" },
+    { id = "storagedrawers:oak_full_drawers_1", label = "Oak Drawer" },
+    { id = "storagedrawers:compacting_drawers_3", label = "Compacting Drawer" },
+    
+    { id = "create:andesite_casing", label = "Andesite Casing" },
+    { id = "create:brass_casing", label = "Brass Casing" },
+    { id = "create:copper_casing", label = "Copper Casing" },
+    { id = "create:shaft", label = "Shaft" },
+    { id = "create:cogwheel", label = "Cogwheel" },
+    { id = "create:large_cogwheel", label = "Large Cogwheel" },
+    { id = "create:gearbox", label = "Gearbox" },
+    { id = "create:clutch", label = "Clutch" },
+    { id = "create:gearshift", label = "Gearshift" },
+    { id = "create:encased_chain_drive", label = "Chain Drive" },
+    { id = "create:belt", label = "Mechanical Belt" },
+    { id = "create:chute", label = "Chute" },
+    { id = "create:smart_chute", label = "Smart Chute" },
+    { id = "create:fluid_pipe", label = "Fluid Pipe" },
+    { id = "create:mechanical_pump", label = "Mech Pump" },
+    { id = "create:fluid_tank", label = "Fluid Tank" },
+    { id = "create:mechanical_press", label = "Mech Press" },
+    { id = "create:mechanical_mixer", label = "Mech Mixer" },
+    { id = "create:basin", label = "Basin" },
+    { id = "create:blaze_burner", label = "Blaze Burner" },
+    { id = "create:millstone", label = "Millstone" },
+    { id = "create:crushing_wheel", label = "Crushing Wheel" },
+    { id = "create:mechanical_drill", label = "Mech Drill" },
+    { id = "create:mechanical_saw", label = "Mech Saw" },
+    { id = "create:deployer", label = "Deployer" },
+    { id = "create:portable_storage_interface", label = "Portable Storage" },
+    { id = "create:redstone_link", label = "Redstone Link" },
+    
+    { id = "mekanism:steel_casing", label = "Steel Casing" },
+    { id = "mekanism:metallurgic_infuser", label = "Met. Infuser" },
+    { id = "mekanism:enrichment_chamber", label = "Enrich. Chamber" },
+    { id = "mekanism:crusher", label = "Crusher" },
+    { id = "mekanism:osmium_compressor", label = "Osmium Comp." },
+    { id = "mekanism:combiner", label = "Combiner" },
+    { id = "mekanism:purification_chamber", label = "Purif. Chamber" },
+    { id = "mekanism:pressurized_reaction_chamber", label = "PRC" },
+    { id = "mekanism:chemical_injection_chamber", label = "Chem. Inj." },
+    { id = "mekanism:chemical_crystallizer", label = "Crystallizer" },
+    { id = "mekanism:chemical_dissolution_chamber", label = "Dissolution" },
+    { id = "mekanism:chemical_washer", label = "Washer" },
+    { id = "mekanism:digital_miner", label = "Digital Miner" },
+    { id = "mekanism:basic_universal_cable", label = "Univ. Cable" },
+    { id = "mekanism:basic_mechanical_pipe", label = "Mech. Pipe" },
+    { id = "mekanism:basic_pressurized_tube", label = "Press. Tube" },
+    { id = "mekanism:basic_logistical_transporter", label = "Log. Transp." },
+    
+    { id = "immersiveengineering:coke_oven", label = "Coke Oven" },
+    { id = "immersiveengineering:blast_furnace", label = "Blast Furnace" },
+    { id = "immersiveengineering:windmill", label = "Windmill" },
+    { id = "immersiveengineering:watermill", label = "Watermill" },
+    { id = "immersiveengineering:dynamo", label = "Dynamo" },
+    { id = "immersiveengineering:hv_capacitor", label = "HV Capacitor" },
+    { id = "immersiveengineering:mv_capacitor", label = "MV Capacitor" },
+    { id = "immersiveengineering:lv_capacitor", label = "LV Capacitor" },
+    { id = "immersiveengineering:conveyor_basic", label = "Conveyor" },
+    
+    { id = "ae2:controller", label = "ME Controller" },
+    { id = "ae2:drive", label = "ME Drive" },
+    { id = "ae2:terminal", label = "ME Terminal" },
+    { id = "ae2:crafting_terminal", label = "Crafting Term" },
+    { id = "ae2:pattern_terminal", label = "Pattern Term" },
+    { id = "ae2:interface", label = "ME Interface" },
+    { id = "ae2:molecular_assembler", label = "Mol. Assembler" },
+    { id = "ae2:cable_glass", label = "Glass Cable" },
+    { id = "ae2:cable_smart", label = "Smart Cable" },
+    
+    { id = "computercraft:computer_normal", label = "Computer" },
+    { id = "computercraft:computer_advanced", label = "Adv Computer" },
+    { id = "computercraft:turtle_normal", label = "Turtle" },
+    { id = "computercraft:turtle_advanced", label = "Adv Turtle" },
+    { id = "computercraft:monitor_normal", label = "Monitor" },
+    { id = "computercraft:monitor_advanced", label = "Adv Monitor" },
+    { id = "computercraft:disk_drive", label = "Disk Drive" },
+    { id = "computercraft:printer", label = "Printer" },
+    { id = "computercraft:speaker", label = "Speaker" },
+    { id = "computercraft:wired_modem", label = "Wired Modem" },
+    { id = "computercraft:wireless_modem_normal", label = "Wireless Modem" },
+}
+]=])
 
 addEmbeddedFile("factory_planner.lua", [=[---@diagnostic disable: undefined-global, undefined-field
 

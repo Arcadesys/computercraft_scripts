@@ -8,6 +8,10 @@ local logger = require("lib_logger")
 local diagnostics = require("lib_diagnostics")
 local debug = debug
 
+if type(package) ~= "table" then package = { path = "" } end
+if type(package.path) ~= "string" then package.path = package.path or "" end
+package.loaded = package.loaded or {}
+
 -- Force reload of state modules to ensure updates are applied
 local function requireForce(name)
     package.loaded[name] = nil
