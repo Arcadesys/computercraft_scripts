@@ -80,6 +80,18 @@ local function pointInControl(control, x, y)
     return y == control.y and x >= control.x and x <= (control.x + control.width - 1)
 end
 
+local function drawSequencerButton(name, label, x, y, bgColor, textColor)
+    bgColor = bgColor or colors.gray
+    textColor = textColor or colors.black
+    term.setCursorPos(x, y)
+    term.setBackgroundColor(bgColor)
+    term.setTextColor(textColor)
+    term.write(label)
+    registerSequencerButton(name, x, y, #label)
+    term.setBackgroundColor(WINDOW_BG_COLOR)
+    term.setTextColor(colors.black)
+end
+
 -- State
 local windows = {
     {
@@ -213,37 +225,25 @@ local function drawWindow(win)
         term.setCursorPos(win.x + 1, instLineY)
         term.write("Instrument: " .. instrumentName)
         local instMinusX = win.x + 25
-        term.setCursorPos(instMinusX, instLineY)
-        term.write("[-]")
-        registerSequencerButton("instrumentMinus", instMinusX, instLineY)
+        drawSequencerButton("instrumentMinus", "[-]", instMinusX, instLineY)
         local instPlusX = instMinusX + 4
-        term.setCursorPos(instPlusX, instLineY)
-        term.write("[+]")
-        registerSequencerButton("instrumentPlus", instPlusX, instLineY)
+        drawSequencerButton("instrumentPlus", "[+]", instPlusX, instLineY)
         local pitchLineY = instLineY + 1
         term.setCursorPos(win.x + 1, pitchLineY)
         term.write(string.format("Pitch: %02d", selectedStep.pitch))
         local pitchMinusX = win.x + 16
-        term.setCursorPos(pitchMinusX, pitchLineY)
-        term.write("[-]")
-        registerSequencerButton("pitchMinus", pitchMinusX, pitchLineY)
+        drawSequencerButton("pitchMinus", "[-]", pitchMinusX, pitchLineY)
         local pitchPlusX = pitchMinusX + 4
-        term.setCursorPos(pitchPlusX, pitchLineY)
-        term.write("[+]")
-        registerSequencerButton("pitchPlus", pitchPlusX, pitchLineY)
+        drawSequencerButton("pitchPlus", "[+]", pitchPlusX, pitchLineY)
         local lenLabelX = win.x + 26
         term.setCursorPos(lenLabelX, pitchLineY)
         term.write(string.format("Length: %d", selectedStep.length))
         local lenMinusX = lenLabelX + 11
-        term.setCursorPos(lenMinusX, pitchLineY)
-        term.write("[-]")
-        registerSequencerButton("lengthMinus", lenMinusX, pitchLineY)
+        drawSequencerButton("lengthMinus", "[-]", lenMinusX, pitchLineY)
         local lenPlusX = lenMinusX + 4
-        term.setCursorPos(lenPlusX, pitchLineY)
-        term.write("[+]")
-        registerSequencerButton("lengthPlus", lenPlusX, pitchLineY)
+        drawSequencerButton("lengthPlus", "[+]", lenPlusX, pitchLineY)
         term.setCursorPos(win.x + 1, pitchLineY + 1)
-        term.write("Left click step = toggle & select | Right click = select")
+        term.write("Left click step = toggle & select | Right click = select only")
     else
         term.setCursorPos(win.x + 1, win.y + 2)
         term.write("Hello World!")
