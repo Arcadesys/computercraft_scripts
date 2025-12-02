@@ -44,36 +44,3969 @@ end
 
 -- START_EMBEDDED_FILES
 addEmbeddedFile("startup.lua", [[
-local version = "Workstation (embedded)"
-term.clear()
-term.setCursorPos(1, 1)
-print(version)
-print("Booting...")
-local home = "home.lua"
-if fs.exists(home) then
-  shell.run(home)
+-- startup.lua
+-- Simplified launcher for TurtleOS
+
+package.path = package.path .. ";/?.lua;/lib/?.lua"
+
+if fs.exists("factory/turtle_os.lua") then
+    shell.run("factory/turtle_os.lua")
+elseif fs.exists("/factory/turtle_os.lua") then
+    shell.run("/factory/turtle_os.lua")
 else
-  print("Home program missing.")
+    print("Error: factory/turtle_os.lua not found.")
 end
 ]])
 
-addEmbeddedFile("home.lua", [[
-local version = "Workstation (embedded)"
-term.clear()
-term.setCursorPos(1, 1)
-print(version)
-print(string.rep("-", string.len(version)))
-print("This is the built-in rescue image installed by install.lua.")
-print("Replace it by running the installer with a proper manifest URL.")
-print()
-print("Suggestions:")
-print(" - Verify HTTP is enabled in your ComputerCraft/CC:Tweaked config.")
-print(" - Run: install <https://your.domain/manifest.json>")
-print()
-print("Shell available below. Type 'reboot' when finished.")
-print()
-shell.run("shell")
-]])
+addEmbeddedFile("arcadesys_os.lua", [===[
+--[[
+Arcadesys launcher
+
+Goals:
+- Run on CraftOS-PC for both computer and turtle profiles.
+- Keep the turtle state machine untouched; we just dispatch to existing entrypoints.
+- Avoid in-game testing by making it easy to start common programs from one menu.
+]]
+
+---@diagnostic disable: undefined-global
+
+local VERSION = "2.0.2"
+
+if type(package) ~= "table" then package = { path = "" } end
+if type(package.path) ~= "string" then package.path = package.path or "" end
+package.loaded = package.loaded or {}
+
+local upstreamRequire = _G.require
+
+local function requireCompat(name)
+    if package.loaded[name] ~= nil then return package.loaded[name] end
+    if upstreamRequire and upstreamRequire ~= requireCompat then
+        local result = upstreamRequire(name)
+        package.loaded[name] = result
+        return result
+    end
+
+    local lastErr
+    for pattern in string.gmatch(package.path or "", "([^;]+)") do
+        local candidate = pattern:gsub("%?", name)
+        if fs.exists(candidate) and not fs.isDir(candidate) then
+            local fn, err = loadfile(candidate)
+            if not fn then
+                lastErr = err
+            else
+                local ok, res = pcall(fn)
+                if not ok then
+                    lastErr = res
+                else
+                    package.loaded[name] = res
+                    return res
+                end
+            end
+        end
+    end
+    error(string.format("module '%s' not found%s", name, lastErr and (": " .. tostring(lastErr)) or ""))
+end
+
+_G.require = _G.require or requireCompat
+
+local DEFAULT_MANIFEST_URL =
+    "https://raw.githubusercontent.com/Arcadesys/computercraft_scripts/main/manifest.json"
+
+local function ensurePackagePaths(baseDir)
+    local root = baseDir == "" and "/" or baseDir
+    local paths = {
+        "/?.lua",
+        "/lib/?.lua",
+        fs.combine(root, "?.lua"),
+        fs.combine(root, "lib/?.lua"),
+        fs.combine(root, "arcade/?.lua"),
+        fs.combine(root, "arcade/ui/?.lua"),
+        fs.combine(root, "factory/?.lua"),
+        fs.combine(root, "ui/?.lua"),
+        fs.combine(root, "tools/?.lua"),
+    }
+
+    -- Rebuild path with guaranteed leading entries, plus any existing paths.
+    local current = package.path or ""
+    if current ~= "" then table.insert(paths, current) end
+    -- Deduplicate while preserving order.
+    local seen, final = {}, {}
+    for _, p in ipairs(paths) do
+        if p and p ~= "" and not seen[p] then
+            seen[p] = true
+            table.insert(final, p)
+        end
+    end
+    package.path = table.concat(final, ";")
+end
+
+local function detectBaseDir()
+    if shell and shell.getRunningProgram then
+        return fs.getDir(shell.getRunningProgram())
+    end
+    if debug and debug.getinfo then
+        local info = debug.getinfo(1, "S")
+        if info and info.source then
+            local src = info.source
+            if src:sub(1, 1) == "@" then src = src:sub(2) end
+            return fs.getDir(src)
+        end
+    end
+    return ""
+end
+
+local function readAll(handle)
+    local content = handle.readAll()
+    handle.close()
+    return content
+end
+
+local function fetch(url)
+    if not http then
+        return nil, "HTTP API is disabled"
+    end
+
+    local response, err = http.get(url)
+    if not response then
+        return nil, err or "unknown HTTP error"
+    end
+
+    return readAll(response)
+end
+
+local function decodeJson(payload)
+    local ok, result = pcall(textutils.unserializeJSON, payload)
+    if not ok then
+        return nil, "Invalid JSON: " .. tostring(result)
+    end
+    return result
+end
+
+local function sanitizeManifest(manifest)
+    if type(manifest) ~= "table" then
+        return nil, "Manifest is not a table"
+    end
+    if type(manifest.files) ~= "table" or #manifest.files == 0 then
+        return nil, "Manifest contains no files"
+    end
+    return manifest
+end
+
+local function loadManifest(url)
+    if not url then
+        return nil, "No manifest URL provided"
+    end
+
+    local body, err = fetch(url)
+    if not body then
+        return nil, err
+    end
+
+    local manifest, decodeErr = decodeJson(body)
+    if not manifest then
+        return nil, decodeErr
+    end
+
+    local valid, reason = sanitizeManifest(manifest)
+    if not valid then
+        return nil, reason
+    end
+
+    return manifest
+end
+
+local function downloadFiles(manifest)
+    local bundle = {
+        name = manifest.name or "Arcadesys",
+        version = manifest.version or "unknown",
+        files = {},
+    }
+
+    for _, file in ipairs(manifest.files) do
+        if not file.path then
+            return nil, "File entry missing 'path'"
+        end
+
+        if file.content then
+            table.insert(bundle.files, { path = file.path, content = file.content })
+        elseif file.url then
+            local data, err = fetch(file.url)
+            if not data then
+                return nil, err or ("Failed to download " .. file.url)
+            end
+            table.insert(bundle.files, { path = file.path, content = data })
+        else
+            return nil, "File entry for " .. file.path .. " needs 'url' or 'content'"
+        end
+    end
+
+    return bundle
+end
+
+local function writeFile(path, content)
+    local dir = fs.getDir(path)
+    if dir ~= "" then
+        fs.makeDir(dir)
+    end
+
+    local handle = fs.open(path, "wb") or fs.open(path, "w")
+    if not handle then
+        error("Unable to write to " .. path)
+    end
+
+    handle.write(content or "")
+    handle.close()
+end
+
+local function performUpdate(ui)
+    if not http then
+        ui:notify("Update requires HTTP; enable it in the ComputerCraft config.")
+        return
+    end
+
+    ui:notify("Checking for updates...")
+    local manifest, err = loadManifest(DEFAULT_MANIFEST_URL)
+    if not manifest then
+        ui:notify("Manifest error: " .. tostring(err))
+        return
+    end
+
+    local bundle, downloadErr = downloadFiles(manifest)
+    if not bundle then
+        ui:notify("Download failed: " .. tostring(downloadErr))
+        return
+    end
+
+    ui:notify(string.format("Installing %s (%s)...", bundle.name, bundle.version))
+    for _, file in ipairs(bundle.files) do
+        writeFile(file.path, file.content)
+    end
+
+    ui:notify("Update complete. Designs and saved work were left untouched.")
+end
+
+local function logError(msg)
+    local stamp = textutils and textutils.formatTime and textutils.formatTime(os.epoch and os.epoch("utc") / 1000 or 0, true)
+        or tostring(os.time and os.time() or "")
+    local line = string.format("[%s] %s", stamp, msg)
+    local f = fs.open("/arcadesys_error.log", "a")
+    if f then
+        f.writeLine(line)
+        f.close()
+    end
+end
+
+local baseDir = detectBaseDir()
+ensurePackagePaths(baseDir == "" and "/" or baseDir)
+
+local okBoot, boot = pcall(require, "arcade.boot")
+if okBoot and type(boot) == "table" and boot.setupPaths then
+    pcall(boot.setupPaths)
+end
+
+print(string.format("Arcadesys %s - launching Turtle UI", VERSION))
+
+local function runProgram(path, ui, ...)
+    local args = { ... }
+    local function go()
+        local fn, loadErr = loadfile(path)
+        if not fn then
+            error("Unable to load " .. path .. ": " .. tostring(loadErr))
+        end
+        _G.arg = args
+        return fn(table.unpack(args))
+    end
+
+    local ok, err = pcall(go)
+    if not ok then
+        local msg = "Failed to run " .. path .. ": " .. tostring(err)
+        logError(msg)
+        if ui and ui.notify then
+            ui:notify(msg)
+            ui:pause("(Press Enter to return)")
+        else
+            print(msg)
+            if _G.read then
+                print("(Press Enter to continue)")
+                pcall(read)
+            elseif _G.sleep then
+                sleep(2)
+            end
+        end
+    end
+end
+
+local function installMockTurtle()
+    local original = _G.turtle
+    if type(original) == "table" then return function() end end
+
+    local function okReturn()
+        return true
+    end
+
+    local function detectReturn()
+        return false
+    end
+
+    local function inspectReturn()
+        return true, { name = "minecraft:air", state = {}, tags = {} }
+    end
+
+    local stub = {
+        forward = okReturn,
+        back = okReturn,
+        up = okReturn,
+        down = okReturn,
+        turnLeft = okReturn,
+        turnRight = okReturn,
+        dig = okReturn,
+        digUp = okReturn,
+        digDown = okReturn,
+        place = okReturn,
+        placeUp = okReturn,
+        placeDown = okReturn,
+        attack = okReturn,
+        attackUp = okReturn,
+        attackDown = okReturn,
+        select = okReturn,
+        getSelectedSlot = function() return 1 end,
+        compare = okReturn,
+        compareUp = okReturn,
+        compareDown = okReturn,
+        compareTo = okReturn,
+        transferTo = okReturn,
+        drop = okReturn,
+        dropUp = okReturn,
+        dropDown = okReturn,
+        suck = okReturn,
+        suckUp = okReturn,
+        suckDown = okReturn,
+        detect = detectReturn,
+        detectUp = detectReturn,
+        detectDown = detectReturn,
+        inspect = inspectReturn,
+        inspectUp = inspectReturn,
+        inspectDown = inspectReturn,
+        getItemDetail = function() return nil end,
+        getItemCount = function() return 0 end,
+        getItemSpace = function() return 64 end,
+        getItemLimit = function() return 64 end,
+        getFuelLevel = function() return math.huge end,
+        getFuelLimit = function() return math.huge end,
+        refuel = okReturn,
+        craft = okReturn,
+        equipLeft = okReturn,
+        equipRight = okReturn,
+    }
+
+    setmetatable(stub, { __index = function()
+        return okReturn
+    end })
+
+    _G.turtle = stub
+    return function()
+        _G.turtle = original
+    end
+end
+
+local function maybe(label, path, hint)
+    if not fs.exists(path) then return nil end
+    return {
+        label = label,
+        hint = hint,
+        action = function(_, ui)
+            ui:notify("Launching " .. label .. "...")
+            runProgram(path, ui)
+        end
+    }
+end
+
+local isTurtle = type(_G.turtle) == "table"
+
+local function launchTurtleUi()
+    local cleanup
+    if not isTurtle then
+        cleanup = installMockTurtle()
+    end
+
+    if fs.exists("factory/turtle_os.lua") then
+        runProgram("factory/turtle_os.lua")
+    elseif fs.exists("/factory/turtle_os.lua") then
+        runProgram("/factory/turtle_os.lua")
+    else
+        print("Turtle UI missing. Try running 'Update Arcadesys' or reinstall.")
+        if _G.read then
+            print("(Press Enter to continue)")
+            pcall(read)
+        elseif _G.sleep then
+            sleep(2)
+        end
+    end
+
+    if cleanup then cleanup() end
+end
+
+launchTurtleUi()
+]===])
+
+addEmbeddedFile("factory/main.lua", [=[
+--[[
+Main entry point for the modular agent system.
+Implements the finite state machine loop.
+--]]
+
+-- Ensure package path includes lib and arcade
+if not string.find(package.path, "/lib/?.lua") then
+    package.path = package.path .. ";/?.lua;/lib/?.lua;/arcade/?.lua;/factory/?.lua"
+end
+
+local logger = require("lib_logger")
+local movement = require("lib_movement")
+local ui = require("lib_ui")
+local trash_config = require("ui.trash_config")
+
+local function interactiveSetup(ctx)
+    local mode = "treefarm"
+    -- Farm params
+    local width = 9
+    local height = 9
+    -- Mine params
+    local length = 60
+    local branchInterval = 3
+    local branchLength = 16
+    local torchInterval = 6
+    
+    local selected = 1 
+    
+    while true do
+        ui.clear()
+        ui.drawFrame(2, 2, 30, 16, "Factory Setup")
+        
+        -- Mode
+        ui.label(4, 4, "Mode: ")
+        local modeLabel = "Tree"
+        if mode == "potatofarm" then modeLabel = "Potato" end
+        if mode == "mine" then modeLabel = "Mine" end
+        
+        if selected == 1 then
+            if term.isColor() then term.setTextColor(colors.yellow) end
+            term.write("< " .. modeLabel .. " >")
+        else
+            if term.isColor() then term.setTextColor(colors.white) end
+            term.write("  " .. modeLabel .. "  ")
+        end
+
+        local startIdx = 4
+        
+        if mode == "treefarm" or mode == "potatofarm" then
+            startIdx = 4
+            -- Width
+            ui.label(4, 6, "Width: ")
+            if selected == 2 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write("< " .. width .. " >")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("  " .. width .. "  ")
+            end
+            
+            -- Height
+            ui.label(4, 8, "Height:")
+            if selected == 3 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write("< " .. height .. " >")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("  " .. height .. "  ")
+            end
+        elseif mode == "mine" then
+            startIdx = 7
+            -- Length
+            ui.label(4, 6, "Length: ")
+            if selected == 2 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write("< " .. length .. " >")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("  " .. length .. "  ")
+            end
+
+            -- Branch Interval
+            ui.label(4, 7, "Br. Int:")
+            if selected == 3 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write("< " .. branchInterval .. " >")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("  " .. branchInterval .. "  ")
+            end
+
+            -- Branch Length
+            ui.label(4, 8, "Br. Len:")
+            if selected == 4 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write("< " .. branchLength .. " >")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("  " .. branchLength .. "  ")
+            end
+
+            -- Torch Interval
+            ui.label(4, 9, "Torch Int:")
+            if selected == 5 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write("< " .. torchInterval .. " >")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("  " .. torchInterval .. "  ")
+            end
+
+            -- Trash Config
+            ui.label(4, 10, "Trash:")
+            if selected == 6 then
+                if term.isColor() then term.setTextColor(colors.yellow) end
+                term.write(" < EDIT > ")
+            else
+                if term.isColor() then term.setTextColor(colors.white) end
+                term.write("   EDIT   ")
+            end
+        end
+        
+        -- Button
+        ui.button(8, 12, "START", selected == startIdx)
+        
+        local event, key = os.pullEvent("key")
+        if key == keys.up then
+            selected = selected - 1
+            if selected < 1 then selected = startIdx end
+        elseif key == keys.down then
+            selected = selected + 1
+            if selected > startIdx then selected = 1 end
+        elseif key == keys.left then
+            if selected == 1 then 
+                if mode == "treefarm" then mode = "potatofarm"
+                elseif mode == "potatofarm" then mode = "mine"
+                else mode = "treefarm" end
+                selected = 1
+            end
+            if mode == "treefarm" or mode == "potatofarm" then
+                if selected == 2 then width = math.max(1, width - 1) end
+                if selected == 3 then height = math.max(1, height - 1) end
+            elseif mode == "mine" then
+                if selected == 2 then length = math.max(10, length - 10) end
+                if selected == 3 then branchInterval = math.max(1, branchInterval - 1) end
+                if selected == 4 then branchLength = math.max(1, branchLength - 1) end
+                if selected == 5 then torchInterval = math.max(1, torchInterval - 1) end
+            end
+        elseif key == keys.right then
+            if selected == 1 then 
+                if mode == "treefarm" then mode = "mine"
+                elseif mode == "mine" then mode = "potatofarm"
+                else mode = "treefarm" end
+                selected = 1
+            end
+            if mode == "treefarm" or mode == "potatofarm" then
+                if selected == 2 then width = width + 1 end
+                if selected == 3 then height = height + 1 end
+            elseif mode == "mine" then
+                if selected == 2 then length = length + 10 end
+                if selected == 3 then branchInterval = branchInterval + 1 end
+                if selected == 4 then branchLength = branchLength + 1 end
+                if selected == 5 then torchInterval = torchInterval + 1 end
+            end
+        elseif key == keys.enter then
+            if selected == startIdx then
+                return { 
+                    mode = mode, 
+                    width = width, 
+                    height = height, 
+                    length = length, 
+                    branchInterval = branchInterval, 
+                    branchLength = branchLength, 
+                    torchInterval = torchInterval 
+                }
+            elseif mode == "mine" and selected == 6 then
+                trash_config.run()
+            end
+        end
+    end
+end
+
+-- Load states
+local states = {
+    INITIALIZE = require("state_initialize"),
+    BUILD = require("state_build"),
+    MINE = require("state_mine"),
+    RESTOCK = require("state_restock"),
+    REFUEL = require("state_refuel"),
+    BLOCKED = require("state_blocked"),
+    ERROR = require("state_error"),
+    DONE = require("state_done"),
+    CHECK_REQUIREMENTS = require("state_check_requirements"),
+    TREEFARM = require("state_treefarm"),
+    POTATOFARM = require("state_potatofarm"),
+    BRANCHMINE = require("state_branchmine")
+}
+
+local function main(args)
+    -- Initialize context
+    local ctx = {
+        state = "INITIALIZE",
+        config = {
+            verbose = false,
+            schemaPath = nil
+        },
+        origin = { x=0, y=0, z=0, facing="north" }, -- Default home
+        pointer = 1, -- Current step in the build path
+        schema = nil, -- Will be loaded by INITIALIZE
+        strategy = nil, -- Will be computed by INITIALIZE
+        inventoryState = {},
+        fuelState = {},
+        retries = 0
+    }
+
+    -- Parse args
+    local i = 1
+    while i <= #args do
+        local arg = args[i]
+        if arg == "--verbose" then
+            ctx.config.verbose = true
+        elseif arg == "mine" then
+            ctx.config.mode = "mine"
+        elseif arg == "treefarm" then
+            ctx.config.mode = "treefarm"
+        elseif arg == "potatofarm" then
+            ctx.config.mode = "potatofarm"
+        elseif arg == "--length" then
+            i = i + 1
+            ctx.config.length = tonumber(args[i])
+        elseif arg == "--width" then
+            i = i + 1
+            ctx.config.width = tonumber(args[i])
+        elseif arg == "--height" then
+            i = i + 1
+            ctx.config.height = tonumber(args[i])
+        elseif arg == "--branch-interval" then
+            i = i + 1
+            ctx.config.branchInterval = tonumber(args[i])
+        elseif arg == "--branch-length" then
+            i = i + 1
+            ctx.config.branchLength = tonumber(args[i])
+        elseif arg == "--torch-interval" then
+            i = i + 1
+            ctx.config.torchInterval = tonumber(args[i])
+        elseif not arg:find("^--") and not ctx.config.schemaPath and ctx.config.mode ~= "mine" then
+             ctx.config.schemaPath = arg
+        end
+        i = i + 1
+    end
+    
+    -- If no args provided, run interactive setup
+    if #args == 0 then
+        local setupConfig = interactiveSetup(ctx)
+        for k, v in pairs(setupConfig) do
+            ctx.config[k] = v
+        end
+    end
+    
+    if not ctx.config.schemaPath and ctx.config.mode ~= "mine" then
+        ctx.config.schemaPath = "schema.json"
+    end
+
+    ctx.logger = logger.new({
+        level = ctx.config.verbose and "debug" or "info"
+    })
+    ctx.logger:info("Agent starting...")
+
+    -- Attempt a safe step-out: 2 forward, then 2 to the right (restore facing).
+    local function stepOut(ctx)
+        local ok, err
+        ok, err = movement.forward(ctx)
+        if not ok then return false, err end
+        ok, err = movement.forward(ctx)
+        if not ok then return false, err end
+        ok, err = movement.turnRight(ctx)
+        if not ok then return false, err end
+        ok, err = movement.forward(ctx)
+        if not ok then return false, err end
+        ok, err = movement.forward(ctx)
+        if not ok then return false, err end
+        -- Restore original facing
+        ok, err = movement.turnLeft(ctx)
+        if not ok then return false, err end
+        return true
+    end
+
+    local ok, err = stepOut(ctx)
+    if not ok then
+        ctx.logger:warn("Initial step-out failed: " .. tostring(err))
+    else
+        ctx.logger:info("Stepped out to working position (2 forward, 2 right)")
+    end
+
+    -- State machine loop
+    while ctx.state ~= "EXIT" do
+        local currentStateFunc = states[ctx.state]
+        if not currentStateFunc then
+            ctx.logger:error("Unknown state: " .. tostring(ctx.state))
+            break
+        end
+
+        ctx.logger:debug("Entering state: " .. ctx.state)
+        
+        local ok, nextStateOrErr = pcall(currentStateFunc, ctx)
+        
+        if not ok then
+            ctx.logger:error("Crash in state " .. ctx.state .. ": " .. tostring(nextStateOrErr))
+            ctx.lastError = nextStateOrErr
+            ctx.state = "ERROR"
+        else
+            ctx.state = nextStateOrErr
+        end
+        
+        ---@diagnostic disable-next-line: undefined-global
+        sleep(0) -- Yield to avoid "Too long without yielding"
+    end
+
+    ctx.logger:info("Agent finished.")
+    
+    if ctx.lastError then
+        print("Agent finished: " .. tostring(ctx.lastError))
+    else
+        print("Agent finished: success!")
+    end
+end
+
+local args = { ... }
+main(args)
+]=])
+
+addEmbeddedFile("factory/schema_modular_factory.txt", [=[
+legend:
+# = minecraft:stone_bricks
+S = minecraft:stone
+P = minecraft:oak_planks
+L = minecraft:lantern
+T = mekanism:basic_logistical_transporter
+U = mekanism:basic_universal_cable
+. = minecraft:air
+
+layer:0
+SSSSSSSSSSSSSSSS
+SSSSSSSSSSSSSSSS
+SSSSSSSSSSSSSSSS
+SSSSSSSSSSSSSSSS
+SSSSSSSSSSSSSSSS
+SSSSSSSSSSSSSSSS
+SSSSSSSSSSSSSSSS
+SSSSSSSSSSSSSSSS
+SSSSSSSSSSSSSSSS
+SSSSSSSSSSSSSSSS
+SSSSSSSSSSSSSSSS
+SSSSSSSSSSSSSSSS
+SSSSSSSSSSSSSSSS
+SSSSSSSSSSSSSSSS
+SSSSSSSSSSSSSSSS
+SSSSSSSSSSSSSSSS
+
+layer:1
+################
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+################
+
+layer:2
+################
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+################
+
+layer:3
+################
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+################
+
+layer:4
+################
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+################
+
+layer:5
+################
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+################
+
+layer:6
+################
+#U............T#
+#U............T#
+#U............T#
+#U............T#
+#U............T#
+#U............T#
+#U............T#
+#U......L.....T#
+#U............T#
+#U............T#
+#U............T#
+#U............T#
+#U............T#
+#U............T#
+#U............T#
+################
+
+layer:7
+################
+#PPPPPPPPPPPPPP#
+#PPPPPPPPPPPPPP#
+#PPPPPPPPPPPPPP#
+#PPPPPPPPPPPPPP#
+#PPPPPPPPPPPPPP#
+#PPPPPPPPPPPPPP#
+#PPPPPPPPPPPPPP#
+#PPPPPPPPPPPPPP#
+#PPPPPPPPPPPPPP#
+#PPPPPPPPPPPPPP#
+#PPPPPPPPPPPPPP#
+#PPPPPPPPPPPPPP#
+#PPPPPPPPPPPPPP#
+#PPPPPPPPPPPPPP#
+#PPPPPPPPPPPPPP#
+################
+]=])
+
+addEmbeddedFile("factory/state_initialize.lua", [=[
+--[[
+State: INITIALIZE
+Sets up the agent's context, validates schema, and computes build strategy.
+--]]
+
+local logger = require("lib_logger")
+local schemaUtils = require("lib_schema")
+local parser = require("lib_parser")
+local movement = require("lib_movement")
+local inventory = require("lib_inventory")
+local fuelLib = require("lib_fuel")
+
+local function INITIALIZE(ctx)
+    logger.log(ctx, "info", "Initializing Factory Agent...")
+    
+    -- 1. Check Fuel
+    if not fuelLib.hasFuel(ctx) then
+        logger.log(ctx, "warn", "Low fuel on startup.")
+        -- We don't block here, check_requirements will handle it
+    end
+
+    -- 2. Load Schema (if applicable)
+    if ctx.config.mode == "mine" or ctx.config.mode == "tunnel" or ctx.config.mode == "excavate" then
+        logger.log(ctx, "info", "Mode: " .. ctx.config.mode)
+        ctx.strategy = { type = ctx.config.mode }
+        return "CHECK_REQUIREMENTS"
+    elseif ctx.config.mode == "treefarm" or ctx.config.mode == "potatofarm" then
+        logger.log(ctx, "info", "Mode: " .. ctx.config.mode)
+        ctx.strategy = { type = ctx.config.mode }
+        
+        if ctx.config.mode == "treefarm" then
+            ctx.treefarm = {
+                state = "SCAN",
+                width = ctx.config.width,
+                height = ctx.config.height,
+                chests = { output = "front", fuel = "up" } -- Default assumptions
+            }
+            return "TREEFARM"
+        elseif ctx.config.mode == "potatofarm" then
+            ctx.potatofarm = {
+                state = "SCAN",
+                width = ctx.config.width,
+                height = ctx.config.height,
+                chests = { output = "front", fuel = "up" }
+            }
+            return "POTATOFARM"
+        end
+        
+        return "CHECK_REQUIREMENTS"
+    end
+
+    local schemaPath = ctx.config.schemaPath
+    if not schemaPath then
+        logger.log(ctx, "error", "No schema provided.")
+        return "ERROR"
+    end
+
+    if not fs.exists(schemaPath) then
+        logger.log(ctx, "error", "Schema file not found: " .. schemaPath)
+        return "ERROR"
+    end
+
+    logger.log(ctx, "info", "Loading schema: " .. schemaPath)
+    local ok, schema, meta = parser.parseFile(ctx, schemaPath)
+    if not ok then
+        logger.log(ctx, "error", "Failed to parse schema: " .. tostring(schema))
+        return "ERROR"
+    end
+
+    ctx.schema = schema
+    ctx.schemaMeta = meta
+    
+    -- 3. Compute Strategy
+    -- For now, simple layer-by-layer
+    ctx.strategy = {
+        type = "build",
+        order = "layer_asc"
+    }
+    
+    -- 4. Scan Inventory
+    inventory.scan(ctx)
+    
+    return "CHECK_REQUIREMENTS"
+end
+
+return INITIALIZE
+]=])
+
+addEmbeddedFile("factory/state_check_requirements.lua", [=[
+--[[
+State: CHECK_REQUIREMENTS
+Verifies fuel and materials before starting/resuming.
+--]]
+
+local logger = require("lib_logger")
+local inventory = require("lib_inventory")
+local fuelLib = require("lib_fuel")
+
+local function CHECK_REQUIREMENTS(ctx)
+    logger.log(ctx, "info", "Checking requirements...")
+
+    -- 1. Fuel
+    if not fuelLib.checkFuel(ctx) then
+        logger.log(ctx, "warn", "Insufficient fuel.")
+        ctx.resumeState = "CHECK_REQUIREMENTS"
+        return "REFUEL"
+    end
+
+    -- 2. Materials (if building)
+    if ctx.strategy.type == "build" and ctx.schema then
+        -- Calculate required materials vs inventory
+        local required = {}
+        for x, xRow in pairs(ctx.schema) do
+            for y, yRow in pairs(xRow) do
+                for z, block in pairs(yRow) do
+                    local mat = block.material
+                    required[mat] = (required[mat] or 0) + 1
+                end
+            end
+        end
+        
+        inventory.scan(ctx)
+        local missing = {}
+        for mat, count in pairs(required) do
+            local has = inventory.count(ctx, mat)
+            if has < count then
+                missing[mat] = count - has
+            end
+        end
+        
+        if next(missing) then
+            for mat, count in pairs(missing) do
+                logger.log(ctx, "warn", "Missing: " .. mat .. " x" .. count)
+            end
+            -- For now, just warn and proceed, or switch to RESTOCK
+            -- ctx.missingMaterial = next(missing)
+            -- return "RESTOCK"
+            
+            -- Prompt user?
+            print("Missing materials. Press Enter to continue anyway (or Ctrl+T to terminate)...")
+            read()
+        end
+    end
+
+    if ctx.strategy.type == "mine" or ctx.strategy.type == "tunnel" or ctx.strategy.type == "excavate" then
+        return "MINE"
+    elseif ctx.strategy.type == "treefarm" then
+        return "TREEFARM"
+    elseif ctx.strategy.type == "potatofarm" then
+        return "POTATOFARM"
+    end
+
+    return "BUILD"
+end
+
+return CHECK_REQUIREMENTS
+]=])
+
+addEmbeddedFile("factory/state_build.lua", [=[
+--[[
+State: BUILD
+Executes the build plan.
+--]]
+
+local movement = require("lib_movement")
+local inventory = require("lib_inventory")
+local logger = require("lib_logger")
+local world = require("lib_world")
+
+local function BUILD(ctx)
+    if not ctx.schema then return "DONE" end
+    
+    -- Simple iterator over schema
+    -- We need a persistent pointer to know where we left off
+    -- ctx.pointer is an index into a flattened list of blocks?
+    -- Or we iterate and skip completed?
+    
+    -- Let's flatten the schema into a list of tasks if not done
+    if not ctx.buildTasks then
+        ctx.buildTasks = {}
+        for x, xRow in pairs(ctx.schema) do
+            for y, yRow in pairs(xRow) do
+                for z, block in pairs(yRow) do
+                    table.insert(ctx.buildTasks, { x=x, y=y, z=z, block=block })
+                end
+            end
+        end
+        -- Sort by Y, then X, then Z
+        table.sort(ctx.buildTasks, function(a, b)
+            if a.y ~= b.y then return a.y < b.y end
+            if a.x ~= b.x then return a.x < b.x end
+            return a.z < b.z
+        end)
+    end
+    
+    if ctx.pointer > #ctx.buildTasks then
+        return "DONE"
+    end
+    
+    local task = ctx.buildTasks[ctx.pointer]
+    local x, y, z = task.x, task.y, task.z
+    local block = task.block
+    
+    -- Move to position
+    -- We want to place the block at (x,y,z) relative to origin
+    -- So we should move to adjacent?
+    -- Ideally move to (x, y+1, z) and place down, or (x, y-1, z) and place up.
+    -- Let's try "above" strategy first.
+    
+    local targetPos = world.localToWorldRelative(ctx.origin, { x = x, y = y + 1, z = z })
+    
+    if not movement.goTo(ctx, targetPos) then
+        logger.log(ctx, "warn", "Failed to reach build position.")
+        return "BLOCKED"
+    end
+    
+    -- Select material
+    if not inventory.selectMaterial(ctx, block.material) then
+        logger.log(ctx, "warn", "Out of material: " .. block.material)
+        ctx.missingMaterial = block.material
+        ctx.resumeState = "BUILD"
+        return "RESTOCK"
+    end
+    
+    -- Place
+    if turtle.placeDown() then
+        ctx.pointer = ctx.pointer + 1
+    else
+        -- Check if blocked or already placed
+        local hasBlock, data = turtle.inspectDown()
+        if hasBlock and data.name == block.material then
+            -- Already there
+            ctx.pointer = ctx.pointer + 1
+        else
+            logger.log(ctx, "warn", "Failed to place block.")
+            -- Maybe dig?
+            if hasBlock then
+                turtle.digDown()
+            end
+        end
+    end
+    
+    return "BUILD"
+end
+
+return BUILD
+]=])
+
+addEmbeddedFile("factory/state_mine.lua", [=[
+--[[
+State: MINE
+Executes mining/tunneling strategy.
+--]]
+
+local movement = require("lib_movement")
+local mining = require("lib_mining")
+local logger = require("lib_logger")
+local inventory = require("lib_inventory")
+
+local function MINE(ctx)
+    local mode = ctx.config.mode
+    
+    if mode == "mine" then
+        -- Branch mining logic
+        -- Initialize branch mine state if needed
+        if not ctx.branchmine then
+            ctx.branchmine = {
+                state = "SPINE",
+                length = ctx.config.length or 60,
+                branchInterval = ctx.config.branchInterval or 3,
+                branchLength = ctx.config.branchLength or 16,
+                torchInterval = ctx.config.torchInterval or 6,
+                currentDist = 0,
+                chests = { output = "back", fuel = "up" } -- relative to start facing
+            }
+            return "BRANCHMINE"
+        end
+        return "BRANCHMINE"
+        
+    elseif mode == "tunnel" then
+        -- Simple tunnel
+        local len = ctx.config.length or 16
+        local w = ctx.config.width or 1
+        local h = ctx.config.height or 2
+        
+        -- Current progress
+        ctx.tunnel = ctx.tunnel or { x=0, y=0, z=0 }
+        
+        if ctx.tunnel.z >= len then return "DONE" end
+        
+        -- Dig forward
+        if not movement.forward(ctx, { dig=true }) then
+            return "BLOCKED"
+        end
+        ctx.tunnel.z = ctx.tunnel.z + 1
+        
+        -- Clear cross section
+        -- (Simplified: just 1x2 for now)
+        if h > 1 then
+            turtle.digUp()
+        end
+        
+        -- Place torch?
+        if ctx.tunnel.z % (ctx.config.torchInterval or 6) == 0 then
+            -- Place torch behind or on wall
+            -- ...
+        end
+        
+        return "MINE"
+        
+    elseif mode == "excavate" then
+        -- Excavate chunk
+        -- Use built-in excavate logic or custom?
+        -- For now, fallback to simple loop
+        return "DONE"
+    end
+    
+    return "DONE"
+end
+
+return MINE
+]=])
+
+addEmbeddedFile("factory/state_treefarm.lua", [=[
+--[[
+State: TREEFARM
+Manages tree farming: scanning, harvesting, replanting.
+--]]
+
+local movement = require("lib_movement")
+local inventory = require("lib_inventory")
+local logger = require("lib_logger")
+local world = require("lib_world")
+
+local function TREEFARM(ctx)
+    local state = ctx.treefarm.state -- SCAN, HARVEST, DEPOSIT
+    
+    if state == "SCAN" then
+        -- Scan the farm area for fully grown trees
+        -- Simple iteration over the grid
+        -- We assume we are at origin or known position
+        
+        -- For now, just move to next sapling spot
+        -- We need to know where saplings are.
+        -- Hardcoded 9x9 farm with saplings at (1,1), (1,4), etc?
+        -- Let's use the schema if available, or algorithmic
+        
+        -- Algorithmic: checkerboard or rows?
+        -- Let's assume rows of saplings separated by empty rows
+        -- S . S . S
+        -- . . . . .
+        -- S . S . S
+        
+        local width = ctx.treefarm.width
+        local height = ctx.treefarm.height
+        
+        -- Iterator for sapling spots
+        if not ctx.treefarm.nextSpot then
+            ctx.treefarm.nextSpot = { x=1, z=1 }
+        end
+        
+        local tx, tz = ctx.treefarm.nextSpot.x, ctx.treefarm.nextSpot.z
+        
+        -- Move to spot
+        local target = { x=tx, y=0, z=tz }
+        if not movement.goTo(ctx, target) then
+            return "BLOCKED"
+        end
+        
+        -- Check for tree
+        local hasBlock, data = turtle.inspect()
+        if hasBlock and (data.name:find("log") or data.name:find("wood")) then
+            -- Found tree!
+            ctx.treefarm.targetTree = { x=tx, z=tz }
+            ctx.treefarm.state = "HARVEST"
+            return "TREEFARM"
+        end
+        
+        -- Plant if missing
+        local hasBlockDown, dataDown = turtle.inspectDown()
+        if not hasBlock and (not hasBlockDown or dataDown.name == "minecraft:dirt" or dataDown.name == "minecraft:grass_block") then
+             -- Try to plant sapling
+             if inventory.selectItem(ctx, "sapling") then
+                 turtle.place()
+             end
+        end
+        
+        -- Next spot
+        -- Pattern: every 3rd block?
+        tx = tx + 3
+        if tx >= width then
+            tx = 1
+            tz = tz + 3
+        end
+        
+        if tz >= height then
+            -- Finished scan
+            ctx.treefarm.nextSpot = { x=1, z=1 }
+            ctx.treefarm.state = "DEPOSIT" -- Go dump logs
+            return "TREEFARM"
+        end
+        
+        ctx.treefarm.nextSpot = { x=tx, z=tz }
+        return "TREEFARM"
+        
+    elseif state == "HARVEST" then
+        -- Cut down tree
+        -- Dig up until no more logs
+        turtle.dig()
+        movement.forward(ctx)
+        
+        local height = 0
+        while turtle.detectUp() do
+            local has, data = turtle.inspectUp()
+            if has and (data.name:find("log") or data.name:find("wood")) then
+                turtle.digUp()
+                turtle.up()
+                height = height + 1
+            else
+                break
+            end
+        end
+        
+        -- Come down
+        while height > 0 do
+            turtle.down()
+            height = height - 1
+        end
+        
+        -- Back up
+        movement.back(ctx)
+        
+        -- Replant
+        if inventory.selectItem(ctx, "sapling") then
+            turtle.place()
+        end
+        
+        ctx.treefarm.state = "SCAN"
+        return "TREEFARM"
+        
+    elseif state == "DEPOSIT" then
+        -- Go to chest and dump logs/sticks/apples
+        local chestPos = { x=0, y=0, z=0 } -- Adjust based on config
+        if not movement.goTo(ctx, chestPos) then
+            return "BLOCKED"
+        end
+        
+        -- Dump
+        for i=1,16 do
+            local item = turtle.getItemDetail(i)
+            if item then
+                if item.name:find("log") or item.name:find("planks") or item.name:find("stick") or item.name:find("apple") then
+                    turtle.select(i)
+                    turtle.drop() -- Drop front
+                end
+            end
+        end
+        
+        -- Refuel?
+        -- ...
+        
+        ctx.treefarm.state = "SCAN"
+        -- Sleep a bit to let trees grow
+        sleep(10)
+        return "TREEFARM"
+    end
+    
+    return "DONE"
+end
+
+return TREEFARM
+]=])
+
+addEmbeddedFile("factory/state_potatofarm.lua", [=[
+--[[
+State: POTATOFARM
+Manages potato farming: scanning, harvesting, replanting.
+--]]
+
+local movement = require("lib_movement")
+local inventory = require("lib_inventory")
+local logger = require("lib_logger")
+
+local function POTATOFARM(ctx)
+    local state = ctx.potatofarm.state or "SCAN"
+    
+    if state == "SCAN" then
+        local width = ctx.potatofarm.width or 9
+        local height = ctx.potatofarm.height or 9
+        
+        -- Iterate all blocks
+        if not ctx.potatofarm.nextSpot then
+            ctx.potatofarm.nextSpot = { x=1, z=1 }
+        end
+        
+        local tx, tz = ctx.potatofarm.nextSpot.x, ctx.potatofarm.nextSpot.z
+        
+        -- Move to spot (above crop)
+        local target = { x=tx, y=1, z=tz }
+        if not movement.goTo(ctx, target) then
+            return "BLOCKED"
+        end
+        
+        -- Check crop
+        local hasBlock, data = turtle.inspectDown()
+        if hasBlock and data.name == "minecraft:potatoes" and data.state.age == 7 then
+            -- Fully grown
+            turtle.digDown()
+            turtle.suckDown() -- Catch drops
+            
+            -- Replant
+            if inventory.selectItem(ctx, "potato") then
+                turtle.placeDown()
+            end
+        elseif not hasBlock then
+            -- Empty? Replant
+            if inventory.selectItem(ctx, "potato") then
+                turtle.placeDown()
+            end
+        end
+        
+        -- Next spot
+        tx = tx + 1
+        if tx >= width then
+            tx = 1
+            tz = tz + 1
+        end
+        
+        if tz >= height then
+            ctx.potatofarm.nextSpot = { x=1, z=1 }
+            ctx.potatofarm.state = "DEPOSIT"
+            return "POTATOFARM"
+        end
+        
+        ctx.potatofarm.nextSpot = { x=tx, z=tz }
+        return "POTATOFARM"
+        
+    elseif state == "DEPOSIT" then
+        -- Go home
+        if not movement.goTo(ctx, {x=0, y=0, z=0}) then return "BLOCKED" end
+        
+        -- Dump extra potatoes (keep some for replanting)
+        local keep = 64
+        for i=1,16 do
+            local item = turtle.getItemDetail(i)
+            if item and item.name:find("potato") then
+                local count = item.count
+                if count > keep then
+                    turtle.select(i)
+                    turtle.drop(count - keep)
+                    keep = 0
+                else
+                    keep = keep - count
+                end
+            elseif item and not item.name:find("potato") then
+                -- Dump trash
+                turtle.select(i)
+                turtle.drop()
+            end
+        end
+        
+        ctx.potatofarm.state = "SCAN"
+        sleep(60) -- Wait for growth
+        return "POTATOFARM"
+    end
+    
+    return "DONE"
+end
+
+return POTATOFARM
+]=])
+
+addEmbeddedFile("factory/state_restock.lua", [=[
+--[[
+State: RESTOCK
+Returns to origin/chests to fetch missing materials.
+--]]
+
+local movement = require("lib_movement")
+local inventory = require("lib_inventory")
+local logger = require("lib_logger")
+
+local function RESTOCK(ctx)
+    logger.log(ctx, "info", "Restocking...")
+    
+    -- Return to origin
+    if not movement.goTo(ctx, { x=0, y=0, z=0, facing="north" }) then
+        logger.log(ctx, "error", "Cannot return to origin for restock.")
+        return "BLOCKED"
+    end
+    
+    -- Check chests?
+    -- Assume input chest is at (0,0,0) front? Or specific location?
+    -- For now, prompt user
+    
+    if ctx.missingMaterial then
+        print("Please provide: " .. ctx.missingMaterial)
+        print("Put in inventory and press Enter.")
+        read()
+        
+        inventory.scan(ctx)
+        if inventory.count(ctx, ctx.missingMaterial) > 0 then
+            ctx.missingMaterial = nil
+            return ctx.resumeState or "BUILD"
+        end
+    end
+    
+    return "ERROR"
+end
+
+return RESTOCK
+]=])
+
+addEmbeddedFile("factory/state_refuel.lua", [=[
+--[[
+State: REFUEL
+Attempts to refuel from inventory or fuel chest.
+--]]
+
+local movement = require("lib_movement")
+local fuelLib = require("lib_fuel")
+local logger = require("lib_logger")
+
+local function REFUEL(ctx)
+    logger.log(ctx, "info", "Refueling...")
+    
+    if fuelLib.refuel(ctx) then
+        logger.log(ctx, "info", "Refuel successful.")
+        return ctx.resumeState or "CHECK_REQUIREMENTS"
+    end
+    
+    -- Go to fuel chest?
+    -- ...
+    
+    logger.log(ctx, "error", "Out of fuel and no fuel source found.")
+    print("Please add fuel and press Enter.")
+    read()
+    
+    if fuelLib.refuel(ctx) then
+        return ctx.resumeState or "CHECK_REQUIREMENTS"
+    end
+    
+    return "ERROR"
+end
+
+return REFUEL
+]=])
+
+addEmbeddedFile("factory/state_blocked.lua", [=[
+--[[
+State: BLOCKED
+Handles navigation failures.
+--]]
+
+local logger = require("lib_logger")
+
+local function BLOCKED(ctx)
+    logger.log(ctx, "warn", "Movement blocked.")
+    
+    ctx.retries = (ctx.retries or 0) + 1
+    if ctx.retries > 5 then
+        logger.log(ctx, "error", "Too many retries. Stuck.")
+        return "ERROR"
+    end
+    
+    -- Try to clear obstacle?
+    -- If digging enabled...
+    
+    -- Wait and retry
+    sleep(2)
+    return ctx.resumeState or "INITIALIZE" -- Fallback?
+end
+
+return BLOCKED
+]=])
+
+addEmbeddedFile("factory/state_error.lua", [=[
+--[[
+State: ERROR
+Fatal error state.
+--]]
+
+local logger = require("lib_logger")
+
+local function ERROR(ctx)
+    logger.log(ctx, "error", "Agent stopped due to error: " .. tostring(ctx.lastError))
+    return "EXIT"
+end
+
+return ERROR
+]=])
+
+addEmbeddedFile("factory/state_done.lua", [=[
+--[[
+State: DONE
+Job complete.
+--]]
+
+local logger = require("lib_logger")
+local movement = require("lib_movement")
+
+local function DONE(ctx)
+    logger.log(ctx, "info", "Job complete!")
+    
+    -- Return home
+    movement.goTo(ctx, { x=0, y=0, z=0, facing="north" })
+    
+    return "EXIT"
+end
+
+return DONE
+]=])
+
+addEmbeddedFile("factory/state_branchmine.lua", [=[
+--[[
+State: BRANCHMINE
+Implements a standard branch mining strategy.
+Spine tunnel with branches every N blocks.
+--]]
+
+local movement = require("lib_movement")
+local mining = require("lib_mining")
+local logger = require("lib_logger")
+local inventory = require("lib_inventory")
+local fuelLib = require("lib_fuel")
+local trash_config = require("ui.trash_config")
+
+local function BRANCHMINE(ctx)
+    local bm = ctx.branchmine
+    
+    -- Helper to check fuel and inventory
+    local function checkStatus()
+        if not fuelLib.hasFuel(ctx) then
+            -- Mark where we are, go refuel
+            bm.resumePos = movement.getPos(ctx)
+            bm.resumeState = bm.state
+            bm.state = "RETURN_REFUEL"
+            return false
+        end
+        
+        if inventory.isFull(ctx) then
+             bm.resumePos = movement.getPos(ctx)
+             bm.resumeState = bm.state
+             bm.state = "RETURN_UNLOAD"
+             return false
+        end
+        return true
+    end
+
+    if bm.state == "SPINE" then
+        if not checkStatus() then return "BRANCHMINE" end
+        
+        if bm.currentDist >= bm.length then
+            bm.state = "RETURNING"
+            return "BRANCHMINE"
+        end
+        
+        -- Dig spine forward
+        if not movement.forward(ctx, { dig=true }) then
+            return "BLOCKED"
+        end
+        bm.currentDist = bm.currentDist + 1
+        
+        -- Dig up (2 high spine)
+        turtle.digUp()
+        
+        -- Check if branch point
+        if bm.currentDist % bm.branchInterval == 0 then
+            bm.state = "BRANCH_LEFT"
+        end
+        
+        -- Torch?
+        if bm.currentDist % bm.torchInterval == 0 then
+            -- Place torch
+            if inventory.selectItem(ctx, "torch") then
+                -- Place on floor or wall?
+                -- Move back, place, move forward?
+                -- Or place up?
+                -- turtle.placeUp() -- if space
+            end
+        end
+        
+        return "BRANCHMINE"
+        
+    elseif bm.state == "BRANCH_LEFT" then
+        if not checkStatus() then return "BRANCHMINE" end
+        
+        -- Turn left
+        movement.turnLeft(ctx)
+        
+        -- Dig branch
+        for i=1, bm.branchLength do
+            if not movement.forward(ctx, { dig=true }) then
+                -- Hit bedrock or unbreakable?
+                break
+            end
+            -- Dig up?
+            turtle.digUp()
+            
+            -- Check ores (up, down, sides?)
+            mining.checkVein(ctx)
+        end
+        
+        -- Return to spine
+        movement.turnAround(ctx)
+        for i=1, bm.branchLength do
+            movement.forward(ctx)
+        end
+        movement.turnLeft(ctx) -- Face forward again
+        
+        bm.state = "BRANCH_RIGHT"
+        return "BRANCHMINE"
+        
+    elseif bm.state == "BRANCH_RIGHT" then
+        if not checkStatus() then return "BRANCHMINE" end
+        
+        -- Turn right
+        movement.turnRight(ctx)
+        
+        -- Dig branch
+        for i=1, bm.branchLength do
+            if not movement.forward(ctx, { dig=true }) then
+                break
+            end
+            turtle.digUp()
+            mining.checkVein(ctx)
+        end
+        
+        -- Return
+        movement.turnAround(ctx)
+        for i=1, bm.branchLength do
+            movement.forward(ctx)
+        end
+        movement.turnRight(ctx) -- Face forward
+        
+        bm.state = "SPINE"
+        return "BRANCHMINE"
+        
+    elseif bm.state == "RETURNING" then
+        -- Go back to start
+        if not movement.goTo(ctx, {x=0, y=0, z=0, facing="north"}) then
+            return "BLOCKED"
+        end
+        return "DONE"
+        
+    elseif bm.state == "RETURN_REFUEL" or bm.state == "RETURN_UNLOAD" then
+        -- Go home
+        if not movement.goTo(ctx, {x=0, y=0, z=0, facing="north"}) then
+            return "BLOCKED"
+        end
+        
+        if bm.state == "RETURN_UNLOAD" then
+            -- Dump items
+            -- Turn to chest (back?)
+            movement.turnAround(ctx)
+            for i=1,16 do
+                local item = turtle.getItemDetail(i)
+                if item and not trash_config.isTrash(item.name) then
+                    turtle.select(i)
+                    turtle.drop()
+                else
+                    -- Trash?
+                    turtle.select(i)
+                    turtle.dropUp() -- Trash can up?
+                end
+            end
+            movement.turnAround(ctx)
+        end
+        
+        if bm.state == "RETURN_REFUEL" then
+            fuelLib.refuel(ctx)
+        end
+        
+        -- Resume
+        if not movement.goTo(ctx, bm.resumePos) then
+            return "BLOCKED"
+        end
+        
+        bm.state = bm.resumeState
+        return "BRANCHMINE"
+    end
+    
+    return "DONE"
+end
+
+return BRANCHMINE
+]=])
+
+addEmbeddedFile("lib/lib_logger.lua", [=[
+--[[
+Logger library for CC:Tweaked turtles.
+Provides leveled logging with optional timestamping, history capture, and
+custom sinks. Public methods work with either colon or dot syntax.
+--]]
+
+---@diagnostic disable: undefined-global
+
+local logger = {}
+
+local diagnostics
+local diagnosticsOk, diagnosticsModule = pcall(require, "lib_diagnostics")
+if diagnosticsOk then
+    diagnostics = diagnosticsModule
+end
+
+local DEFAULT_CRASH_FILE = "crashfile"
+
+local DEFAULT_LEVEL = "info"
+local DEFAULT_CAPTURE_LIMIT = 200
+
+local LEVEL_VALUE = {
+    debug = 10,
+    info = 20,
+    warn = 30,
+    error = 40,
+}
+
+local LEVEL_LABEL = {
+    debug = "DEBUG",
+    info = "INFO",
+    warn = "WARN",
+    error = "ERROR",
+}
+
+local LEVEL_ALIAS = {
+    warning = "warn",
+    err = "error",
+    trace = "debug",
+    verbose = "debug",
+    fatal = "error",
+}
+
+local function isoTimestamp()
+    if os and type(os.date) == "function" then
+        return os.date("!%Y-%m-%dT%H:%M:%SZ")
+    end
+    if os and type(os.clock) == "function" then
+        return string.format("%.03f", os.clock())
+    end
+    return nil
+end
+
+local function getCrashFilePath(ctx)
+    if ctx then
+        local config = ctx.config
+        if config and type(config.crashFile) == "string" and config.crashFile ~= "" then
+            return config.crashFile
+        end
+        if type(ctx.crashFilePath) == "string" and ctx.crashFilePath ~= "" then
+            return ctx.crashFilePath
+        end
+    end
+    return DEFAULT_CRASH_FILE
+end
+
+local function buildCrashPayload(ctx, message, metadata)
+    local payload = {
+        message = message or "Unknown fatal error",
+        metadata = metadata,
+        timestamp = isoTimestamp(),
+    }
+    if diagnostics and ctx then
+        local ok, snapshot = pcall(diagnostics.snapshot, ctx)
+        if ok then
+            payload.context = snapshot
+        end
+    end
+    if ctx and ctx.logger and type(ctx.logger.getLastEntry) == "function" then
+        local ok, entry = pcall(ctx.logger.getLastEntry, ctx.logger)
+        if ok then
+            payload.lastLogEntry = entry
+        end
+    end
+    return payload
+end
+
+local function serializeCrashPayload(payload)
+    if textutils and type(textutils.serializeJSON) == "function" then
+        local ok, serialized = pcall(textutils.serializeJSON, payload, { compact = true })
+        if ok then
+            return serialized
+        end
+    end
+    if textutils and type(textutils.serialize) == "function" then
+        local ok, serialized = pcall(textutils.serialize, payload)
+        if ok then
+            return serialized
+        end
+    end
+    local parts = {}
+    for key, value in pairs(payload or {}) do
+        parts[#parts + 1] = tostring(key) .. "=" .. tostring(value)
+    end
+    table.sort(parts)
+    return table.concat(parts, "\n")
+end
+
+local function writeFile(path, contents)
+    if not fs or type(fs.open) ~= "function" then
+        return false, "fs_unavailable"
+    end
+    local handle, err = fs.open(path, "w")
+    if not handle then
+        return false, err or "open_failed"
+    end
+    handle.write(contents)
+    handle.close()
+    return true
+end
+
+local function copyTable(value, depth, seen)
+    if type(value) ~= "table" then
+        return value
+    end
+    if depth and depth <= 0 then
+        return value
+    end
+    seen = seen or {}
+    if seen[value] then
+        return "<recursive>"
+    end
+    seen[value] = true
+    local result = {}
+    for k, v in pairs(value) do
+        local newKey = copyTable(k, depth and (depth - 1) or nil, seen)
+        local newValue = copyTable(v, depth and (depth - 1) or nil, seen)
+        result[newKey] = newValue
+    end
+    seen[value] = nil
+    return result
+end
+
+local function trySerializers(meta)
+    if type(meta) ~= "table" then
+        return nil
+    end
+    if textutils and type(textutils.serialize) == "function" then
+        local ok, serialized = pcall(textutils.serialize, meta)
+        if ok then
+            return serialized
+        end
+    end
+    if textutils and type(textutils.serializeJSON) == "function" then
+        local ok, serialized = pcall(textutils.serializeJSON, meta)
+        if ok then
+            return serialized
+        end
+    end
+    return nil
+end
+
+local function formatMetadata(meta)
+    if meta == nil then
+        return ""
+    end
+    local metaType = type(meta)
+    if metaType == "string" then
+        return meta
+    elseif metaType == "number" or metaType == "boolean" then
+        return tostring(meta)
+    elseif metaType == "table" then
+        local serialized = trySerializers(meta)
+        if serialized then
+            return serialized
+        end
+        local parts = {}
+        local count = 0
+        for key, value in pairs(meta) do
+            parts[#parts + 1] = tostring(key) .. "=" .. tostring(value)
+            count = count + 1
+            if count >= 16 then
+                break
+            end
+        end
+        table.sort(parts)
+        return "{" .. table.concat(parts, ", ") .. "}"
+    end
+    return tostring(meta)
+end
+
+local function formatMessage(message)
+    if message == nil then
+        return ""
+    end
+    local msgType = type(message)
+    if msgType == "string" then
+        return message
+    elseif msgType == "number" or msgType == "boolean" then
+        return tostring(message)
+    elseif msgType == "table" then
+        if message.message and type(message.message) == "string" then
+            return message.message
+        end
+        local metaView = formatMetadata(message)
+        if metaView ~= "" then
+            return metaView
+        end
+    end
+    return tostring(message)
+end
+
+local function resolveLevel(level)
+    if type(level) == "string" then
+        local lowered = level:lower()
+        lowered = LEVEL_ALIAS[lowered] or lowered
+        if LEVEL_VALUE[lowered] then
+            return lowered
+        end
+        return nil
+    elseif type(level) == "number" then
+        local closest
+        local distance
+        for name, value in pairs(LEVEL_VALUE) do
+            local diff = math.abs(value - level)
+            if not closest or diff < distance then
+                closest = name
+                distance = diff
+            end
+        end
+        return closest
+    end
+    return nil
+end
+
+local function levelValue(level)
+    return LEVEL_VALUE[level] or LEVEL_VALUE[DEFAULT_LEVEL]
+end
+
+local function shouldEmit(level, thresholdValue)
+    return levelValue(level) >= thresholdValue
+end
+
+local function formatTimestamp(state)
+    if not state.timestamps then
+        return nil, nil
+    end
+    local fmt = state.timestampFormat or "%H:%M:%S"
+    if os and type(os.date) == "function" then
+        local timeNumber = os.time and os.time() or nil
+        local stamp = os.date(fmt)
+        return stamp, timeNumber
+    end
+    if os and type(os.clock) == "function" then
+        local clockValue = os.clock()
+        return string.format("%.03f", clockValue), clockValue
+    end
+    return nil, nil
+end
+
+local function cloneEntry(entry)
+    return copyTable(entry, 3)
+end
+
+local function pushHistory(state, entry)
+    local history = state.history
+    history[#history + 1] = cloneEntry(entry)
+    local limit = state.captureLimit or DEFAULT_CAPTURE_LIMIT
+    while #history > limit do
+        table.remove(history, 1)
+    end
+end
+
+local function defaultWriterFactory(state)
+    return function(entry)
+        local segments = {}
+        if entry.timestamp then
+            segments[#segments + 1] = entry.timestamp
+        elseif state.timestamps and state.lastTimestamp then
+            segments[#segments + 1] = state.lastTimestamp
+        end
+        if entry.tag then
+            segments[#segments + 1] = entry.tag
+        elseif state.tag then
+            segments[#segments + 1] = state.tag
+        end
+        segments[#segments + 1] = entry.levelLabel or entry.level
+        local prefix = "[" .. table.concat(segments, "][") .. "]"
+        local line = prefix .. " " .. entry.message
+        local metaStr = formatMetadata(entry.metadata)
+        if metaStr ~= "" then
+            line = line .. " | " .. metaStr
+        end
+        if print then
+            print(line)
+        elseif io and io.write then
+            io.write(line .. "\n")
+        end
+    end
+end
+
+local function addWriter(state, writer)
+    if type(writer) ~= "function" then
+        return false, "invalid_writer"
+    end
+    for _, existing in ipairs(state.writers) do
+        if existing == writer then
+            return false, "writer_exists"
+        end
+    end
+    state.writers[#state.writers + 1] = writer
+    return true
+end
+
+local function logInternal(state, level, message, metadata)
+    local resolved = resolveLevel(level)
+    if not resolved then
+        return false, "unknown_level"
+    end
+    if not shouldEmit(resolved, state.thresholdValue) then
+        return false, "level_filtered"
+    end
+
+    local timestamp, timeNumber = formatTimestamp(state)
+    state.lastTimestamp = timestamp or state.lastTimestamp
+
+    local entry = {
+        level = resolved,
+        levelLabel = LEVEL_LABEL[resolved],
+        message = formatMessage(message),
+        metadata = metadata,
+        timestamp = timestamp,
+        time = timeNumber,
+        sequence = state.sequence + 1,
+        tag = state.tag,
+    }
+
+    state.sequence = entry.sequence
+    state.lastEntry = entry
+
+    if state.capture then
+        pushHistory(state, entry)
+    end
+
+    for _, writer in ipairs(state.writers) do
+        local ok, err = pcall(writer, entry)
+        if not ok then
+            state.lastWriterError = err
+        end
+    end
+
+    return true, entry
+end
+
+function logger.new(opts)
+    local state = {
+        capture = opts and opts.capture or false,
+        captureLimit = (opts and type(opts.captureLimit) == "number" and opts.captureLimit > 0) and opts.captureLimit or DEFAULT_CAPTURE_LIMIT,
+        history = {},
+        sequence = 0,
+        writers = {},
+        timestamps = opts and (opts.timestamps or opts.timestamp) or false,
+        timestampFormat = opts and opts.timestampFormat or nil,
+        tag = opts and (opts.tag or opts.label) or nil,
+    }
+
+    local initialLevel = (opts and resolveLevel(opts.level)) or (opts and resolveLevel(opts.minLevel)) or DEFAULT_LEVEL
+    state.threshold = initialLevel
+    state.thresholdValue = levelValue(initialLevel)
+
+    local instance = {}
+    state.instance = instance
+
+    if not (opts and opts.silent) then
+        addWriter(state, defaultWriterFactory(state))
+    end
+    if opts and type(opts.writer) == "function" then
+        addWriter(state, opts.writer)
+    end
+    if opts and type(opts.writers) == "table" then
+        for _, writer in ipairs(opts.writers) do
+            if type(writer) == "function" then
+                addWriter(state, writer)
+            end
+        end
+    end
+
+    function instance:log(level, message, metadata)
+        return logInternal(state, level, message, metadata)
+    end
+
+    function instance:debug(message, metadata)
+        return logInternal(state, "debug", message, metadata)
+    end
+
+    function instance:info(message, metadata)
+        return logInternal(state, "info", message, metadata)
+    end
+
+    function instance:warn(message, metadata)
+        return logInternal(state, "warn", message, metadata)
+    end
+
+    function instance:error(message, metadata)
+        return logInternal(state, "error", message, metadata)
+    end
+
+    function instance:setLevel(level)
+        local resolved = resolveLevel(level)
+        if not resolved then
+            return false, "unknown_level"
+        end
+        state.threshold = resolved
+        state.thresholdValue = levelValue(resolved)
+        return true, resolved
+    end
+
+    function instance:getLevel()
+        return state.threshold
+    end
+
+    function instance:enableCapture(limit)
+        state.capture = true
+        if type(limit) == "number" and limit > 0 then
+            state.captureLimit = limit
+        end
+        return true
+    end
+
+    function instance:disableCapture()
+        state.capture = false
+        state.history = {}
+        return true
+    end
+
+    function instance:getHistory()
+        local result = {}
+        for index = 1, #state.history do
+            result[index] = cloneEntry(state.history[index])
+        end
+        return result
+    end
+
+    function instance:clearHistory()
+        state.history = {}
+        return true
+    end
+
+    function instance:addWriter(writer)
+        return addWriter(state, writer)
+    end
+
+    function instance:removeWriter(writer)
+        if type(writer) ~= "function" then
+            return false, "invalid_writer"
+        end
+        for index, existing in ipairs(state.writers) do
+            if existing == writer then
+                table.remove(state.writers, index)
+                return true
+            end
+        end
+        return false, "writer_missing"
+    end
+
+    function instance:setTag(tag)
+        state.tag = tag
+        return true
+    end
+
+    function instance:getTag()
+        return state.tag
+    end
+
+    function instance:getLastEntry()
+        if not state.lastEntry then
+            return nil
+        end
+        return cloneEntry(state.lastEntry)
+    end
+
+    function instance:getLastWriterError()
+        return state.lastWriterError
+    end
+
+    function instance:setTimestamps(enabled, format)
+        state.timestamps = not not enabled
+        if format then
+            state.timestampFormat = format
+        end
+        return true
+    end
+
+    return instance
+end
+
+function logger.attach(ctx, opts)
+    if type(ctx) ~= "table" then
+        error("logger.attach requires a context table", 2)
+    end
+    local instance = logger.new(opts)
+    ctx.logger = instance
+    return instance
+end
+
+function logger.isLogger(candidate)
+    if type(candidate) ~= "table" then
+        return false
+    end
+    return type(candidate.log) == "function"
+        and type(candidate.info) == "function"
+        and type(candidate.warn) == "function"
+        and type(candidate.error) == "function"
+end
+
+logger.DEFAULT_LEVEL = DEFAULT_LEVEL
+logger.DEFAULT_CAPTURE_LIMIT = DEFAULT_CAPTURE_LIMIT
+logger.LEVELS = copyTable(LEVEL_VALUE, 1)
+logger.LABELS = copyTable(LEVEL_LABEL, 1)
+logger.resolveLevel = resolveLevel
+logger.DEFAULT_CRASH_FILE = DEFAULT_CRASH_FILE
+
+function logger.log(ctx, level, message)
+    if type(ctx) ~= "table" then
+        return
+    end
+    local logInst = ctx.logger
+    if type(logInst) == "table" then
+        local fn = logInst[level]
+        if type(fn) == "function" then
+            fn(logInst, message)
+            return
+        end
+        if type(logInst.log) == "function" then
+            logInst.log(logInst, level, message)
+            return
+        end
+    end
+    if (level == "warn" or level == "error") and message then
+        print(string.format("[%s] %s", level:upper(), message))
+    end
+end
+
+function logger.writeCrashFile(ctx, message, metadata)
+    local path = getCrashFilePath(ctx)
+    local payload = buildCrashPayload(ctx, message, metadata)
+    local body = serializeCrashPayload(payload)
+    if not body or body == "" then
+        body = tostring(message or "Unknown fatal error")
+    end
+    local ok, err = writeFile(path, body .. "\n")
+    if not ok then
+        return false, err
+    end
+    if ctx then
+        ctx.crashFilePath = path
+    end
+    return true, path
+end
+
+return logger
+]=])
+
+addEmbeddedFile("lib/lib_movement.lua", [=[
+--[[-
+Movement library for CC:Tweaked turtles.
+Provides orientation tracking, safe movement primitives, and navigation helpers.
+All public functions accept a shared ctx table and return success booleans
+with optional error messages.
+--]]
+
+---@diagnostic disable: undefined-global, undefined-field
+
+local movement = {}
+local logger = require("lib_logger")
+
+local CARDINALS = {"north", "east", "south", "west"}
+local DIRECTION_VECTORS = {
+    north = { x = 0, y = 0, z = -1 },
+    east = { x = 1, y = 0, z = 0 },
+    south = { x = 0, y = 0, z = 1 },
+    west = { x = -1, y = 0, z = 0 },
+}
+
+local AXIS_FACINGS = {
+    x = { positive = "east", negative = "west" },
+    z = { positive = "south", negative = "north" },
+}
+
+local DEFAULT_SOFT_BLOCKS = {
+    ["minecraft:snow"] = true,
+    ["minecraft:snow_layer"] = true,
+    ["minecraft:powder_snow"] = true,
+    ["minecraft:tall_grass"] = true,
+    ["minecraft:large_fern"] = true,
+    ["minecraft:grass"] = true,
+    ["minecraft:fern"] = true,
+    ["minecraft:cave_vines"] = true,
+    ["minecraft:cave_vines_plant"] = true,
+    ["minecraft:kelp"] = true,
+    ["minecraft:kelp_plant"] = true,
+    ["minecraft:sweet_berry_bush"] = true,
+}
+
+local DEFAULT_SOFT_TAGS = {
+    ["minecraft:snow"] = true,
+    ["minecraft:replaceable_plants"] = true,
+    ["minecraft:flowers"] = true,
+    ["minecraft:saplings"] = true,
+    ["minecraft:carpets"] = true,
+}
+
+local DEFAULT_SOFT_NAME_HINTS = {
+    "sapling",
+    "propagule",
+    "seedling",
+}
+
+local function cloneLookup(source)
+    local lookup = {}
+    for key, value in pairs(source) do
+        if value then
+            lookup[key] = true
+        end
+    end
+    return lookup
+end
+
+local function extendLookup(lookup, entries)
+    if type(entries) ~= "table" then
+        return lookup
+    end
+    if #entries > 0 then
+        for _, name in ipairs(entries) do
+            if type(name) == "string" then
+                lookup[name] = true
+            end
+        end
+    else
+        for name, enabled in pairs(entries) do
+            if enabled and type(name) == "string" then
+                lookup[name] = true
+            end
+        end
+    end
+    return lookup
+end
+
+local function buildSoftNameHintList(configHints)
+    local seen = {}
+    local list = {}
+
+    local function append(value)
+        if type(value) ~= "string" then
+            return
+        end
+        local normalized = value:lower()
+        if normalized == "" or seen[normalized] then
+            return
+        end
+        seen[normalized] = true
+        list[#list + 1] = normalized
+    end
+
+    for _, hint in ipairs(DEFAULT_SOFT_NAME_HINTS) do
+        append(hint)
+    end
+
+    if type(configHints) == "table" then
+        if #configHints > 0 then
+            for _, entry in ipairs(configHints) do
+                append(entry)
+            end
+        else
+            for name, enabled in pairs(configHints) do
+                if enabled then
+                    append(name)
+                end
+            end
+        end
+    elseif type(configHints) == "string" then
+        append(configHints)
+    end
+
+    return list
+end
+
+local function matchesSoftNameHint(hints, blockName)
+    if type(blockName) ~= "string" then
+        return false
+    end
+    local lowered = blockName:lower()
+    for _, hint in ipairs(hints or {}) do
+        if lowered:find(hint, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function isSoftBlock(state, inspectData)
+    if type(state) ~= "table" or type(inspectData) ~= "table" then
+        return false
+    end
+    local name = inspectData.name
+    if type(name) == "string" then
+        if state.softBlockLookup and state.softBlockLookup[name] then
+            return true
+        end
+        if matchesSoftNameHint(state.softNameHints, name) then
+            return true
+        end
+    end
+    local tags = inspectData.tags
+    if type(tags) == "table" and state.softTagLookup then
+        for tag, value in pairs(tags) do
+            if value and state.softTagLookup[tag] then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function canonicalFacing(name)
+    if type(name) ~= "string" then
+        return nil
+    end
+    name = name:lower()
+    if DIRECTION_VECTORS[name] then
+        return name
+    end
+    return nil
+end
+
+local function copyPosition(pos)
+    if not pos then
+        return { x = 0, y = 0, z = 0 }
+    end
+    return { x = pos.x or 0, y = pos.y or 0, z = pos.z or 0 }
+end
+
+local function vecAdd(a, b)
+    return { x = (a.x or 0) + (b.x or 0), y = (a.y or 0) + (b.y or 0), z = (a.z or 0) + (b.z or 0) }
+end
+
+local function getPlannedMaterial(ctx, pos)
+    if type(ctx) ~= "table" or type(pos) ~= "table" then
+        return nil
+    end
+
+    local plan = ctx.buildPlan
+    if type(plan) ~= "table" then
+        return nil
+    end
+
+    local x = pos.x
+    local xLayer = plan[x] or plan[tostring(x)]
+    if type(xLayer) ~= "table" then
+        return nil
+    end
+
+    local y = pos.y
+    local yLayer = xLayer[y] or xLayer[tostring(y)]
+    if type(yLayer) ~= "table" then
+        return nil
+    end
+
+    local z = pos.z
+    return yLayer[z] or yLayer[tostring(z)]
+end
+
+local function tryInspect(inspectFn)
+    if type(inspectFn) ~= "function" then
+        return nil
+    end
+
+    local ok, success, data = pcall(inspectFn)
+    if not ok or not success then
+        return nil
+    end
+
+    if type(data) == "table" then
+        return data
+    end
+
+    return nil
+end
+
+local function ensureMovementState(ctx)
+    if type(ctx) ~= "table" then
+        error("movement library requires a context table", 2)
+    end
+
+    ctx.movement = ctx.movement or {}
+    local state = ctx.movement
+    local cfg = ctx.config or {}
+
+    if not state.position then
+        if ctx.origin then
+            state.position = copyPosition(ctx.origin)
+        else
+            state.position = { x = 0, y = 0, z = 0 }
+        end
+    end
+
+    if not state.homeFacing then
+        state.homeFacing = canonicalFacing(cfg.homeFacing) or canonicalFacing(cfg.initialFacing) or "north"
+    end
+
+    if not state.facing then
+        state.facing = canonicalFacing(cfg.initialFacing) or state.homeFacing
+    end
+
+    state.position = copyPosition(state.position)
+
+    if not state.softBlockLookup then
+        state.softBlockLookup = extendLookup(cloneLookup(DEFAULT_SOFT_BLOCKS), cfg.movementSoftBlocks)
+    end
+    if not state.softTagLookup then
+        state.softTagLookup = extendLookup(cloneLookup(DEFAULT_SOFT_TAGS), cfg.movementSoftTags)
+    end
+    if not state.softNameHints then
+        state.softNameHints = buildSoftNameHintList(cfg.movementSoftNameHints)
+    end
+    state.hasSoftClearRules = (next(state.softBlockLookup) ~= nil)
+        or (next(state.softTagLookup) ~= nil)
+        or ((state.softNameHints and #state.softNameHints > 0) or false)
+
+    return state
+end
+
+function movement.ensureState(ctx)
+    return ensureMovementState(ctx)
+end
+
+function movement.getPosition(ctx)
+    local state = ensureMovementState(ctx)
+    return copyPosition(state.position)
+end
+
+function movement.setPosition(ctx, pos)
+    local state = ensureMovementState(ctx)
+    state.position = copyPosition(pos)
+    return true
+end
+
+function movement.getFacing(ctx)
+    local state = ensureMovementState(ctx)
+    return state.facing
+end
+
+function movement.setFacing(ctx, facing)
+    local state = ensureMovementState(ctx)
+    local canonical = canonicalFacing(facing)
+    if not canonical then
+        return false, "unknown facing: " .. tostring(facing)
+    end
+    state.facing = canonical
+    logger.log(ctx, "debug", "Set facing to " .. canonical)
+    if ctx.save then ctx.save() end
+    return true
+end
+
+local function turn(ctx, direction)
+    local state = ensureMovementState(ctx)
+    if not turtle then
+        return false, "turtle API unavailable"
+    end
+
+    local rotateFn
+    if direction == "left" then
+        rotateFn = turtle.turnLeft
+    elseif direction == "right" then
+        rotateFn = turtle.turnRight
+    else
+        return false, "invalid turn direction"
+    end
+
+    if not rotateFn then
+        return false, "turn function missing"
+    end
+
+    local ok = rotateFn()
+    if not ok then
+        return false, "turn " .. direction .. " failed"
+    end
+
+    local current = state.facing
+    local index
+    for i, name in ipairs(CARDINALS) do
+        if name == current then
+            index = i
+            break
+        end
+    end
+    if not index then
+        index = 1
+        current = CARDINALS[index]
+    end
+
+    if direction == "left" then
+        index = ((index - 2) % #CARDINALS) + 1
+    else
+        index = (index % #CARDINALS) + 1
+    end
+
+    state.facing = CARDINALS[index]
+    logger.log(ctx, "debug", "Turned " .. direction .. ", now facing " .. state.facing)
+    if ctx.save then ctx.save() end
+    return true
+end
+
+function movement.turnLeft(ctx)
+    return turn(ctx, "left")
+end
+
+function movement.turnRight(ctx)
+    return turn(ctx, "right")
+end
+
+function movement.turnAround(ctx)
+    local ok, err = movement.turnRight(ctx)
+    if not ok then
+        return false, err
+    end
+    ok, err = movement.turnRight(ctx)
+    if not ok then
+        return false, err
+    end
+    return true
+end
+
+function movement.faceDirection(ctx, targetFacing)
+    local state = ensureMovementState(ctx)
+    local canonical = canonicalFacing(targetFacing)
+    if not canonical then
+        return false, "unknown facing: " .. tostring(targetFacing)
+    end
+
+    local currentIndex
+    local targetIndex
+    for i, name in ipairs(CARDINALS) do
+        if name == state.facing then
+            currentIndex = i
+        end
+        if name == canonical then
+            targetIndex = i
+        end
+    end
+
+    if not targetIndex then
+        return false, "cannot face unknown cardinal"
+    end
+
+    if currentIndex == targetIndex then
+        return true
+    end
+
+    if not currentIndex then
+        state.facing = canonical
+        return true
+    end
+
+    local diff = (targetIndex - currentIndex) % #CARDINALS
+    if diff == 0 then
+        return true
+    elseif diff == 1 then
+        return movement.turnRight(ctx)
+    elseif diff == 2 then
+        local ok, err = movement.turnRight(ctx)
+        if not ok then
+            return false, err
+        end
+        ok, err = movement.turnRight(ctx)
+        if not ok then
+            return false, err
+        end
+        return true
+    else -- diff == 3
+        return movement.turnLeft(ctx)
+    end
+end
+
+local function getMoveConfig(ctx, opts)
+    local cfg = ctx.config or {}
+    local maxRetries = (opts and opts.maxRetries) or cfg.maxMoveRetries or 5
+    local allowDig = opts and opts.dig
+    if allowDig == nil then
+        allowDig = cfg.digOnMove
+        if allowDig == nil then
+            allowDig = true
+        end
+    end
+    local allowAttack = opts and opts.attack
+    if allowAttack == nil then
+        allowAttack = cfg.attackOnMove
+        if allowAttack == nil then
+            allowAttack = true
+        end
+    end
+    local delay = (opts and opts.retryDelay) or cfg.moveRetryDelay or 0.5
+    return maxRetries, allowDig, allowAttack, delay
+end
+
+local function moveWithRetries(ctx, opts, moveFns, delta)
+    local state = ensureMovementState(ctx)
+    if not turtle then
+        return false, "turtle API unavailable"
+    end
+
+    local maxRetries, allowDig, allowAttack, delay = getMoveConfig(ctx, opts)
+    if type(maxRetries) ~= "number" or maxRetries < 1 then
+        maxRetries = 1
+    else
+        maxRetries = math.floor(maxRetries)
+    end
+    if (allowDig or state.hasSoftClearRules) and maxRetries < 2 then
+        -- Ensure we attempt at least two cycles whenever we might clear obstructions.
+        maxRetries = 2
+    end
+    local attempt = 0
+
+    while attempt < maxRetries do
+        attempt = attempt + 1
+        local targetPos = vecAdd(state.position, delta)
+
+        if moveFns.move() then
+            state.position = targetPos
+            logger.log(ctx, "debug", string.format("Moved to x=%d y=%d z=%d", state.position.x, state.position.y, state.position.z))
+            if ctx.save then ctx.save() end
+            return true
+        end
+
+        local handled = false
+
+        if allowAttack and moveFns.attack then
+            if moveFns.attack() then
+                handled = true
+                logger.log(ctx, "debug", "Attacked entity blocking movement")
+            end
+        end
+
+        local blocked = moveFns.detect and moveFns.detect() or false
+        local inspectData
+        if blocked then
+            inspectData = tryInspect(moveFns.inspect)
+        end
+
+        if blocked and moveFns.dig then
+            local plannedMaterial
+            local canClear = false
+            local softBlock = inspectData and isSoftBlock(state, inspectData)
+
+            if softBlock then
+                canClear = true
+            elseif allowDig then
+                plannedMaterial = getPlannedMaterial(ctx, targetPos)
+                canClear = true
+                
+                -- Safety check: Do not dig chests/barrels unless explicitly allowed
+                if inspectData and inspectData.name and (inspectData.name:find("chest") or inspectData.name:find("barrel")) then
+                    if not opts or not opts.forceDigChests then
+                        canClear = false
+                        logger.log(ctx, "warn", "Refusing to dig chest/barrel at " .. tostring(inspectData.name))
+                    end
+                end
+
+                if plannedMaterial then
+                    if inspectData and inspectData.name then
+                        if inspectData.name == plannedMaterial then
+                            canClear = false
+                        end
+                    else
+                        canClear = false
+                    end
+                end
+            end
+
+            if canClear and moveFns.dig() then
+                handled = true
+                if moveFns.suck then
+                    moveFns.suck()
+                end
+                if softBlock then
+                    local foundName = inspectData and inspectData.name or "unknown"
+                    logger.log(ctx, "debug", string.format(
+                        "Cleared soft obstruction %s at x=%d y=%d z=%d",
+                        tostring(foundName),
+                        targetPos.x or 0,
+                        targetPos.y or 0,
+                        targetPos.z or 0
+                    ))
+                elseif plannedMaterial then
+                    local foundName = inspectData and inspectData.name or "unknown"
+                    logger.log(ctx, "debug", string.format(
+                        "Cleared mismatched block %s (expected %s) at x=%d y=%d z=%d",
+                        tostring(foundName),
+                        tostring(plannedMaterial),
+                        targetPos.x or 0,
+                        targetPos.y or 0,
+                        targetPos.z or 0
+                    ))
+                else
+                    local foundName = inspectData and inspectData.name
+                    if foundName then
+                        logger.log(ctx, "debug", string.format(
+                            "Dug blocking block %s at x=%d y=%d z=%d",
+                            foundName,
+                            targetPos.x or 0,
+                            targetPos.y or 0,
+                            targetPos.z or 0
+                        ))
+                    else
+                        logger.log(ctx, "debug", string.format(
+                            "Dug blocking block at x=%d y=%d z=%d",
+                            targetPos.x or 0,
+                            targetPos.y or 0,
+                            targetPos.z or 0
+                        ))
+                    end
+                end
+            elseif plannedMaterial and not canClear and allowDig then
+                logger.log(ctx, "debug", string.format(
+                    "Preserving planned block %s at x=%d y=%d z=%d",
+                    tostring(plannedMaterial),
+                    targetPos.x or 0,
+                    targetPos.y or 0,
+                    targetPos.z or 0
+                ))
+            end
+        end
+
+        if attempt < maxRetries then
+            if delay and delay > 0 and _G.sleep then
+                sleep(delay)
+            end
+        end
+    end
+
+    local axisDelta = string.format("(dx=%d, dy=%d, dz=%d)", delta.x or 0, delta.y or 0, delta.z or 0)
+    return false, "unable to move " .. axisDelta .. " after " .. tostring(maxRetries) .. " attempts"
+end
+
+function movement.forward(ctx, opts)
+    local state = ensureMovementState(ctx)
+    local facing = state.facing or "north"
+    local delta = copyPosition(DIRECTION_VECTORS[facing])
+
+    local moveFns = {
+        move = turtle and turtle.forward or nil,
+        detect = turtle and turtle.detect or nil,
+        dig = turtle and turtle.dig or nil,
+        attack = turtle and turtle.attack or nil,
+        inspect = turtle and turtle.inspect or nil,
+        suck = turtle and turtle.suck or nil,
+    }
+
+    if not moveFns.move then
+        return false, "turtle API unavailable"
+    end
+
+    return moveWithRetries(ctx, opts, moveFns, delta)
+end
+
+function movement.up(ctx, opts)
+    local moveFns = {
+        move = turtle and turtle.up or nil,
+        detect = turtle and turtle.detectUp or nil,
+        dig = turtle and turtle.digUp or nil,
+        attack = turtle and turtle.attackUp or nil,
+        inspect = turtle and turtle.inspectUp or nil,
+        suck = turtle and turtle.suckUp or nil,
+    }
+    if not moveFns.move then
+        return false, "turtle API unavailable"
+    end
+    return moveWithRetries(ctx, opts, moveFns, { x = 0, y = 1, z = 0 })
+end
+
+function movement.down(ctx, opts)
+    local moveFns = {
+        move = turtle and turtle.down or nil,
+        detect = turtle and turtle.detectDown or nil,
+        dig = turtle and turtle.digDown or nil,
+        attack = turtle and turtle.attackDown or nil,
+        inspect = turtle and turtle.inspectDown or nil,
+        suck = turtle and turtle.suckDown or nil,
+    }
+    if not moveFns.move then
+        return false, "turtle API unavailable"
+    end
+    return moveWithRetries(ctx, opts, moveFns, { x = 0, y = -1, z = 0 })
+end
+
+local function axisFacing(axis, delta)
+    if delta > 0 then
+        return AXIS_FACINGS[axis].positive
+    else
+        return AXIS_FACINGS[axis].negative
+    end
+end
+
+local function moveAxis(ctx, axis, delta, opts)
+    if delta == 0 then
+        return true
+    end
+
+    if axis == "y" then
+        local moveFn = delta > 0 and movement.up or movement.down
+        for _ = 1, math.abs(delta) do
+            local ok, err = moveFn(ctx, opts)
+            if not ok then
+                return false, err
+            end
+        end
+        return true
+    end
+
+    local targetFacing = axisFacing(axis, delta)
+    local ok, err = movement.faceDirection(ctx, targetFacing)
+    if not ok then
+        return false, err
+    end
+
+    for step = 1, math.abs(delta) do
+        ok, err = movement.forward(ctx, opts)
+        if not ok then
+            return false, string.format("failed moving along %s on step %d: %s", axis, step, err or "unknown")
+        end
+    end
+    return true
+end
+
+function movement.goTo(ctx, targetPos, opts)
+    ensureMovementState(ctx)
+    if type(targetPos) ~= "table" then
+        return false, "target position must be a table"
+    end
+
+    local state = ctx.movement
+    local axisOrder = (opts and opts.axisOrder) or (ctx.config and ctx.config.movementAxisOrder) or { "x", "z", "y" }
+
+    for _, axis in ipairs(axisOrder) do
+        local desired = targetPos[axis]
+        if desired == nil then
+            return false, "target position missing axis " .. axis
+        end
+        local delta = desired - (state.position[axis] or 0)
+        local ok, err = moveAxis(ctx, axis, delta, opts)
+        if not ok then
+            return false, err
+        end
+    end
+
+    return true
+end
+
+function movement.stepPath(ctx, pathNodes, opts)
+    if type(pathNodes) ~= "table" then
+        return false, "pathNodes must be a table"
+    end
+
+    for index, node in ipairs(pathNodes) do
+        local ok, err = movement.goTo(ctx, node, opts)
+        if not ok then
+            return false, string.format("failed at path node %d: %s", index, err or "unknown")
+        end
+    end
+
+    return true
+end
+
+function movement.returnToOrigin(ctx, opts)
+    ensureMovementState(ctx)
+    if not ctx.origin then
+        return false, "ctx.origin is required"
+    end
+
+    local ok, err = movement.goTo(ctx, ctx.origin, opts)
+    if not ok then
+        return false, err
+    end
+
+    local desiredFacing = (opts and opts.facing) or ctx.movement.homeFacing
+    if desiredFacing then
+        ok, err = movement.faceDirection(ctx, desiredFacing)
+        if not ok then
+            return false, err
+        end
+    end
+
+    return true
+end
+
+function movement.turnLeftOf(facing)
+    facing = world.normaliseFacing(facing)
+    if facing == "north" then
+        return "west"
+    elseif facing == "west" then
+        return "south"
+    elseif facing == "south" then
+        return "east"
+    else -- east
+        return "north"
+    end
+end
+
+function movement.turnRightOf(facing)
+    facing = world.normaliseFacing(facing)
+    if facing == "north" then
+        return "east"
+    elseif facing == "east" then
+        return "south"
+    elseif facing == "south" then
+        return "west"
+    else -- west
+        return "north"
+    end
+end
+
+function movement.turnBackOf(facing)
+    facing = world.normaliseFacing(facing)
+    if facing == "north" then
+        return "south"
+    elseif facing == "south" then
+        return "north"
+    elseif facing == "east" then
+        return "west"
+    else -- west
+        return "east"
+    end
+end
+function movement.describePosition(ctx)
+    local pos = movement.getPosition(ctx)
+    local facing = movement.getFacing(ctx)
+    return string.format("(x=%d, y=%d, z=%d, facing=%s)", pos.x, pos.y, pos.z, tostring(facing))
+end
+
+function movement.face(ctx, targetFacing)
+    return movement.faceDirection(ctx, targetFacing)
+end
+
+return movement
+]=])
+
+addEmbeddedFile("lib/lib_ui.lua", [=[
+--[[
+UI Library for TurtleOS (Mouse/GUI Edition)
+Provides DOS-style windowing and widgets.
+--]]
+
+local ui = {}
+
+local colors_bg = colors.blue
+local colors_fg = colors.white
+local colors_btn = colors.lightGray
+local colors_btn_text = colors.black
+local colors_input = colors.black
+local colors_input_text = colors.white
+
+function ui.clear()
+    term.setBackgroundColor(colors_bg)
+    term.setTextColor(colors_fg)
+    term.clear()
+end
+
+function ui.drawBox(x, y, w, h, bg, fg)
+    term.setBackgroundColor(bg)
+    term.setTextColor(fg)
+    for i = 0, h - 1 do
+        term.setCursorPos(x, y + i)
+        term.write(string.rep(" ", w))
+    end
+end
+
+function ui.drawFrame(x, y, w, h, title)
+    ui.drawBox(x, y, w, h, colors.gray, colors.white)
+    ui.drawBox(x + 1, y + 1, w - 2, h - 2, colors_bg, colors_fg)
+    
+    -- Shadow
+    term.setBackgroundColor(colors.black)
+    for i = 1, h do
+        term.setCursorPos(x + w, y + i)
+        term.write(" ")
+    end
+    for i = 1, w do
+        term.setCursorPos(x + i, y + h)
+        term.write(" ")
+    end
+
+    if title then
+        term.setCursorPos(x + 2, y + 1)
+        term.setBackgroundColor(colors.white)
+        term.setTextColor(colors.black)
+        term.write(" " .. title .. " ")
+    end
+end
+
+function ui.button(x, y, text, active)
+    term.setCursorPos(x, y)
+    if active then
+        term.setBackgroundColor(colors.white)
+        term.setTextColor(colors.black)
+    else
+        term.setBackgroundColor(colors_btn)
+        term.setTextColor(colors_btn_text)
+    end
+    term.write(" " .. text .. " ")
+end
+
+function ui.label(x, y, text)
+    term.setCursorPos(x, y)
+    term.setBackgroundColor(colors_bg)
+    term.setTextColor(colors_fg)
+    term.write(text)
+end
+
+function ui.inputText(x, y, width, value, active)
+    term.setCursorPos(x, y)
+    term.setBackgroundColor(colors_input)
+    term.setTextColor(colors_input_text)
+    local display = value or ""
+    if #display > width then
+        display = display:sub(-width)
+    end
+    term.write(display .. string.rep(" ", width - #display))
+    if active then
+        term.setCursorPos(x + #display, y)
+        term.setCursorBlink(true)
+    else
+        term.setCursorBlink(false)
+    end
+end
+
+function ui.drawPreview(schema, x, y, w, h)
+    -- Find bounds
+    local minX, maxX, minZ, maxZ = 9999, -9999, 9999, -9999
+    for sx, row in pairs(schema) do
+        local nx = tonumber(sx)
+        if nx then
+            if nx < minX then minX = nx end
+            if nx > maxX then maxX = nx end
+            for sy, col in pairs(row) do
+                for sz, block in pairs(col) do
+                    local nz = tonumber(sz)
+                    if nz then
+                        if nz < minZ then minZ = nz end
+                        if nz > maxZ then maxZ = nz end
+                    end
+                end
+            end
+        end
+    end
+
+    if minX > maxX then return end -- Empty schema
+
+    local scaleX = w / (maxX - minX + 1)
+    local scaleZ = h / (maxZ - minZ + 1)
+    local scale = math.min(scaleX, scaleZ, 1) -- Keep aspect ratio, max 1:1
+
+    -- Draw background
+    term.setBackgroundColor(colors.black)
+    for i = 0, h - 1 do
+        term.setCursorPos(x, y + i)
+        term.write(string.rep(" ", w))
+    end
+
+    -- Draw blocks
+    for sx, row in pairs(schema) do
+        local nx = tonumber(sx)
+        if nx then
+            for sy, col in pairs(row) do
+                for sz, block in pairs(col) do
+                    local nz = tonumber(sz)
+                    if nz then
+                        -- Map to screen
+                        local scrX = math.floor((nx - minX) * scale) + x
+                        local scrY = math.floor((nz - minZ) * scale) + y
+                        
+                        if scrX >= x and scrX < x + w and scrY >= y and scrY < y + h then
+                            term.setCursorPos(scrX, scrY)
+                            
+                            -- Color mapping
+                            local mat = block.material
+                            local color = colors.gray
+                            local char = " "
+                            
+                            if mat:find("water") then color = colors.blue
+                            elseif mat:find("log") then color = colors.brown
+                            elseif mat:find("leaves") then color = colors.green
+                            elseif mat:find("sapling") then color = colors.green; char = "T"
+                            elseif mat:find("sand") then color = colors.yellow
+                            elseif mat:find("dirt") then color = colors.brown
+                            elseif mat:find("grass") then color = colors.green
+                            elseif mat:find("stone") then color = colors.lightGray
+                            elseif mat:find("cane") then color = colors.lime; char = "!"
+                            elseif mat:find("potato") then color = colors.orange; char = "."
+                            elseif mat:find("torch") then color = colors.orange; char = "i"
+                            end
+                            
+                            term.setBackgroundColor(color)
+                            if color == colors.black then term.setTextColor(colors.white) else term.setTextColor(colors.black) end
+                            term.write(char)
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Simple Event Loop for a Form
+-- form = { title = "", elements = { {type="button", x=, y=, text=, id=}, ... } }
+function ui.runForm(form)
+    local w, h = term.getSize()
+    local fw, fh = math.floor(w * 0.8), math.floor(h * 0.8)
+    local fx, fy = math.floor((w - fw) / 2) + 1, math.floor((h - fh) / 2) + 1
+    
+    local running = true
+    local result = nil
+    local activeInput = nil
+
+    -- Identify focusable elements
+    local focusableIndices = {}
+    for i, el in ipairs(form.elements) do
+        if el.type == "input" or el.type == "button" then
+            table.insert(focusableIndices, i)
+        end
+    end
+    local currentFocusIndex = 1
+    if #focusableIndices > 0 then
+        local el = form.elements[focusableIndices[currentFocusIndex]]
+        if el.type == "input" then activeInput = el end
+    end
+
+    while running do
+        ui.clear()
+        ui.drawFrame(fx, fy, fw, fh, form.title)
+        
+        -- Custom Draw
+        if form.onDraw then
+            form.onDraw(fx, fy, fw, fh)
+        end
+
+        -- Draw elements
+        for i, el in ipairs(form.elements) do
+            local ex, ey = fx + el.x, fy + el.y
+            local isFocused = false
+            if #focusableIndices > 0 and focusableIndices[currentFocusIndex] == i then
+                isFocused = true
+            end
+
+            if el.type == "button" then
+                ui.button(ex, ey, el.text, isFocused)
+            elseif el.type == "label" then
+                ui.label(ex, ey, el.text)
+            elseif el.type == "input" then
+                ui.inputText(ex, ey, el.width, el.value, activeInput == el or isFocused)
+            end
+        end
+        
+        local event, p1, p2, p3 = os.pullEvent()
+        
+        if event == "mouse_click" then
+            local btn, mx, my = p1, p2, p3
+            local clickedSomething = false
+            
+            for i, el in ipairs(form.elements) do
+                local ex, ey = fx + el.x, fy + el.y
+                if el.type == "button" then
+                    if my == ey and mx >= ex and mx < ex + #el.text + 2 then
+                        ui.button(ex, ey, el.text, true) -- Flash
+                        sleep(0.1)
+                        if el.callback then
+                            local res = el.callback(form)
+                            if res then return res end
+                        end
+                        clickedSomething = true
+                        -- Update focus
+                        for fi, idx in ipairs(focusableIndices) do
+                            if idx == i then currentFocusIndex = fi; break end
+                        end
+                        activeInput = nil
+                    end
+                elseif el.type == "input" then
+                    if my == ey and mx >= ex and mx < ex + el.width then
+                        activeInput = el
+                        clickedSomething = true
+                        -- Update focus
+                        for fi, idx in ipairs(focusableIndices) do
+                            if idx == i then currentFocusIndex = fi; break end
+                        end
+                    end
+                end
+            end
+            
+            if not clickedSomething then
+                activeInput = nil
+            end
+            
+        elseif event == "char" and activeInput then
+            if not activeInput.stepper then
+                activeInput.value = (activeInput.value or "") .. p1
+            end
+        elseif event == "key" then
+            local key = p1
+            local focusedEl = (#focusableIndices > 0) and form.elements[focusableIndices[currentFocusIndex]] or nil
+            local function adjustStepper(el, delta)
+                if not el or not el.stepper then return end
+                local step = el.step or 1
+                local current = tonumber(el.value) or 0
+                local nextVal = current + (delta * step)
+                if el.min then nextVal = math.max(el.min, nextVal) end
+                if el.max then nextVal = math.min(el.max, nextVal) end
+                el.value = tostring(nextVal)
+            end
+
+            if key == keys.backspace and activeInput then
+                local val = activeInput.value or ""
+                if #val > 0 then
+                    activeInput.value = val:sub(1, -2)
+                end
+            elseif (key == keys.left or key == keys.right) and focusedEl and focusedEl.stepper then
+                local delta = key == keys.left and -1 or 1
+                adjustStepper(focusedEl, delta)
+                activeInput = nil
+            elseif key == keys.tab or key == keys.down then
+                if #focusableIndices > 0 then
+                    currentFocusIndex = currentFocusIndex + 1
+                    if currentFocusIndex > #focusableIndices then currentFocusIndex = 1 end
+                    local el = form.elements[focusableIndices[currentFocusIndex]]
+                    activeInput = (el.type == "input") and el or nil
+                end
+            elseif key == keys.up then
+                if #focusableIndices > 0 then
+                    currentFocusIndex = currentFocusIndex - 1
+                    if currentFocusIndex < 1 then currentFocusIndex = #focusableIndices end
+                    local el = form.elements[focusableIndices[currentFocusIndex]]
+                    activeInput = (el.type == "input") and el or nil
+                end
+            elseif key == keys.enter then
+                if activeInput then
+                    activeInput = nil
+                    -- Move to next
+                    if #focusableIndices > 0 then
+                        currentFocusIndex = currentFocusIndex + 1
+                        if currentFocusIndex > #focusableIndices then currentFocusIndex = 1 end
+                        local el = form.elements[focusableIndices[currentFocusIndex]]
+                        activeInput = (el.type == "input") and el or nil
+                    end
+                else
+                    -- Activate button
+                    if #focusableIndices > 0 then
+                        local el = form.elements[focusableIndices[currentFocusIndex]]
+                        if el.type == "button" then
+                            ui.button(fx + el.x, fy + el.y, el.text, true) -- Flash
+                            sleep(0.1)
+                            if el.callback then
+                                local res = el.callback(form)
+                                if res then return res end
+                            end
+                        elseif el.type == "input" then
+                            activeInput = el
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Simple Scrollable Menu
+-- items = { { text="Label", callback=function() end }, ... }
+function ui.runMenu(title, items)
+    local w, h = term.getSize()
+    local fw, fh = math.floor(w * 0.8), math.floor(h * 0.8)
+    local fx, fy = math.floor((w - fw) / 2) + 1, math.floor((h - fh) / 2) + 1
+    
+    local scroll = 0
+    local maxVisible = fh - 4 -- Title + padding (top/bottom)
+    local selectedIndex = 1
+
+    while true do
+        ui.clear()
+        ui.drawFrame(fx, fy, fw, fh, title)
+        
+        -- Draw items
+        for i = 1, maxVisible do
+            local idx = i + scroll
+            if idx <= #items then
+                local item = items[idx]
+                local isSelected = (idx == selectedIndex)
+                ui.button(fx + 2, fy + 1 + i, item.text, isSelected)
+            end
+        end
+        
+        -- Scroll indicators
+        if scroll > 0 then
+            ui.label(fx + fw - 2, fy + 2, "^")
+        end
+        if scroll + maxVisible < #items then
+            ui.label(fx + fw - 2, fy + fh - 2, "v")
+        end
+        
+        local event, p1, p2, p3 = os.pullEvent()
+        
+        if event == "mouse_click" then
+            local btn, mx, my = p1, p2, p3
+            
+            -- Check items
+            for i = 1, maxVisible do
+                local idx = i + scroll
+                if idx <= #items then
+                    local item = items[idx]
+                    local bx, by = fx + 2, fy + 1 + i
+                    -- Button width is text length + 2 spaces
+                    if my == by and mx >= bx and mx < bx + #item.text + 2 then
+                        ui.button(bx, by, item.text, true) -- Flash
+                        sleep(0.1)
+                        if item.callback then
+                            local res = item.callback()
+                            if res then return res end
+                        end
+                        selectedIndex = idx
+                    end
+                end
+            end
+            
+        elseif event == "mouse_scroll" then
+            local dir = p1
+            if dir > 0 then
+                if scroll + maxVisible < #items then scroll = scroll + 1 end
+            else
+                if scroll > 0 then scroll = scroll - 1 end
+            end
+        elseif event == "key" then
+            local key = p1
+            if key == keys.up then
+                if selectedIndex > 1 then
+                    selectedIndex = selectedIndex - 1
+                    if selectedIndex <= scroll then
+                        scroll = selectedIndex - 1
+                    end
+                end
+            elseif key == keys.down then
+                if selectedIndex < #items then
+                    selectedIndex = selectedIndex + 1
+                    if selectedIndex > scroll + maxVisible then
+                        scroll = selectedIndex - maxVisible
+                    end
+                end
+            elseif key == keys.enter then
+                local item = items[selectedIndex]
+                if item and item.callback then
+                    ui.button(fx + 2, fy + 1 + (selectedIndex - scroll), item.text, true) -- Flash
+                    sleep(0.1)
+                    local res = item.callback()
+                    if res then return res end
+                end
+            end
+        end
+    end
+end
+
+-- Form Class
+function ui.Form(title)
+    local self = {
+        title = title,
+        elements = {},
+        _row = 0,
+    }
+    
+    function self:addInput(id, label, value)
+        local y = 2 + self._row
+        table.insert(self.elements, { type = "label", x = 2, y = y, text = label })
+        table.insert(self.elements, { type = "input", x = 15, y = y, width = 20, value = value, id = id })
+        self._row = self._row + 1
+    end
+
+    function self:addStepper(id, label, value, opts)
+        opts = opts or {}
+        local y = 2 + self._row
+        table.insert(self.elements, { type = "label", x = 2, y = y, text = label })
+        table.insert(self.elements, {
+            type = "input",
+            x = 15,
+            y = y,
+            width = 12,
+            value = tostring(value or 0),
+            id = id,
+            stepper = true,
+            step = opts.step or 1,
+            min = opts.min,
+            max = opts.max,
+        })
+        self._row = self._row + 1
+    end
+    
+    function self:addButton(id, label, callback)
+         local y = 2 + self._row
+         table.insert(self.elements, { type = "button", x = 2, y = y, text = label, id = id, callback = callback })
+         self._row = self._row + 1
+    end
+
+    function self:run()
+        -- Add OK/Cancel buttons
+        local y = 2 + self._row + 2
+        table.insert(self.elements, { 
+            type = "button", x = 2, y = y, text = "OK", 
+            callback = function(form) return "ok" end 
+        })
+        table.insert(self.elements, { 
+            type = "button", x = 10, y = y, text = "Cancel", 
+            callback = function(form) return "cancel" end 
+        })
+        
+        return ui.runForm(self)
+    end
+    
+    return self
+end
+
+function ui.toBlit(color)
+    if colors.toBlit then return colors.toBlit(color) end
+    local exponent = math.log(color) / math.log(2)
+    return string.sub("0123456789abcdef", exponent + 1, exponent + 1)
+end
+
+return ui
+]=])
+
+addEmbeddedFile("ui/trash_config.lua", [=[
+local ui = require("lib_ui")
+local mining = require("lib_mining")
+local valhelsia_blocks = require("arcade.data.valhelsia_blocks")
+
+local trash_config = {}
+
+function trash_config.run()
+    local searchTerm = ""
+    local scroll = 0
+    local selectedIndex = 1
+    local filteredBlocks = {}
+    
+    -- Helper to update filtered list
+    local function updateFilter()
+        filteredBlocks = {}
+        for _, block in ipairs(valhelsia_blocks) do
+            if searchTerm == "" or 
+               block.label:lower():find(searchTerm:lower()) or 
+               block.id:lower():find(searchTerm:lower()) then
+                table.insert(filteredBlocks, block)
+            end
+        end
+    end
+    
+    updateFilter()
+    
+    while true do
+        ui.clear()
+        ui.drawFrame(2, 2, 48, 16, "Trash Configuration")
+        
+        -- Search Bar
+        ui.label(4, 4, "Search: ")
+        ui.inputText(12, 4, 30, searchTerm, true)
+        
+        -- List Header
+        ui.label(4, 6, "Name")
+        ui.label(35, 6, "Trash?")
+        ui.drawBox(4, 7, 44, 1, colors.gray, colors.white)
+        
+        -- List Items
+        local listHeight = 8
+        local maxScroll = math.max(0, #filteredBlocks - listHeight)
+        if scroll > maxScroll then scroll = maxScroll end
+        
+        for i = 1, listHeight do
+            local idx = i + scroll
+            if idx <= #filteredBlocks then
+                local block = filteredBlocks[idx]
+                local y = 7 + i
+                
+                local isTrash = mining.TRASH_BLOCKS[block.id]
+                local trashLabel = isTrash and "[YES]" or "[NO ]"
+                local trashColor = isTrash and colors.red or colors.green
+                
+                if i == selectedIndex then
+                    term.setBackgroundColor(colors.white)
+                    term.setTextColor(colors.black)
+                else
+                    term.setBackgroundColor(colors.blue)
+                    term.setTextColor(colors.white)
+                end
+                
+                term.setCursorPos(4, y)
+                local label = block.label
+                if #label > 30 then label = label:sub(1, 27) .. "..." end
+                term.write(label .. string.rep(" ", 31 - #label))
+                
+                term.setCursorPos(35, y)
+                if i == selectedIndex then
+                    term.setTextColor(colors.black)
+                else
+                    term.setTextColor(trashColor)
+                end
+                term.write(trashLabel)
+            end
+        end
+        
+        -- Instructions
+        ui.label(4, 17, "Arrows: Move/Scroll  Enter: Toggle  Esc: Save")
+        
+        local event, p1 = os.pullEvent()
+        
+        if event == "char" then
+            searchTerm = searchTerm .. p1
+            updateFilter()
+            selectedIndex = 1
+            scroll = 0
+        elseif event == "key" then
+            if p1 == keys.backspace then
+                searchTerm = searchTerm:sub(1, -2)
+                updateFilter()
+                selectedIndex = 1
+                scroll = 0
+            elseif p1 == keys.up then
+                if selectedIndex > 1 then
+                    selectedIndex = selectedIndex - 1
+                elseif scroll > 0 then
+                    scroll = scroll - 1
+                end
+            elseif p1 == keys.down then
+                if selectedIndex < math.min(listHeight, #filteredBlocks) then
+                    selectedIndex = selectedIndex + 1
+                elseif scroll < maxScroll then
+                    scroll = scroll + 1
+                end
+            elseif p1 == keys.enter then
+                local idx = selectedIndex + scroll
+                if filteredBlocks[idx] then
+                    local block = filteredBlocks[idx]
+                    if mining.TRASH_BLOCKS[block.id] then
+                        mining.TRASH_BLOCKS[block.id] = nil -- Remove from trash
+                    else
+                        mining.TRASH_BLOCKS[block.id] = true -- Add to trash
+                    end
+                end
+            elseif p1 == keys.enter or p1 == keys.escape then
+                mining.saveConfig()
+                return
+            end
+        end
+    end
+end
+
+return trash_config
+]=])
+
+addEmbeddedFile("lib/lib_schema.lua", [=[
+--[[
+Schema library for CC:Tweaked turtles.
+Provides helpers for working with build schemas.
+--]]
+
+---@diagnostic disable: undefined-global
+
+local schema_utils = {}
+local table_utils = require("lib_table")
+
+local function copyTable(tbl)
+    if type(tbl) ~= "table" then return {} end
+    return table_utils.shallowCopy(tbl)
+end
+
+function schema_utils.pushMaterialCount(counts, material)
+    counts[material] = (counts[material] or 0) + 1
+end
+
+function schema_utils.cloneMeta(meta)
+    return copyTable(meta)
+end
+
+function schema_utils.newBounds()
+    return {
+        min = { x = math.huge, y = math.huge, z = math.huge },
+        max = { x = -math.huge, y = -math.huge, z = -math.huge },
+    }
+end
+
+function schema_utils.updateBounds(bounds, x, y, z)
+    local minB = bounds.min
+    local maxB = bounds.max
+    if x < minB.x then minB.x = x end
+    if y < minB.y then minB.y = y end
+    if z < minB.z then minB.z = z end
+    if x > maxB.x then maxB.x = x end
+    if y > maxB.y then maxB.y = y end
+    if z > maxB.z then maxB.z = z end
+end
+
+function schema_utils.addBlock(schema, bounds, counts, x, y, z, material, meta)
+    if type(x) ~= "number" or type(y) ~= "number" or type(z) ~= "number" then
+        return false, "invalid_coordinate"
+    end
+    if type(material) ~= "string" or material == "" then
+        return false, "invalid_material"
+    end
+    meta = schema_utils.cloneMeta(meta)
+    schema[x] = schema[x] or {}
+    local yLayer = schema[x]
+    yLayer[y] = yLayer[y] or {}
+    local zLayer = yLayer[y]
+    if zLayer[z] ~= nil then
+        return false, "duplicate_coordinate"
+    end
+    zLayer[z] = { material = material, meta = meta }
+    schema_utils.updateBounds(bounds, x, y, z)
+    schema_utils.pushMaterialCount(counts, material)
+    return true
+end
+
+function schema_utils.mergeLegend(base, override)
+    local result = {}
+    if type(base) == "table" then
+        for symbol, entry in pairs(base) do
+            result[symbol] = entry
+        end
+    end
+    if type(override) == "table" then
+        for symbol, entry in pairs(override) do
+            result[symbol] = entry
+        end
+    end
+    return result
+end
+
+function schema_utils.normaliseLegendEntry(symbol, entry)
+    if entry == nil then
+        return nil, "unknown_symbol"
+    end
+    if entry == false or entry == "" then
+        return false
+    end
+    if type(entry) == "string" then
+        return { material = entry, meta = {} }
+    end
+    if type(entry) == "table" then
+        if entry.material == nil and entry[1] then
+            entry = { material = entry[1], meta = entry[2] }
+        end
+        local material = entry.material
+        if material == nil or material == "" then
+            return false
+        end
+        local meta = entry.meta
+        if meta ~= nil and type(meta) ~= "table" then
+            return nil, "invalid_meta"
+        end
+        return { material = material, meta = meta or {} }
+    end
+    return nil, "invalid_legend_entry"
+end
+
+function schema_utils.resolveSymbol(symbol, legend, opts)
+    if symbol == "" then
+        return nil, "empty_symbol"
+    end
+    if legend == nil then
+        return nil, "missing_legend"
+    end
+    local entry = legend[symbol]
+    if entry == nil then
+        if symbol == "." or symbol == " " then
+            return false
+        end
+        if opts and opts.allowImplicitAir and symbol:match("^%p?$") then
+            return false
+        end
+        return nil, "unknown_symbol"
+    end
+    local normalised, err = schema_utils.normaliseLegendEntry(symbol, entry)
+    if err then
+        return nil, err
+    end
+    return normalised
+end
+
+function schema_utils.fetchSchemaEntry(schema, pos)
+    if type(schema) ~= "table" or type(pos) ~= "table" then
+        return nil, "missing_schema"
+    end
+    local xLayer = schema[pos.x] or schema[tostring(pos.x)]
+    if type(xLayer) ~= "table" then
+        return nil, "empty"
+    end
+    local yLayer = xLayer[pos.y] or xLayer[tostring(pos.y)]
+    if type(yLayer) ~= "table" then
+        return nil, "empty"
+    end
+    local block = yLayer[pos.z] or yLayer[tostring(pos.z)]
+    if block == nil then
+        return nil, "empty"
+    end
+    return block
+end
+
+function schema_utils.canonicalToGrid(schema, opts)
+    opts = opts or {}
+    local grid = {}
+    if type(schema) ~= "table" then
+        return grid
+    end
+    for x, xColumn in pairs(schema) do
+        if type(xColumn) == "table" then
+            for y, yColumn in pairs(xColumn) do
+                if type(yColumn) == "table" then
+                    for z, block in pairs(yColumn) do
+                        if block and type(block) == "table" then
+                            local material = block.material
+                            if material and material ~= "" then
+                                local gx = tostring(x)
+                                local gy = tostring(y)
+                                local gz = tostring(z)
+                                grid[gx] = grid[gx] or {}
+                                grid[gx][gy] = grid[gx][gy] or {}
+                                grid[gx][gy][gz] = {
+                                    material = material,
+                                    meta = copyTable(block.meta),
+                                }
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return grid
+end
+
+function schema_utils.canonicalToVoxelDefinition(schema, opts)
+    return { grid = schema_utils.canonicalToGrid(schema, opts) }
+end
+
+function schema_utils.printMaterials(io, info)
+    if not io.print then
+        return
+    end
+    if not info or not info.materials or #info.materials == 0 then
+        io.print("Materials: <none>")
+        return
+    end
+    io.print("Materials:")
+    for _, entry in ipairs(info.materials) do
+        io.print(string.format(" - %s x%d", entry.material, entry.count))
+    end
+end
+
+function schema_utils.printBounds(io, info)
+    if not io.print then
+        return
+    end
+    if not info or not info.bounds or not info.bounds.min then
+        io.print("Bounds: <unknown>")
+        return
+    end
+    local minB = info.bounds.min
+    local maxB = info.bounds.max
+    local dims = {
+        x = (maxB.x - minB.x) + 1,
+        y = (maxB.y - minB.y) + 1,
+        z = (maxB.z - minB.z) + 1,
+    }
+    io.print(string.format("Bounds: min(%d,%d,%d) max(%d,%d,%d) dims(%d,%d,%d)",
+        minB.x, minB.y, minB.z, maxB.x, maxB.y, maxB.z, dims.x, dims.y, dims.z))
+end
+
+return schema_utils
+]=])
 
 addEmbeddedFile("factory/schema_farm_tree.txt", [[legend:
 . = minecraft:air
@@ -4407,6 +8340,1840 @@ function orientation.turnBackOf(facing)
 end
 
 return orientation
+]=])
+
+addEmbeddedFile("lib/lib_parser.lua", [=[--[[
+Parser library for CC:Tweaked turtles.
+Normalises schema sources (JSON, text grids, voxel tables) into the canonical
+schema[x][y][z] format used by the build states. All public entry points
+return success booleans with optional error messages and metadata tables.
+--]]
+
+---@diagnostic disable: undefined-global
+
+local parser = {}
+local logger = require("lib_logger")
+local table_utils = require("lib_table")
+local fs_utils = require("lib_fs")
+local json_utils = require("lib_json")
+local schema_utils = require("lib_schema")
+
+local function parseLayerRows(schema, bounds, counts, layerDef, legend, opts)
+    local rows = layerDef.rows
+    if type(rows) ~= "table" then
+        return false, "invalid_layer"
+    end
+    local height = #rows
+    if height == 0 then
+        return true
+    end
+    local width = nil
+    for rowIndex, row in ipairs(rows) do
+        if type(row) ~= "string" then
+            return false, "invalid_row"
+        end
+        if width == nil then
+            width = #row
+            if width == 0 then
+                return false, "empty_row"
+            end
+        elseif width ~= #row then
+            return false, "ragged_row"
+        end
+        for col = 1, #row do
+            local symbol = row:sub(col, col)
+            local entry, err = schema_utils.resolveSymbol(symbol, legend, opts)
+            if err then
+                return false, string.format("legend_error:%s", symbol)
+            end
+            if entry then
+                local x = (layerDef.x or 0) + (col - 1)
+                local y = layerDef.y or 0
+                local z = (layerDef.z or 0) + (rowIndex - 1)
+                local ok, addErr = schema_utils.addBlock(schema, bounds, counts, x, y, z, entry.material, entry.meta)
+                if not ok then
+                    return false, addErr
+                end
+            end
+        end
+    end
+    return true
+end
+
+local function toLayerRows(layer)
+    if type(layer) == "string" then
+        local rows = {}
+        for line in layer:gmatch("([^\r\n]+)") do
+            rows[#rows + 1] = line
+        end
+        return { rows = rows }
+    end
+    if type(layer) == "table" then
+        if layer.rows then
+            local rows = {}
+            for i = 1, #layer.rows do
+                rows[i] = tostring(layer.rows[i])
+            end
+            return {
+                rows = rows,
+                y = layer.y or layer.height or layer.level or 0,
+                x = layer.x or layer.offsetX or 0,
+                z = layer.z or layer.offsetZ or 0,
+            }
+        end
+        local rows = {}
+        local count = 0
+        for _, value in ipairs(layer) do
+            rows[#rows + 1] = tostring(value)
+            count = count + 1
+        end
+        if count > 0 then
+            return { rows = rows, y = layer.y or 0, x = layer.x or 0, z = layer.z or 0 }
+        end
+    end
+    return nil
+end
+
+local function parseLayers(schema, bounds, counts, def, legend, opts)
+    local layers = def.layers
+    if type(layers) ~= "table" then
+        return false, "invalid_layers"
+    end
+    local used = 0
+    for index, layer in ipairs(layers) do
+        local layerRows = toLayerRows(layer)
+        if not layerRows then
+            return false, "invalid_layer"
+        end
+        if not layerRows.y then
+            layerRows.y = (def.baseY or 0) + (index - 1)
+        else
+            layerRows.y = layerRows.y + (def.baseY or 0)
+        end
+        if def.baseX then
+            layerRows.x = (layerRows.x or 0) + def.baseX
+        end
+        if def.baseZ then
+            layerRows.z = (layerRows.z or 0) + def.baseZ
+        end
+        local ok, err = parseLayerRows(schema, bounds, counts, layerRows, legend, opts)
+        if not ok then
+            return false, err
+        end
+        used = used + 1
+    end
+    if used == 0 then
+        return false, "empty_layers"
+    end
+    return true
+end
+
+local function parseBlockList(schema, bounds, counts, blocks)
+    local used = 0
+    for _, block in ipairs(blocks) do
+        if type(block) ~= "table" then
+            return false, "invalid_block"
+        end
+        local x = block.x or block[1]
+        local y = block.y or block[2]
+        local z = block.z or block[3]
+        local material = block.material or block.name or block.block
+        local meta = block.meta or block.data
+        if type(meta) ~= "table" then
+            meta = {}
+        end
+        local ok, err = schema_utils.addBlock(schema, bounds, counts, x, y, z, material, meta)
+        if not ok then
+            return false, err
+        end
+        used = used + 1
+    end
+    if used == 0 then
+        return false, "empty_blocks"
+    end
+    return true
+end
+
+local function parseVoxelGrid(schema, bounds, counts, grid)
+    if type(grid) ~= "table" then
+        return false, "invalid_grid"
+    end
+    local used = 0
+    for xKey, xColumn in pairs(grid) do
+        local x = tonumber(xKey) or xKey
+        if type(x) ~= "number" then
+            return false, "invalid_coordinate"
+        end
+        if type(xColumn) ~= "table" then
+            return false, "invalid_grid"
+        end
+        for yKey, yColumn in pairs(xColumn) do
+            local y = tonumber(yKey) or yKey
+            if type(y) ~= "number" then
+                return false, "invalid_coordinate"
+            end
+            if type(yColumn) ~= "table" then
+                return false, "invalid_grid"
+            end
+            for zKey, entry in pairs(yColumn) do
+                local z = tonumber(zKey) or zKey
+                if type(z) ~= "number" then
+                    return false, "invalid_coordinate"
+                end
+                if entry ~= nil then
+                    local material
+                    local meta = {}
+                    if type(entry) == "string" then
+                        material = entry
+                    elseif type(entry) == "table" then
+                        material = entry.material or entry.name or entry.block
+                        meta = type(entry.meta) == "table" and entry.meta or {}
+                    else
+                        return false, "invalid_block"
+                    end
+                    if material and material ~= "" then
+                        local ok, err = schema_utils.addBlock(schema, bounds, counts, x, y, z, material, meta)
+                        if not ok then
+                            return false, err
+                        end
+                        used = used + 1
+                    end
+                end
+            end
+        end
+    end
+    if used == 0 then
+        return false, "empty_grid"
+    end
+    return true
+end
+
+local function summarise(bounds, counts, meta)
+    local materials = {}
+    for material, count in pairs(counts) do
+        materials[#materials + 1] = { material = material, count = count }
+    end
+    table.sort(materials, function(a, b)
+        if a.count == b.count then
+            return a.material < b.material
+        end
+        return a.count > b.count
+    end)
+    local total = 0
+    for _, entry in ipairs(materials) do
+        total = total + entry.count
+    end
+    return {
+        bounds = {
+            min = table_utils.shallowCopy(bounds.min),
+            max = table_utils.shallowCopy(bounds.max),
+        },
+        materials = materials,
+        totalBlocks = total,
+        meta = meta
+    }
+end
+
+local function buildCanonical(def, opts)
+    local schema = {}
+    local bounds = schema_utils.newBounds()
+    local counts = {}
+    local ok, err
+    if def.blocks then
+        ok, err = parseBlockList(schema, bounds, counts, def.blocks)
+    elseif def.layers then
+        ok, err = parseLayers(schema, bounds, counts, def, def.legend, opts)
+    elseif def.grid then
+        ok, err = parseVoxelGrid(schema, bounds, counts, def.grid)
+    else
+        return nil, "unknown_definition"
+    end
+    if not ok then
+        return nil, err
+    end
+    if bounds.min.x == math.huge then
+        return nil, "empty_schema"
+    end
+    return schema, summarise(bounds, counts, def.meta)
+end
+
+local function detectFormatFromExtension(path)
+    if type(path) ~= "string" then
+        return nil
+    end
+    local ext = path:match("%.([%w_%-]+)$")
+    if not ext then
+        return nil
+    end
+    ext = ext:lower()
+    if ext == "json" or ext == "schem" then
+        return "json"
+    end
+    if ext == "txt" or ext == "grid" then
+        return "grid"
+    end
+    if ext == "vox" or ext == "voxel" then
+        return "voxel"
+    end
+    return nil
+end
+
+local function detectFormatFromText(text)
+    if type(text) ~= "string" then
+        return nil
+    end
+    local trimmed = text:match("^%s*(.-)%s*$") or text
+    local firstChar = trimmed:sub(1, 1)
+    if firstChar == "{" or firstChar == "[" then
+        return "json"
+    end
+    return "grid"
+end
+
+local function parseLegendBlock(lines, index)
+    local legend = {}
+    local pos = index
+    while pos <= #lines do
+        local line = lines[pos]
+        if line == "" then
+            break
+        end
+        if line:match("^layer") then
+            break
+        end
+        local symbol, rest = line:match("^(%S+)%s*[:=]%s*(.+)$")
+        if not symbol then
+            symbol, rest = line:match("^(%S+)%s+(.+)$")
+        end
+        if symbol and rest then
+            rest = rest:gsub("^%s+", ""):gsub("%s+$", "")
+            local value
+            if rest:sub(1, 1) == "{" then
+                local parsed = json_utils.decodeJson(rest)
+                if parsed then
+                    value = parsed
+                else
+                    value = rest
+                end
+            else
+                value = rest
+            end
+            legend[symbol] = value
+        end
+        pos = pos + 1
+    end
+    return legend, pos
+end
+
+local function parseTextGridContent(text, opts)
+    local lines = {}
+    for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+        line = line:gsub("\r$", "")
+        lines[#lines + 1] = line
+    end
+    local legend = schema_utils.mergeLegend(opts and opts.legend or nil, nil)
+    local layers = {}
+    local current = {}
+    local currentY = nil
+    local lineIndex = 1
+    while lineIndex <= #lines do
+        local line = lines[lineIndex]
+        local trimmed = line:match("^%s*(.-)%s*$")
+        if trimmed == "" then
+            if #current > 0 then
+                layers[#layers + 1] = { rows = current, y = currentY or (#layers) }
+                current = {}
+                currentY = nil
+            end
+            lineIndex = lineIndex + 1
+        elseif trimmed:lower() == "legend:" then
+            local legendBlock, nextIndex = parseLegendBlock(lines, lineIndex + 1)
+            legend = schema_utils.mergeLegend(legend, legendBlock)
+            lineIndex = nextIndex
+        elseif trimmed:lower() == "meta:" then
+            local metaBlock, nextIndex = parseLegendBlock(lines, lineIndex + 1) -- Reuse parseLegendBlock as format is identical
+            if not opts then opts = {} end
+            opts.meta = schema_utils.mergeLegend(opts.meta, metaBlock)
+            lineIndex = nextIndex
+        elseif trimmed:match("^layer") then
+            if #current > 0 then
+                layers[#layers + 1] = { rows = current, y = currentY or (#layers) }
+                current = {}
+            end
+            local yValue = trimmed:match("layer%s*[:=]%s*(-?%d+)")
+            currentY = yValue and tonumber(yValue) or (#layers)
+            lineIndex = lineIndex + 1
+        else
+            current[#current + 1] = line
+            lineIndex = lineIndex + 1
+        end
+    end
+    if #current > 0 then
+        layers[#layers + 1] = { rows = current, y = currentY or (#layers) }
+    end
+    if not legend or next(legend) == nil then
+        return nil, "missing_legend"
+    end
+    if #layers == 0 then
+        return nil, "empty_layers"
+    end
+    return {
+        layers = layers,
+        legend = legend,
+    }
+end
+
+local function parseJsonContent(obj, opts)
+    if type(obj) ~= "table" then
+        return nil, "invalid_json_root"
+    end
+    local legend = schema_utils.mergeLegend(opts and opts.legend or nil, obj.legend or nil)
+    if obj.blocks then
+        return {
+            blocks = obj.blocks,
+            legend = legend,
+        }
+    end
+    if obj.layers then
+        return {
+            layers = obj.layers,
+            legend = legend,
+            baseX = obj.baseX,
+            baseY = obj.baseY,
+            baseZ = obj.baseZ,
+        }
+    end
+    if obj.grid or obj.voxels then
+        return {
+            grid = obj.grid or obj.voxels,
+            legend = legend,
+        }
+    end
+    if #obj > 0 then
+        return {
+            blocks = obj,
+            legend = legend,
+        }
+    end
+    return nil, "unrecognised_json"
+end
+
+local function assignToContext(ctx, schema, info)
+    if type(ctx) ~= "table" then
+        return
+    end
+    ctx.schema = schema
+    ctx.schemaInfo = info
+end
+
+local function ensureSpecTable(spec)
+    if type(spec) == "table" then
+        return table_utils.shallowCopy(spec)
+    end
+    if type(spec) == "string" then
+        return { source = spec }
+    end
+    return {}
+end
+
+function parser.parse(ctx, spec)
+    spec = ensureSpecTable(spec)
+    local format = spec.format
+    local text = spec.text
+    local data = spec.data
+    local path = spec.path or spec.sourcePath
+    local source = spec.source
+    if not format and spec.path then
+        format = detectFormatFromExtension(spec.path)
+    end
+    if not format and spec.formatHint then
+        format = spec.formatHint
+    end
+    if not text and not data then
+        if spec.textContent then
+            text = spec.textContent
+        elseif spec.raw then
+            text = spec.raw
+        elseif spec.sourceText then
+            text = spec.sourceText
+        end
+    end
+    if not path and type(source) == "string" and text == nil and data == nil then
+        local maybeFormat = detectFormatFromExtension(source)
+        if maybeFormat then
+            path = source
+            format = format or maybeFormat
+        else
+            text = source
+        end
+    end
+    if text == nil and path then
+        local contents, err = fs_utils.readFile(path)
+        if not contents then
+            return false, err or "read_failed"
+        end
+        text = contents
+        if not format then
+            format = detectFormatFromExtension(path) or detectFormatFromText(text)
+        end
+    end
+    if not format then
+        if data then
+            if data.layers then
+                format = "grid"
+            elseif data.blocks then
+                format = "json"
+            elseif data.grid or data.voxels then
+                format = "voxel"
+            end
+        elseif text then
+            format = detectFormatFromText(text)
+        end
+    end
+    if not format then
+        return false, "unknown_format"
+    end
+    local definition, err
+    if format == "json" then
+        if data then
+            definition, err = parseJsonContent(data, spec)
+        else
+            local obj, decodeErr = json_utils.decodeJson(text)
+            if not obj then
+                return false, decodeErr
+            end
+            definition, err = parseJsonContent(obj, spec)
+        end
+    elseif format == "grid" then
+        if data and (data.layers or data.rows) then
+            definition = {
+                layers = data.layers or { data.rows },
+                legend = schema_utils.mergeLegend(spec.legend or nil, data.legend or nil),
+                meta = spec.meta or data.meta
+            }
+        else
+            definition, err = parseTextGridContent(text, spec)
+            if definition and spec.meta then
+                 definition.meta = schema_utils.mergeLegend(definition.meta, spec.meta)
+            end
+        end
+    elseif format == "voxel" then
+        if data then
+            definition = {
+                grid = data.grid or data.voxels or data,
+            }
+        else
+            local obj, decodeErr = json_utils.decodeJson(text)
+            if not obj then
+                return false, decodeErr
+            end
+            if obj.grid or obj.voxels then
+                definition = {
+                    grid = obj.grid or obj.voxels,
+                }
+            else
+                definition, err = parseJsonContent(obj, spec)
+            end
+        end
+    else
+        return false, "unsupported_format"
+    end
+    if not definition then
+        return false, err or "invalid_definition"
+    end
+    if spec.legend then
+        definition.legend = schema_utils.mergeLegend(definition.legend, spec.legend)
+    end
+    local schema, metadata = buildCanonical(definition, spec)
+    if not schema then
+        return false, metadata or "parse_failed"
+    end
+    if type(metadata) ~= "table" then
+        metadata = { note = metadata }
+    end
+    metadata = metadata or {}
+    metadata.format = format
+    metadata.path = path
+    assignToContext(ctx, schema, metadata)
+    logger.log(ctx, "debug", string.format("Parsed schema with %d blocks", metadata.totalBlocks or 0))
+    return true, schema, metadata
+end
+
+function parser.parseFile(ctx, path, opts)
+    opts = opts or {}
+    opts.path = path
+    return parser.parse(ctx, opts)
+end
+
+function parser.parseText(ctx, text, opts)
+    opts = opts or {}
+    opts.text = text
+    opts.format = opts.format or "grid"
+    return parser.parse(ctx, opts)
+end
+
+function parser.parseJson(ctx, data, opts)
+    opts = opts or {}
+    opts.data = data
+    opts.format = "json"
+    return parser.parse(ctx, opts)
+end
+
+return parser
+]=])
+
+addEmbeddedFile("lib/lib_ui.lua", [=[--[[
+UI Library for TurtleOS (Mouse/GUI Edition)
+Provides DOS-style windowing and widgets.
+--]]
+
+local ui = {}
+
+local colors_bg = colors.blue
+local colors_fg = colors.white
+local colors_btn = colors.lightGray
+local colors_btn_text = colors.black
+local colors_input = colors.black
+local colors_input_text = colors.white
+
+function ui.clear()
+    term.setBackgroundColor(colors_bg)
+    term.setTextColor(colors_fg)
+    term.clear()
+end
+
+function ui.drawBox(x, y, w, h, bg, fg)
+    term.setBackgroundColor(bg)
+    term.setTextColor(fg)
+    for i = 0, h - 1 do
+        term.setCursorPos(x, y + i)
+        term.write(string.rep(" ", w))
+    end
+end
+
+function ui.drawFrame(x, y, w, h, title)
+    ui.drawBox(x, y, w, h, colors.gray, colors.white)
+    ui.drawBox(x + 1, y + 1, w - 2, h - 2, colors_bg, colors_fg)
+    
+    -- Shadow
+    term.setBackgroundColor(colors.black)
+    for i = 1, h do
+        term.setCursorPos(x + w, y + i)
+        term.write(" ")
+    end
+    for i = 1, w do
+        term.setCursorPos(x + i, y + h)
+        term.write(" ")
+    end
+
+    if title then
+        term.setCursorPos(x + 2, y + 1)
+        term.setBackgroundColor(colors.white)
+        term.setTextColor(colors.black)
+        term.write(" " .. title .. " ")
+    end
+end
+
+function ui.button(x, y, text, active)
+    term.setCursorPos(x, y)
+    if active then
+        term.setBackgroundColor(colors.white)
+        term.setTextColor(colors.black)
+    else
+        term.setBackgroundColor(colors_btn)
+        term.setTextColor(colors_btn_text)
+    end
+    term.write(" " .. text .. " ")
+end
+
+function ui.label(x, y, text)
+    term.setCursorPos(x, y)
+    term.setBackgroundColor(colors_bg)
+    term.setTextColor(colors_fg)
+    term.write(text)
+end
+
+function ui.inputText(x, y, width, value, active)
+    term.setCursorPos(x, y)
+    term.setBackgroundColor(colors_input)
+    term.setTextColor(colors_input_text)
+    local display = value or ""
+    if #display > width then
+        display = display:sub(-width)
+    end
+    term.write(display .. string.rep(" ", width - #display))
+    if active then
+        term.setCursorPos(x + #display, y)
+        term.setCursorBlink(true)
+    else
+        term.setCursorBlink(false)
+    end
+end
+
+function ui.drawPreview(schema, x, y, w, h)
+    -- Find bounds
+    local minX, maxX, minZ, maxZ = 9999, -9999, 9999, -9999
+    for sx, row in pairs(schema) do
+        local nx = tonumber(sx)
+        if nx then
+            if nx < minX then minX = nx end
+            if nx > maxX then maxX = nx end
+            for sy, col in pairs(row) do
+                for sz, block in pairs(col) do
+                    local nz = tonumber(sz)
+                    if nz then
+                        if nz < minZ then minZ = nz end
+                        if nz > maxZ then maxZ = nz end
+                    end
+                end
+            end
+        end
+    end
+
+    if minX > maxX then return end -- Empty schema
+
+    local scaleX = w / (maxX - minX + 1)
+    local scaleZ = h / (maxZ - minZ + 1)
+    local scale = math.min(scaleX, scaleZ, 1) -- Keep aspect ratio, max 1:1
+
+    -- Draw background
+    term.setBackgroundColor(colors.black)
+    for i = 0, h - 1 do
+        term.setCursorPos(x, y + i)
+        term.write(string.rep(" ", w))
+    end
+
+    -- Draw blocks
+    for sx, row in pairs(schema) do
+        local nx = tonumber(sx)
+        if nx then
+            for sy, col in pairs(row) do
+                for sz, block in pairs(col) do
+                    local nz = tonumber(sz)
+                    if nz then
+                        -- Map to screen
+                        local scrX = math.floor((nx - minX) * scale) + x
+                        local scrY = math.floor((nz - minZ) * scale) + y
+                        
+                        if scrX >= x and scrX < x + w and scrY >= y and scrY < y + h then
+                            term.setCursorPos(scrX, scrY)
+                            
+                            -- Color mapping
+                            local mat = block.material
+                            local color = colors.gray
+                            local char = " "
+                            
+                            if mat:find("water") then color = colors.blue
+                            elseif mat:find("log") then color = colors.brown
+                            elseif mat:find("leaves") then color = colors.green
+                            elseif mat:find("sapling") then color = colors.green; char = "T"
+                            elseif mat:find("sand") then color = colors.yellow
+                            elseif mat:find("dirt") then color = colors.brown
+                            elseif mat:find("grass") then color = colors.green
+                            elseif mat:find("stone") then color = colors.lightGray
+                            elseif mat:find("cane") then color = colors.lime; char = "!"
+                            elseif mat:find("potato") then color = colors.orange; char = "."
+                            elseif mat:find("torch") then color = colors.orange; char = "i"
+                            end
+                            
+                            term.setBackgroundColor(color)
+                            if color == colors.black then term.setTextColor(colors.white) else term.setTextColor(colors.black) end
+                            term.write(char)
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Simple Event Loop for a Form
+-- form = { title = "", elements = { {type="button", x=, y=, text=, id=}, ... } }
+function ui.runForm(form)
+    local w, h = term.getSize()
+    local fw, fh = math.floor(w * 0.8), math.floor(h * 0.8)
+    local fx, fy = math.floor((w - fw) / 2) + 1, math.floor((h - fh) / 2) + 1
+    
+    local running = true
+    local result = nil
+    local activeInput = nil
+
+    -- Identify focusable elements
+    local focusableIndices = {}
+    for i, el in ipairs(form.elements) do
+        if el.type == "input" or el.type == "button" then
+            table.insert(focusableIndices, i)
+        end
+    end
+    local currentFocusIndex = 1
+    if #focusableIndices > 0 then
+        local el = form.elements[focusableIndices[currentFocusIndex]]
+        if el.type == "input" then activeInput = el end
+    end
+
+    while running do
+        ui.clear()
+        ui.drawFrame(fx, fy, fw, fh, form.title)
+        
+        -- Custom Draw
+        if form.onDraw then
+            form.onDraw(fx, fy, fw, fh)
+        end
+
+        -- Draw elements
+        for i, el in ipairs(form.elements) do
+            local ex, ey = fx + el.x, fy + el.y
+            local isFocused = false
+            if #focusableIndices > 0 and focusableIndices[currentFocusIndex] == i then
+                isFocused = true
+            end
+
+            if el.type == "button" then
+                ui.button(ex, ey, el.text, isFocused)
+            elseif el.type == "label" then
+                ui.label(ex, ey, el.text)
+            elseif el.type == "input" then
+                ui.inputText(ex, ey, el.width, el.value, activeInput == el or isFocused)
+            end
+        end
+        
+        local event, p1, p2, p3 = os.pullEvent()
+        
+        if event == "mouse_click" then
+            local btn, mx, my = p1, p2, p3
+            local clickedSomething = false
+            
+            for i, el in ipairs(form.elements) do
+                local ex, ey = fx + el.x, fy + el.y
+                if el.type == "button" then
+                    if my == ey and mx >= ex and mx < ex + #el.text + 2 then
+                        ui.button(ex, ey, el.text, true) -- Flash
+                        sleep(0.1)
+                        if el.callback then
+                            local res = el.callback(form)
+                            if res then return res end
+                        end
+                        clickedSomething = true
+                        -- Update focus
+                        for fi, idx in ipairs(focusableIndices) do
+                            if idx == i then currentFocusIndex = fi; break end
+                        end
+                        activeInput = nil
+                    end
+                elseif el.type == "input" then
+                    if my == ey and mx >= ex and mx < ex + el.width then
+                        activeInput = el
+                        clickedSomething = true
+                        -- Update focus
+                        for fi, idx in ipairs(focusableIndices) do
+                            if idx == i then currentFocusIndex = fi; break end
+                        end
+                    end
+                end
+            end
+            
+            if not clickedSomething then
+                activeInput = nil
+            end
+            
+        elseif event == "char" and activeInput then
+            if not activeInput.stepper then
+                activeInput.value = (activeInput.value or "") .. p1
+            end
+        elseif event == "key" then
+            local key = p1
+            local focusedEl = (#focusableIndices > 0) and form.elements[focusableIndices[currentFocusIndex]] or nil
+            local function adjustStepper(el, delta)
+                if not el or not el.stepper then return end
+                local step = el.step or 1
+                local current = tonumber(el.value) or 0
+                local nextVal = current + (delta * step)
+                if el.min then nextVal = math.max(el.min, nextVal) end
+                if el.max then nextVal = math.min(el.max, nextVal) end
+                el.value = tostring(nextVal)
+            end
+
+            if key == keys.backspace and activeInput then
+                local val = activeInput.value or ""
+                if #val > 0 then
+                    activeInput.value = val:sub(1, -2)
+                end
+            elseif (key == keys.left or key == keys.right) and focusedEl and focusedEl.stepper then
+                local delta = key == keys.left and -1 or 1
+                adjustStepper(focusedEl, delta)
+                activeInput = nil
+            elseif key == keys.tab or key == keys.down then
+                if #focusableIndices > 0 then
+                    currentFocusIndex = currentFocusIndex + 1
+                    if currentFocusIndex > #focusableIndices then currentFocusIndex = 1 end
+                    local el = form.elements[focusableIndices[currentFocusIndex]]
+                    activeInput = (el.type == "input") and el or nil
+                end
+            elseif key == keys.up then
+                if #focusableIndices > 0 then
+                    currentFocusIndex = currentFocusIndex - 1
+                    if currentFocusIndex < 1 then currentFocusIndex = #focusableIndices end
+                    local el = form.elements[focusableIndices[currentFocusIndex]]
+                    activeInput = (el.type == "input") and el or nil
+                end
+            elseif key == keys.enter then
+                if activeInput then
+                    activeInput = nil
+                    -- Move to next
+                    if #focusableIndices > 0 then
+                        currentFocusIndex = currentFocusIndex + 1
+                        if currentFocusIndex > #focusableIndices then currentFocusIndex = 1 end
+                        local el = form.elements[focusableIndices[currentFocusIndex]]
+                        activeInput = (el.type == "input") and el or nil
+                    end
+                else
+                    -- Activate button
+                    if #focusableIndices > 0 then
+                        local el = form.elements[focusableIndices[currentFocusIndex]]
+                        if el.type == "button" then
+                            ui.button(fx + el.x, fy + el.y, el.text, true) -- Flash
+                            sleep(0.1)
+                            if el.callback then
+                                local res = el.callback(form)
+                                if res then return res end
+                            end
+                        elseif el.type == "input" then
+                            activeInput = el
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Simple Scrollable Menu
+-- items = { { text="Label", callback=function() end }, ... }
+function ui.runMenu(title, items)
+    local w, h = term.getSize()
+    local fw, fh = math.floor(w * 0.8), math.floor(h * 0.8)
+    local fx, fy = math.floor((w - fw) / 2) + 1, math.floor((h - fh) / 2) + 1
+    
+    local scroll = 0
+    local maxVisible = fh - 4 -- Title + padding (top/bottom)
+    local selectedIndex = 1
+
+    while true do
+        ui.clear()
+        ui.drawFrame(fx, fy, fw, fh, title)
+        
+        -- Draw items
+        for i = 1, maxVisible do
+            local idx = i + scroll
+            if idx <= #items then
+                local item = items[idx]
+                local isSelected = (idx == selectedIndex)
+                ui.button(fx + 2, fy + 1 + i, item.text, isSelected)
+            end
+        end
+        
+        -- Scroll indicators
+        if scroll > 0 then
+            ui.label(fx + fw - 2, fy + 2, "^")
+        end
+        if scroll + maxVisible < #items then
+            ui.label(fx + fw - 2, fy + fh - 2, "v")
+        end
+        
+        local event, p1, p2, p3 = os.pullEvent()
+        
+        if event == "mouse_click" then
+            local btn, mx, my = p1, p2, p3
+            
+            -- Check items
+            for i = 1, maxVisible do
+                local idx = i + scroll
+                if idx <= #items then
+                    local item = items[idx]
+                    local bx, by = fx + 2, fy + 1 + i
+                    -- Button width is text length + 2 spaces
+                    if my == by and mx >= bx and mx < bx + #item.text + 2 then
+                        ui.button(bx, by, item.text, true) -- Flash
+                        sleep(0.1)
+                        if item.callback then
+                            local res = item.callback()
+                            if res then return res end
+                        end
+                        selectedIndex = idx
+                    end
+                end
+            end
+            
+        elseif event == "mouse_scroll" then
+            local dir = p1
+            if dir > 0 then
+                if scroll + maxVisible < #items then scroll = scroll + 1 end
+            else
+                if scroll > 0 then scroll = scroll - 1 end
+            end
+        elseif event == "key" then
+            local key = p1
+            if key == keys.up then
+                if selectedIndex > 1 then
+                    selectedIndex = selectedIndex - 1
+                    if selectedIndex <= scroll then
+                        scroll = selectedIndex - 1
+                    end
+                end
+            elseif key == keys.down then
+                if selectedIndex < #items then
+                    selectedIndex = selectedIndex + 1
+                    if selectedIndex > scroll + maxVisible then
+                        scroll = selectedIndex - maxVisible
+                    end
+                end
+            elseif key == keys.enter then
+                local item = items[selectedIndex]
+                if item and item.callback then
+                    ui.button(fx + 2, fy + 1 + (selectedIndex - scroll), item.text, true) -- Flash
+                    sleep(0.1)
+                    local res = item.callback()
+                    if res then return res end
+                end
+            end
+        end
+    end
+end
+
+-- Form Class
+function ui.Form(title)
+    local self = {
+        title = title,
+        elements = {},
+        _row = 0,
+    }
+    
+    function self:addInput(id, label, value)
+        local y = 2 + self._row
+        table.insert(self.elements, { type = "label", x = 2, y = y, text = label })
+        table.insert(self.elements, { type = "input", x = 15, y = y, width = 20, value = value, id = id })
+        self._row = self._row + 1
+    end
+
+    function self:addStepper(id, label, value, opts)
+        opts = opts or {}
+        local y = 2 + self._row
+        table.insert(self.elements, { type = "label", x = 2, y = y, text = label })
+        table.insert(self.elements, {
+            type = "input",
+            x = 15,
+            y = y,
+            width = 12,
+            value = tostring(value or 0),
+            id = id,
+            stepper = true,
+            step = opts.step or 1,
+            min = opts.min,
+            max = opts.max,
+        })
+        self._row = self._row + 1
+    end
+    
+    function self:addButton(id, label, callback)
+         local y = 2 + self._row
+         table.insert(self.elements, { type = "button", x = 2, y = y, text = label, id = id, callback = callback })
+         self._row = self._row + 1
+    end
+
+    function self:run()
+        -- Add OK/Cancel buttons
+        local y = 2 + self._row + 2
+        table.insert(self.elements, { 
+            type = "button", x = 2, y = y, text = "OK", 
+            callback = function(form) return "ok" end 
+        })
+        table.insert(self.elements, { 
+            type = "button", x = 10, y = y, text = "Cancel", 
+            callback = function(form) return "cancel" end 
+        })
+        
+        return ui.runForm(self)
+    end
+    
+    return self
+end
+
+function ui.toBlit(color)
+    if colors.toBlit then return colors.toBlit(color) end
+    local exponent = math.log(color) / math.log(2)
+    return string.sub("0123456789abcdef", exponent + 1, exponent + 1)
+end
+
+return ui
+]=])
+
+addEmbeddedFile("lib/lib_strategy_tunnel.lua", [=[--[[
+Strategy generator for tunneling.
+Produces a linear list of steps for the turtle to excavate a tunnel of given dimensions.
+]]
+
+local strategy = {}
+
+local function normalizePositiveInt(value, default)
+    local numberValue = tonumber(value)
+    if not numberValue or numberValue < 1 then
+        return default
+    end
+    return math.floor(numberValue)
+end
+
+local function pushStep(steps, x, y, z, facing, stepType, data)
+    steps[#steps + 1] = {
+        type = stepType,
+        x = x,
+        y = y,
+        z = z,
+        facing = facing,
+        data = data,
+    }
+end
+
+local function forward(x, z, facing)
+    if facing == 0 then
+        z = z + 1
+    elseif facing == 1 then
+        x = x + 1
+    elseif facing == 2 then
+        z = z - 1
+    else
+        x = x - 1
+    end
+    return x, z
+end
+
+local function turnLeft(facing)
+    return (facing + 3) % 4
+end
+
+local function turnRight(facing)
+    return (facing + 1) % 4
+end
+
+--- Generate a tunnel strategy
+---@param length number Length of the tunnel
+---@param width number Width of the tunnel
+---@param height number Height of the tunnel
+---@param torchInterval number Distance between torches
+---@return table
+function strategy.generate(length, width, height, torchInterval)
+    length = normalizePositiveInt(length, 16)
+    width = normalizePositiveInt(width, 1)
+    height = normalizePositiveInt(height, 2)
+    torchInterval = normalizePositiveInt(torchInterval, 6)
+
+    local steps = {}
+    local x, y, z = 0, 0, 0
+    local facing = 0 -- 0: forward (z+), 1: right (x+), 2: back (z-), 3: left (x-)
+
+    -- We assume the turtle starts at bottom-left of the tunnel face, facing into the tunnel.
+    -- Actually, let's assume turtle starts at (0,0,0) and that is the bottom-center or bottom-left?
+    -- Let's assume standard behavior: Turtle is at start of tunnel.
+    -- It will mine forward `length` blocks.
+    -- If width > 1, it needs to strafe or turn.
+    
+    -- Simple implementation: Layer by layer, row by row.
+    -- But for a tunnel, we usually want to move forward, clearing the cross-section.
+    
+    for l = 1, length do
+        -- Clear the cross-section at current depth
+        -- We are at some (x, y) in the cross section.
+        -- Let's say we start at bottom-left (0,0) of the cross section relative to the tunnel axis.
+        
+        -- Actually, simpler: Just iterate x, y, z loops.
+        -- But we want to minimize movement.
+        -- Serpentine pattern for the cross section?
+        
+        -- Let's stick to the `state_mine` logic which expects "move" steps.
+        -- `state_mine` is designed for branch mining where it moves forward and mines neighbors.
+        -- It might not be suitable for clearing a large room.
+        -- `state_mine` supports: move, turn, mine_neighbors, place_torch.
+        -- `mine_neighbors` mines up, down, left, right, front.
+        
+        -- If we use `state_mine`, we are limited to its capabilities.
+        -- Maybe we should use `state_build` logic but with "dig" enabled?
+        -- Or extend `state_mine`?
+        
+        -- `state_mine` logic:
+        -- if step.type == "move" then movement.goTo(dest, {dig=true})
+        
+        -- So if we generate a path that covers every block in the tunnel volume, `movement.goTo` with `dig=true` will clear it.
+        -- We just need to generate the path.
+        
+        -- Let's generate a path that visits every block in the volume (0..width-1, 0..height-1, 1..length)
+        -- Wait, 1..length because 0 is start?
+        -- Let's say turtle starts at 0,0,0.
+        -- It needs to clear 0,0,1 to width-1, height-1, length.
+        
+        -- Actually, let's just do a simple serpentine.
+        
+        -- Current pos
+        -- x, y, z are relative to start.
+        
+        -- We are at (x,y,z). We want to clear the block at (x,y,z) if it's not 0,0,0?
+        -- No, `goTo` moves TO the block.
+        
+        -- Let's iterate length first (depth), then width/height?
+        -- No, usually you want to clear the face then move forward.
+        -- But `goTo` is absolute coords.
+        
+        -- Let's do:
+        -- For each slice z = 1 to length:
+        --   For each y = 0 to height-1:
+        --     For each x = 0 to width-1:
+        --       visit(x, y, z)
+        
+        -- Optimization: Serpentine x and y.
+    end
+    
+    -- Re-thinking: `state_mine` uses `localToWorld` which interprets x,y,z relative to turtle start.
+    -- So we just need to generate a list of coordinates to visit.
+    
+    local currentX, currentY, currentZ = 0, 0, 0
+    
+    for d = 1, length do
+        -- Move forward to next slice
+        -- We are at z = d-1. We want to clear z = d.
+        -- But we also need to clear x=0..width-1, y=0..height-1 at z=d.
+        
+        -- Let's assume we are at (currentX, currentY, d-1).
+        -- We move to (currentX, currentY, d).
+        
+        -- Serpentine logic for the face
+        -- We are at some x,y.
+        -- We want to cover all x in [0, width-1] and y in [0, height-1].
+        
+        -- If we are just moving forward, we are carving a 1x1 tunnel.
+        -- If width/height > 1, we need to visit others.
+        
+        -- Let's generate points.
+        local slicePoints = {}
+        for y = 0, height - 1 do
+            for x = 0, width - 1 do
+                table.insert(slicePoints, {x=x, y=y})
+            end
+        end
+        
+        -- Sort slicePoints to be nearest neighbor or serpentine
+        -- Simple serpentine:
+        -- If y is even, x goes 0 -> width-1
+        -- If y is odd, x goes width-1 -> 0
+        -- But we also need to minimize y movement.
+        
+        -- Actually, let's just generate the path directly.
+        
+        -- We are at z=d.
+        -- We iterate y from 0 to height-1.
+        -- If y is even: x from 0 to width-1
+        -- If y is odd: x from width-1 to 0
+        
+        -- But wait, between slices, we want to connect the end of slice d to start of slice d+1.
+        -- End of slice d is (endX, endY, d).
+        -- Start of slice d+1 should be (endX, endY, d+1).
+        -- So we should reverse the traversal order for the next slice?
+        -- Or just continue?
+        
+        -- Let's try to keep it simple.
+        -- Slice 1:
+        --   y=0: x=0->W
+        --   y=1: x=W->0
+        --   ...
+        --   End at (LastX, LastY, 1)
+        
+        -- Slice 2:
+        --   Start at (LastX, LastY, 2)
+        --   We should traverse in reverse of Slice 1 to minimize movement?
+        --   Or just continue the pattern?
+        
+        -- Let's just do standard serpentine for every slice, but reverse the whole slice order if d is even?
+        
+        local yStart, yEnd, yStep
+        if d % 2 == 1 then
+            yStart, yEnd, yStep = 0, height - 1, 1
+        else
+            yStart, yEnd, yStep = height - 1, 0, -1
+        end
+        
+        for y = yStart, yEnd, yStep do
+            local xStart, xEnd, xStep
+            -- If we are on an "even" row relative to the start of this slice...
+            -- Let's just say: if y is even, go right. If y is odd, go left.
+            -- But we need to match the previous position.
+            
+            -- If we came from z-1, we are at (currentX, currentY, d-1).
+            -- We move to (currentX, currentY, d).
+            -- So we should start this slice at currentX, currentY.
+            
+            -- This implies we shouldn't hardcode loops, but rather "fill" the slice starting from current pos.
+            -- But that's pathfinding.
+            
+            -- Let's stick to a fixed pattern that aligns.
+            -- If width=1, height=2.
+            -- d=1: (0,0,1) -> (0,1,1). End at (0,1,1).
+            -- d=2: (0,1,2) -> (0,0,2). End at (0,0,2).
+            -- d=3: (0,0,3) -> (0,1,3).
+            -- This works perfectly.
+            
+            -- So:
+            -- If d is odd: y goes 0 -> height-1.
+            -- If d is even: y goes height-1 -> 0.
+            
+            -- Inside y loop:
+            -- We need to decide x direction.
+            -- If y is even (0, 2...): x goes 0 -> width-1?
+            -- Let's trace d=1 (odd). y=0. x=0->W. End x=W-1.
+            -- y=1. We are at x=W-1. So x should go W-1 -> 0.
+            -- So if y is odd: x goes W-1 -> 0.
+            
+            -- Now d=2 (even). Start y=height-1.
+            -- If height=2. Start y=1.
+            -- We ended d=1 at (0, 1, 1).
+            -- So we start d=2 at (0, 1, 2).
+            -- y=1 is odd. So x goes W-1 -> 0?
+            -- Wait, we are at x=0.
+            -- So if y is odd, we should go 0 -> W-1?
+            -- This depends on where we ended.
+            
+            -- Let's generalize.
+            -- We are at (currentX, currentY, d).
+            -- We want to visit all x in row y.
+            -- If currentX is 0, go to W-1.
+            -- If currentX is W-1, go to 0.
+            
+            if currentX == 0 then
+                xStart, xEnd, xStep = 0, width - 1, 1
+            else
+                xStart, xEnd, xStep = width - 1, 0, -1
+            end
+            
+            for x = xStart, xEnd, xStep do
+                -- We are visiting (x, y, d)
+                -- But wait, we need to actually MOVE there.
+                -- The loop generates the target coordinates.
+                
+                -- If this is the very first point (0,0,1), we are at (0,0,0).
+                -- We just push the step.
+                
+                pushStep(steps, x, y, d, 0, "move")
+                currentX, currentY, currentZ = x, y, d
+                
+                -- Place torch?
+                -- Only on the floor (y=0) and maybe centered x?
+                -- And at interval.
+                if y == 0 and x == math.floor((width-1)/2) and d % torchInterval == 0 then
+                     pushStep(steps, x, y, d, 0, "place_torch")
+                end
+            end
+        end
+    end
+
+    return steps
+end
+
+return strategy
+]=])
+
+addEmbeddedFile("lib/lib_strategy_excavate.lua", [=[--[[
+Strategy generator for excavation (quarry).
+Produces a linear list of steps for the turtle to excavate a hole of given dimensions.
+]]
+
+local strategy = {}
+
+local function normalizePositiveInt(value, default)
+    local numberValue = tonumber(value)
+    if not numberValue or numberValue < 1 then
+        return default
+    end
+    return math.floor(numberValue)
+end
+
+local function pushStep(steps, x, y, z, facing, stepType, data)
+    steps[#steps + 1] = {
+        type = stepType,
+        x = x,
+        y = y,
+        z = z,
+        facing = facing,
+        data = data,
+    }
+end
+
+--- Generate an excavation strategy
+---@param length number Length (z-axis)
+---@param width number Width (x-axis)
+---@param depth number Depth (y-axis, downwards)
+---@return table
+function strategy.generate(length, width, depth)
+    length = normalizePositiveInt(length, 8)
+    width = normalizePositiveInt(width, 8)
+    depth = normalizePositiveInt(depth, 3)
+
+    local steps = {}
+    local x, y, z = 0, 0, 0
+    local facing = 0 -- 0: forward (z+), 1: right (x+), 2: back (z-), 3: left (x-)
+
+    -- We assume turtle starts at (0,0,0) which is the top-left corner of the hole.
+    -- It will excavate x=[0, width-1], z=[0, length-1], y=[0, -depth+1].
+    
+    for d = 0, depth - 1 do
+        local currentY = -d
+        
+        -- Serpentine pattern for the layer
+        -- If d is even: start at (0,0), end at (W-1, L-1) or (0, L-1) depending on W.
+        -- If d is odd: we should probably reverse to minimize travel.
+        
+        -- Actually, standard excavate usually returns to start to dump items?
+        -- My system handles restocking/refueling via state machine interrupts.
+        -- So I just need to generate the path.
+        
+        -- Layer logic:
+        -- Iterate z from 0 to length-1.
+        -- For each z, iterate x.
+        
+        -- To optimize, we alternate x direction every z row.
+        -- And we alternate z direction every layer?
+        
+        -- Let's keep it simple.
+        -- Layer 0: z=0..L-1.
+        --   z=0: x=0..W-1
+        --   z=1: x=W-1..0
+        --   ...
+        
+        -- End of Layer 0 is at z=L-1, x=(depends).
+        -- Layer 1 starts at z=L-1, x=(same).
+        -- So Layer 1 should go z=L-1..0.
+        
+        local zStart, zEnd, zStep
+        if d % 2 == 0 then
+            zStart, zEnd, zStep = 0, length - 1, 1
+        else
+            zStart, zEnd, zStep = length - 1, 0, -1
+        end
+        
+        for z = zStart, zEnd, zStep do
+            local xStart, xEnd, xStep
+            -- Determine x direction based on z and layer parity?
+            -- If d is even (0):
+            --   z=0: x=0..W-1
+            --   z=1: x=W-1..0
+            --   So if z is even, x=0..W-1.
+            
+            -- If d is odd (1):
+            --   We start at z=L-1.
+            --   We want to match the x from previous layer.
+            --   Previous layer ended at z=L-1.
+            --   If (L-1) was even, it ended at W-1.
+            --   If (L-1) was odd, it ended at 0.
+            
+            -- Let's just use currentX to decide.
+            -- But we are generating steps, we don't track currentX easily unless we simulate.
+            -- Let's simulate.
+            
+            -- Wait, I can just use the same logic as tunnel.
+            -- If we are at x=0, go to W-1.
+            -- If we are at x=W-1, go to 0.
+            
+            -- But I need to know where I am at the start of the z-loop.
+            -- At start of d=0, I am at (0,0,0).
+            
+            -- Let's track currentX, currentZ.
+            if d == 0 and z == zStart then
+                x = 0
+            end
+            
+            if x == 0 then
+                xStart, xEnd, xStep = 0, width - 1, 1
+            else
+                xStart, xEnd, xStep = width - 1, 0, -1
+            end
+            
+            for ix = xStart, xEnd, xStep do
+                x = ix
+                pushStep(steps, x, currentY, z, 0, "move")
+            end
+        end
+    end
+
+    return steps
+end
+
+return strategy
+]=])
+
+addEmbeddedFile("lib/lib_strategy_farm.lua", [=[--[[
+Strategy generator for farms.
+Generates 3D schemas for Tree, Sugarcane, and Potato farms.
+]]
+
+local strategy = {}
+
+local MATERIALS = {
+    dirt = "minecraft:dirt",
+    sand = "minecraft:sand",
+    water = "minecraft:water_bucket",
+    log = "minecraft:oak_log",
+    sapling = "minecraft:oak_sapling",
+    cane = "minecraft:sugar_cane",
+    potato = "minecraft:potatoes",
+    carrot = "minecraft:carrots",
+    wheat = "minecraft:wheat",
+    beetroot = "minecraft:beetroots",
+    nether_wart = "minecraft:nether_wart",
+    soul_sand = "minecraft:soul_sand",
+    farmland = "minecraft:farmland",
+    stone = "minecraft:stone_bricks", -- Border
+    torch = "minecraft:torch",
+    furnace = "minecraft:furnace",
+    chest = "minecraft:chest"
+}
+
+local function createBlock(mat)
+    return { material = mat }
+end
+
+function strategy.generate(farmType, width, length)
+    width = tonumber(width) or 9
+    length = tonumber(length) or 9
+    
+    local schema = {}
+    
+    -- Helper to set block
+    local function set(x, y, z, mat)
+        schema[x] = schema[x] or {}
+        schema[x][y] = schema[x][y] or {}
+        schema[x][y][z] = createBlock(mat)
+    end
+
+    if farmType == "tree" then
+        -- Simple grid of saplings with 2 block spacing
+        -- Layer 0: Dirt
+        -- Layer 1: Saplings
+        for x = 0, width - 1 do
+            for z = 0, length - 1 do
+                set(x, 0, z, MATERIALS.dirt)
+                
+                -- Border
+                if x == 0 or x == width - 1 or z == 0 or z == length - 1 then
+                    set(x, 0, z, MATERIALS.stone)
+                else
+                    -- Checkerboard or spacing
+                    if x % 3 == 1 and z % 3 == 1 then
+                        set(x, 1, z, MATERIALS.sapling)
+                    elseif (x % 3 == 1 and z % 3 == 0) or (x % 3 == 0 and z % 3 == 1) then
+                         -- Space around sapling
+                    elseif x % 5 == 0 and z % 5 == 0 then
+                        set(x, 1, z, MATERIALS.torch)
+                    end
+                end
+            end
+        end
+
+        -- Add charcoal maker essentials (Furnace + Chest) on the border
+        set(0, 1, 1, MATERIALS.furnace)
+        set(0, 1, 2, MATERIALS.chest)
+
+    elseif farmType == "cane" then
+        -- Rows: Water, Sand, Sand, Water
+        for x = 0, width - 1 do
+            for z = 0, length - 1 do
+                -- Border
+                if z == 0 or z == length - 1 then
+                    set(x, 0, z, MATERIALS.stone)
+                else
+                    local pattern = x % 3
+                    if pattern == 0 then
+                        set(x, 0, z, MATERIALS.water)
+                    else
+                        set(x, 0, z, MATERIALS.sand)
+                        set(x, 1, z, MATERIALS.cane)
+                    end
+                end
+            end
+        end
+
+    elseif farmType == "potato" or farmType == "carrot" or farmType == "wheat" or farmType == "beetroot" then
+        -- Standard crop farm
+        -- Rows of water every 4 blocks?
+        -- Hydration is 4 blocks.
+        -- Pattern: W D D D D D D D D W (9 blocks)
+        -- Let's do: W D D D W D D D W
+        for x = 0, width - 1 do
+            for z = 0, length - 1 do
+                -- Only lay ground (dirt/water) at y=0; no border blocks or crops.
+                if x % 4 == 0 then
+                    set(x, 0, z, MATERIALS.water)
+                else
+                    set(x, 0, z, MATERIALS.dirt) -- turtle tills/handles crops later
+                end
+            end
+        end
+    elseif farmType == "nether_wart" then
+        -- Soul sand field
+        for x = 0, width - 1 do
+            for z = 0, length - 1 do
+                if z == 0 or z == length - 1 or x == 0 or x == width - 1 then
+                    set(x, 0, z, MATERIALS.stone)
+                else
+                    set(x, 0, z, MATERIALS.soul_sand)
+                    set(x, 1, z, MATERIALS.nether_wart)
+                end
+            end
+        end
+    end
+
+    return schema
+end
+
+return strategy
+]=])
+
+addEmbeddedFile("ui/trash_config.lua", [=[local ui = require("lib_ui")
+local mining = require("lib_mining")
+local valhelsia_blocks = require("arcade.data.valhelsia_blocks")
+
+local trash_config = {}
+
+function trash_config.run()
+    local searchTerm = ""
+    local scroll = 0
+    local selectedIndex = 1
+    local filteredBlocks = {}
+    
+    -- Helper to update filtered list
+    local function updateFilter()
+        filteredBlocks = {}
+        for _, block in ipairs(valhelsia_blocks) do
+            if searchTerm == "" or 
+               block.label:lower():find(searchTerm:lower()) or 
+               block.id:lower():find(searchTerm:lower()) then
+                table.insert(filteredBlocks, block)
+            end
+        end
+    end
+    
+    updateFilter()
+    
+    while true do
+        ui.clear()
+        ui.drawFrame(2, 2, 48, 16, "Trash Configuration")
+        
+        -- Search Bar
+        ui.label(4, 4, "Search: ")
+        ui.inputText(12, 4, 30, searchTerm, true)
+        
+        -- List Header
+        ui.label(4, 6, "Name")
+        ui.label(35, 6, "Trash?")
+        ui.drawBox(4, 7, 44, 1, colors.gray, colors.white)
+        
+        -- List Items
+        local listHeight = 8
+        local maxScroll = math.max(0, #filteredBlocks - listHeight)
+        if scroll > maxScroll then scroll = maxScroll end
+        
+        for i = 1, listHeight do
+            local idx = i + scroll
+            if idx <= #filteredBlocks then
+                local block = filteredBlocks[idx]
+                local y = 7 + i
+                
+                local isTrash = mining.TRASH_BLOCKS[block.id]
+                local trashLabel = isTrash and "[YES]" or "[NO ]"
+                local trashColor = isTrash and colors.red or colors.green
+                
+                if i == selectedIndex then
+                    term.setBackgroundColor(colors.white)
+                    term.setTextColor(colors.black)
+                else
+                    term.setBackgroundColor(colors.blue)
+                    term.setTextColor(colors.white)
+                end
+                
+                term.setCursorPos(4, y)
+                local label = block.label
+                if #label > 30 then label = label:sub(1, 27) .. "..." end
+                term.write(label .. string.rep(" ", 31 - #label))
+                
+                term.setCursorPos(35, y)
+                if i == selectedIndex then
+                    term.setTextColor(colors.black)
+                else
+                    term.setTextColor(trashColor)
+                end
+                term.write(trashLabel)
+            end
+        end
+        
+        -- Instructions
+        ui.label(4, 17, "Arrows: Move/Scroll  Enter: Toggle  Esc: Save")
+        
+        local event, p1 = os.pullEvent()
+        
+        if event == "char" then
+            searchTerm = searchTerm .. p1
+            updateFilter()
+            selectedIndex = 1
+            scroll = 0
+        elseif event == "key" then
+            if p1 == keys.backspace then
+                searchTerm = searchTerm:sub(1, -2)
+                updateFilter()
+                selectedIndex = 1
+                scroll = 0
+            elseif p1 == keys.up then
+                if selectedIndex > 1 then
+                    selectedIndex = selectedIndex - 1
+                elseif scroll > 0 then
+                    scroll = scroll - 1
+                end
+            elseif p1 == keys.down then
+                if selectedIndex < math.min(listHeight, #filteredBlocks) then
+                    selectedIndex = selectedIndex + 1
+                elseif scroll < maxScroll then
+                    scroll = scroll + 1
+                end
+            elseif p1 == keys.enter then
+                local idx = selectedIndex + scroll
+                if filteredBlocks[idx] then
+                    local block = filteredBlocks[idx]
+                    if mining.TRASH_BLOCKS[block.id] then
+                        mining.TRASH_BLOCKS[block.id] = nil -- Remove from trash
+                    else
+                        mining.TRASH_BLOCKS[block.id] = true -- Add to trash
+                    end
+                end
+            elseif p1 == keys.enter or p1 == keys.escape then
+                mining.saveConfig()
+                return
+            end
+        end
+    end
+end
+
+return trash_config
+]=])
+
+addEmbeddedFile("lib/lib_persistence.lua", [=[--[[
+Persistence library for TurtleOS.
+Handles saving and loading the agent's state to a JSON file.
+]]
+
+local json = require("lib_json")
+local logger = require("lib_logger")
+
+local persistence = {}
+local STATE_FILE = "state.json"
+
+---@class PersistenceConfig
+---@field path string|nil Path to the state file (default: "state.json")
+
+---Load state from disk.
+---@param ctx table Context table for logging
+---@param config PersistenceConfig|nil Configuration options
+---@return table|nil state The loaded state table, or nil if not found/error
+function persistence.load(ctx, config)
+    local path = (config and config.path) or STATE_FILE
+    
+    if not fs.exists(path) then
+        logger.log(ctx, "info", "No previous state found at " .. path)
+        return nil
+    end
+
+    local f = fs.open(path, "r")
+    if not f then
+        logger.log(ctx, "error", "Failed to open state file for reading: " .. path)
+        return nil
+    end
+
+    local content = f.readAll()
+    f.close()
+
+    if not content or content == "" then
+        logger.log(ctx, "warn", "State file was empty")
+        return nil
+    end
+
+    local state = json.decode(content)
+    if not state then
+        logger.log(ctx, "error", "Failed to decode state JSON")
+        return nil
+    end
+
+    logger.log(ctx, "info", "State loaded from " .. path)
+    return state
+end
+
+---Save state to disk.
+---@param ctx table Context table containing the state to save
+---@param config PersistenceConfig|nil Configuration options
+---@return boolean success
+function persistence.save(ctx, config)
+    local path = (config and config.path) or STATE_FILE
+    
+    -- Construct a serializable snapshot of the context
+    -- We don't want to save everything (like functions or the logger itself)
+    local snapshot = {
+        state = ctx.state,
+        config = ctx.config,
+        origin = ctx.origin,
+        movement = ctx.movement, -- Contains position and facing
+        chests = ctx.chests,     -- Save chest locations
+        -- Save specific state data if it exists
+        potatofarm = ctx.potatofarm,
+        treefarm = ctx.treefarm,
+        mine = ctx.mine,
+        -- Add other state-specific tables here as needed
+    }
+
+    local content = json.encode(snapshot)
+    if not content then
+        logger.log(ctx, "error", "Failed to encode state to JSON")
+        return false
+    end
+
+    local f = fs.open(path, "w")
+    if not f then
+        logger.log(ctx, "error", "Failed to open state file for writing: " .. path)
+        return false
+    end
+
+    f.write(content)
+    f.close()
+
+    return true
+end
+
+---Clear the saved state file.
+---@param ctx table Context table
+---@param config PersistenceConfig|nil
+function persistence.clear(ctx, config)
+    local path = (config and config.path) or STATE_FILE
+    if fs.exists(path) then
+        fs.delete(path)
+        logger.log(ctx, "info", "Cleared state file: " .. path)
+    end
+end
+
+return persistence
+]=])
+
+addEmbeddedFile("lib/lib_wizard.lua", [=[--[[
+Wizard library for CC:Tweaked turtles.
+Dummy implementation to satisfy dependencies.
+]]
+
+local wizard = {}
+
+function wizard.run(ctx)
+    return true
+end
+
+return wizard
 ]=])
 
 -- END_EMBEDDED_FILES
