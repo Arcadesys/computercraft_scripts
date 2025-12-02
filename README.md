@@ -16,16 +16,23 @@ This is a simple GUI-based operating system for ComputerCraft, styled after earl
   - Select steps to adjust pitch (0-24) and note length (1-8 steps).
   - Click steps to toggle them on/off; right-click to select without toggling.
   - Plays through an attached speaker peripheral with per-step indicators.
+- **MIDI Player** (`midi_player.lua`): Standalone program that parses standard `.mid` files.
+  - Place MIDI files under `/midi` (folders are created automatically on first run).
+  - Choose a file interactively or pass the path/filename as the first argument.
+  - Pick the ComputerCraft instrument for every detected MIDI channel before playback.
+  - Supports looping playback via `--loop` or a prompt.
 
 ## Installation
 
 1. Copy the `startup.lua` file to the root of your ComputerCraft computer.
-2. Reboot the computer.
+2. (Optional) Copy `midi_player.lua` alongside `startup.lua` to enable MIDI playback.
+3. Reboot the computer.
 
 ## Usage
 
 - **Mouse**: Use the mouse to interact with windows and menus.
 - **Shutdown**: Open the Start menu and click "Shutdown" (or the area where it would be).
+- **MIDI Player**: Run `midi_player` from the shell. Follow the prompts to select a `.mid` file, map instruments, and choose whether to loop.
 
 ## Development
 
@@ -34,3 +41,5 @@ The main logic is in `startup.lua`.
 - `windows` table: Defines the initial windows.
 - `draw()`: Handles rendering.
 - `handleClick()`: Handles mouse interaction.
+
+`midi_player.lua` is a separate script with its own entry point. It includes a lightweight SMF (Standard MIDI File) parser and playback loop for speaker peripherals.
