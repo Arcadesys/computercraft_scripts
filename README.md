@@ -1,50 +1,36 @@
-# Arcadesys
+# ComputerCraft Personal OS
 
-A unified ComputerCraft repository containing both the ArcadeOS system and the Factory Agent.
+This is a simple GUI-based operating system for ComputerCraft, styled after early Windows systems (Windows 95/98).
 
-## Structure
+## Features
 
-* **`/arcade`**: ArcadeOS UI, games, and tools.
-* **`/factory`**: Autonomous Turtle Agent for building and mining.
-* **`/lib`**: Shared libraries used by both systems.
-* **`/docs`**: Documentation.
+- **Desktop Environment**: Classic cyan background.
+- **Taskbar**: Located at the bottom with a Start button.
+- **Window Management**:
+  - Drag windows by the title bar.
+  - Close windows with the 'X' button.
+  - Click a window to bring it to the front.
+- **Start Menu**: Click "Start" to open. Includes a "Shutdown" option.
+- **Sequencer**: A built-in 4-track, 16-step sequencer.
+  - Each track can target any vanilla note block instrument.
+  - Select steps to adjust pitch (0-24) and note length (1-8 steps).
+  - Click steps to toggle them on/off; right-click to select without toggling.
+  - Plays through an attached speaker peripheral with per-step indicators.
 
 ## Installation
 
-Use the single installer entrypoint: `install.lua`.
-It pulls the latest Arcadesys installer from GitHub and runs it.
-The installer autodetects whether it is running on a turtle or a computer.
+1. Copy the `startup.lua` file to the root of your ComputerCraft computer.
+2. Reboot the computer.
 
 ## Usage
 
-* **Shared UI**: Both turtles and computers launch `arcadesys_os.lua`, a unified menu that links factory jobs, games, and tools.
-* **Factory Designer**: Run `factory_planner.lua` (optionally `--load path/to/schema.json`) for the graphical designer powered by `lib_designer`.
+- **Mouse**: Use the mouse to interact with windows and menus.
+- **Shutdown**: Open the Start menu and click "Shutdown" (or the area where it would be).
 
-## CraftOS-PC workflow (no in-game testing)
+## Development
 
-1. Stage the repo into your CraftOS-PC data folder: `pwsh tools/craftos_sync.ps1 -ComputerId 0 -TurtleId 1`. It writes into `%APPDATA%\CraftOS-PC\computer\<id>\arcadesys`.
-2. Launch CraftOS-PC pointing at that data directory (CLI: `craftos --computers-dir "%APPDATA%\CraftOS-PC\computer"`). Open computer `<ComputerId>` for the PC profile and turtle `<TurtleId>` (create one in CraftOS-PC if it does not exist yet) for the turtle profile.
-3. Both profiles boot into `arcadesys_os.lua`; pick the program you want to exercise. Turtle state machine files are unchanged; this simply wires in a launcher.
+The main logic is in `startup.lua`.
 
-## Building Installers
-
-Legacy per-experience installers can still be produced with the Node scripts below (optional):
-
-1. Ensure Node.js is installed.
-2. From the repo root, run:
-
-   ```bash
-   node build/turtle_os_install.js
-   node build/arcade_os_install.js
-   node build/workstation_install.js
-   ```
-
-3. Copy the desired installer onto a ComputerCraft computer or turtle (e.g., via `pastebin run` or `wget`).
-4. Run it:
-
-   ```lua
-   shell.run("<installer>.lua")
-   ```
-
-5. It will download the needed Lua files from GitHub for that experience, recreate the folder structure, and report completion.
-6. Reboot or run `startup` to launch the appropriate system.
+- `windows` table: Defines the initial windows.
+- `draw()`: Handles rendering.
+- `handleClick()`: Handles mouse interaction.
